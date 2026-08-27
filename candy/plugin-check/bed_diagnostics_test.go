@@ -517,6 +517,38 @@ func TestMkinitcpioChrootWarningsAllowanceIsScoped(t *testing.T) {
 	}
 }
 
+func TestPacmanPacnewConfigNoticeAllowanceIsScoped(t *testing.T) {
+	claimed := []string{
+		"warning: /etc/locale.gen installed as /etc/locale.gen.pacnew",
+		"warning: /etc/tpm2-tss/fapi-profiles/P_ECCP384SHA384.json installed as /etc/tpm2-tss/fapi-profiles/P_ECCP384SHA384.json.pacnew",
+		"warning: /etc/tpm2-tss/fapi-profiles/P_RSA3072SHA384.json installed as /etc/tpm2-tss/fapi-profiles/P_RSA3072SHA384.json.pacnew",
+	}
+	for _, line := range claimed {
+		sev, _, ok := classifyDiagnosticLine(line)
+		if !ok {
+			t.Fatalf("%q was not recognised as a diagnostic at all", line)
+		}
+		a := allowanceFor(sev, line)
+		if a == nil || a.ID != "pacman-pacnew-config-notice" {
+			t.Errorf("%q: want the pacman-pacnew-config-notice allowance, got %v", line, a)
+		}
+	}
+
+	notClaimed := []string{
+		"warning: iproute2-7.2.0-1 is up to date -- skipping",
+		"warning: zstd: local (7.1) is newer than repo (7.0)",
+	}
+	for _, line := range notClaimed {
+		sev, _, ok := classifyDiagnosticLine(line)
+		if !ok {
+			continue
+		}
+		if a := allowanceFor(sev, line); a != nil && a.ID == "pacman-pacnew-config-notice" {
+			t.Errorf("%q must NOT be claimed by the pacman-pacnew-config-notice allowance", line)
+		}
+	}
+}
+
 // TestUpdateRcDAllowanceIsScoped covers the debootstrap update-rc.d allowance and its
 // BOUNDARY: the pattern must claim ONLY that exact sentence. The negative cases are real
 // update-rc.d lines that share its opening words but are NOT the chroot fallback notice.

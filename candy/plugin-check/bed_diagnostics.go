@@ -382,6 +382,24 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"suppressing them would mean seeding chroot config that the guest would then " +
 			"inherit incorrectly.",
 	},
+	{
+		ID:       "pacman-pacnew-config-notice",
+		Severity: severityWarning,
+		// pacman's standard .pacnew safety mechanism: when a package's config file differs
+		// from the previously-installed version during a transaction (here the VM's
+		// freshly-pulled base image updating locale.gen and the tpm2-tss fapi profiles),
+		// pacman installs the new file as <name>.pacnew rather than overwriting the admin's
+		// copy. Emitted on every pacstrap bootstrap VM deploy-add (a guest-side
+		// pacman -Syu). Informational, deliberate pacman behavior — not an error.
+		Match: regexp.MustCompile(`^warning: .+ installed as .+\.pacnew$`),
+		Why: "pacman's documented .pacnew mechanism: a config file the package ships differs " +
+			"from what the image already carries, so pacman preserves the existing file and " +
+			"saves the new one as <name>.pacnew for the admin to diff/merge. Observed live in " +
+			"every check-charly-vm / check-cachyos-vm deploy-add (guest-side pacman -Syu " +
+			"updating locale.gen and the tpm2-tss fapi profiles on a freshly-pulled base). " +
+			"Inherent to ANY pacstrap bootstrap VM build; suppressing them would mean " +
+			"silently overwriting config the guest admin's layer owns.",
+	},
 }
 
 // allowanceRecovered reports whether a claimed line really is exempt. An unconditional entry
