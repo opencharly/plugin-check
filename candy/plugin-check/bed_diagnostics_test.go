@@ -267,6 +267,11 @@ func TestPacmanNeededAllowanceIsScoped(t *testing.T) {
 		"warning: dbus-1.16.2-1.1 is up to date -- skipping",
 		"warning: podman-6.1.0-1.1 is up to date -- skipping",
 		"warning: shadow-4.20.0.arch1-1.1 is up to date -- skipping",
+		// An EPOCH renders as <name>-<epoch>:<ver>-<rel>. The colon is not decorative:
+		// before it was in the class, `rust-1:1.98.0-1.1` fell through and every box
+		// installing an epoch-versioned package reported a warning nothing could fix.
+		"warning: rust-1:1.98.0-1.1 is up to date -- skipping",
+		"warning: ffmpeg-2:9.0.1-1 is up to date -- skipping",
 	}
 	for _, line := range claimed {
 		sev, _, ok := classifyDiagnosticLine(line)
