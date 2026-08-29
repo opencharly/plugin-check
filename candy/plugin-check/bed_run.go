@@ -792,3 +792,4 @@ func writeBedSummary(dir string, res *bedRunResult) {
 func vmDomainIdentity(deployName string) string {
 	return vmshared.VmDomainIdentity(deployName)
 }
+// bed verdict override: see bed_run.go
