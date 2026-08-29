@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/opencharly/spec/proc"
 	"github.com/opencharly/spec/spec"
 )
 
@@ -98,8 +99,7 @@ func (c *CheckRunCmd) Run() error {
 			return &CheckSkippedError{Msg: fmt.Sprintf("charly check run %s: skipped (%s)", c.Name, res.SkipReason)}
 		}
 		if res != nil {
-			fmt.Fprintf(os.Stderr, "charly check run %s: %s (steps=%d)\n",
-				c.Name, summaryStatus(res.OK), len(res.Step))
+			fmt.Fprintln(os.Stderr, bedVerdictLine(c.Name, res.OK, len(res.Step), res.RepoOverride))
 		}
 		// Propagate the check-fail exit code (2) when the bed failed at a check step.
 		if runErr != nil && res != nil && res.FailExitCode == CheckFailExitCode {
@@ -109,6 +109,18 @@ func (c *CheckRunCmd) Run() error {
 	}
 
 	return c.runIterateEntity(reply, cwd)
+}
+
+// bedVerdictLine formats the final `charly check run` verdict. When the bed ran
+// with a CHARLY_REPO_OVERRIDE pair, the line names it so a reader knows the
+// verdict is about the LOCAL tree, not the PR head (issue #340).
+func bedVerdictLine(name string, ok bool, steps int, repoOverride string) string {
+	verdict := fmt.Sprintf("charly check run %s: %s (steps=%d)",
+		name, summaryStatus(ok), steps)
+	if repoOverride != "" {
+		verdict += fmt.Sprintf(" — repo override active (%s=%s): verdict is about the LOCAL tree, not the PR head", proc.RepoOverrideEnv, repoOverride)
+	}
+	return verdict
 }
 
 // runIterateEntity drives the iterate: AI iteration loop for the named entity: it

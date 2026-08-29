@@ -70,9 +70,10 @@ type bedSession struct {
 	leaseClaimant string // "" ⇒ acquireLease never ran (a GPU-prereq skip returns before it)
 	leaseActive   bool
 
-	repoOvSet bool   // this session set CHARLY_REPO_OVERRIDE
-	hadRepoOv bool   // it was already set (restore old) vs unset (Unsetenv)
-	oldRepoOv string // the pre-existing value to restore
+	repoOvSet  bool   // this session set CHARLY_REPO_OVERRIDE
+	hadRepoOv  bool   // it was already set (restore old) vs unset (Unsetenv)
+	oldRepoOv  string // the pre-existing value to restore
+	repoOvPair string // the auto-added `<repo>=<dir>` pair, surfaced in the verdict
 
 	cfgSet bool   // this session set CHARLY_DEPLOY_CONFIG (owns the temp dir)
 	cfgDir string // MkdirTemp; teardown RemoveAll
@@ -362,6 +363,7 @@ func bedSetup(ctx context.Context, ex *sdk.Executor, bed, dir string) (spec.Chec
 		s.repoOvSet = true
 		s.hadRepoOv = hadRepoOverride
 		s.oldRepoOv = oldRepoOverride
+		s.repoOvPair = pair
 		overrideTransferred = true
 		fmt.Fprintf(os.Stderr, "charly check run %s: testing LOCAL candies (%s += %s)\n", bed, proc.RepoOverrideEnv, pair)
 	}
