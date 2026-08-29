@@ -71,6 +71,11 @@ type bedRunResult struct {
 	// else is an infra failure. The caller maps it to the process exit code so
 	// `charly check run <bed>` distinguishes "checks failed" from "couldn't run".
 	FailExitCode int
+	// RepoOverride is the auto-added CHARLY_REPO_OVERRIDE pair (`<repo>=<dir>`)
+	// this bed ran with, or "" when no override was active. Surfaced in the
+	// verdict + summary so a reader knows the verdict is about the LOCAL tree,
+	// not the PR head (issue #340).
+	RepoOverride string
 	// SkippedPrereq marks a bed that never ran because a required HOST prerequisite
 	// is absent. Not a failure — the caller emits CheckSkippedExitCode + SkipReason.
 	// OK stays true, so callers MUST check SkippedPrereq before OK.
@@ -152,6 +157,9 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	}
 
 	res := &bedRunResult{Bed: name, CalVer: d.Calver, OK: true}
+	if sess != nil {
+		res.RepoOverride = sess.repoOvPair
+	}
 
 	// diagPolicy decides what step()'s log scan DOES with what it finds. One value, read at
 	// every step, so the disposition is reviewable in one place rather than inferred from
@@ -747,6 +755,9 @@ func writeBedSummary(dir string, res *bedRunResult) {
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, "bed: %s\n", res.Bed)
 	fmt.Fprintf(&buf, "calver: %s\n", res.CalVer)
+	if res.RepoOverride != "" {
+		fmt.Fprintf(&buf, "repo_override: %s\n", res.RepoOverride)
+	}
 	fmt.Fprintln(&buf, "steps:")
 	var total time.Duration
 	var run stepDiagnostics
