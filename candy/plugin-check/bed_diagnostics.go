@@ -400,6 +400,24 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"Inherent to ANY pacstrap bootstrap VM build; suppressing them would mean " +
 			"silently overwriting config the guest admin's layer owns.",
 	},
+	{
+		ID:       "dev-worktree-binary-notice",
+		Severity: severityWarning,
+		// A dev/worktree charly binary (not installed at /usr/bin or /usr/local/bin)
+		// deliberately does NOT load the installed package's plugins from /usr/lib/charly/plugins
+		// — they were built against a different charly version (issue #328) — and says so once
+		// per process. Every charly check bed runs the in-development binary from
+		// candy/charly-dev/bin/charly, so this informational line appears in every host-side
+		// step log. It is the documented dev-build behavior, not an error.
+		Match: regexp.MustCompile(`^WARNING: charly is a dev/worktree build \(not installed at /usr/bin or /usr/local/bin\); NOT loading the installed package's plugins from /usr/lib/charly/plugins`),
+		Why: "A dev/worktree charly binary (the in-development build every charly check bed " +
+			"installs via the charly-dev candy) is not at the FHS location that owns " +
+			"/usr/lib/charly/plugins, so it deliberately skips the installed package's plugins " +
+			"(built against a different charly version, issue #328) and says so once per process. " +
+			"Observed live in every check-charly-vm step log when the host has a packaged charly " +
+			"install. Informational dev-build behavior — not an error; suppressing it would mean " +
+			"silently loading plugins built against a different API version.",
+	},
 }
 
 // allowanceRecovered reports whether a claimed line really is exempt. An unconditional entry
