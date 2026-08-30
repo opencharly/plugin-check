@@ -427,7 +427,12 @@ var diagnosticAllowlist = []diagnosticAllowance{
 		// build completes and the image is tagged (the recovery). The capture group
 		// satisfies the error-tier conditional requirement; the recovery names no token
 		// to tie to, so the pattern is used as-is (see allowanceRecovered).
-		Match:       regexp.MustCompile(`^/usr/sbin/grub-probe: error: failed to get canonical path of '([^']+)'\.$`),
+		// GNU quoting: the OPENING delimiter is a BACKTICK (U+0060) and the closing one a
+		// straight apostrophe — `overlay' — so a pattern anchored on '...' never matches.
+		// Captured byte-for-byte with od -c from a cold debian-coder build; the subject is
+		// `overlay` (the storage driver), not `fuse-overlayfs`. The line also ends CRLF, so
+		// the trailing \r is tolerated rather than left to break the $ anchor.
+		Match:       regexp.MustCompile("^/usr/sbin/grub-probe: error: failed to get canonical path of [`']([^']+)'\\.\\r?$"),
 		RecoveredBy: `(?m)^Successfully tagged `,
 		Why: "Debian-family package postinsts (grub-common, mdadm) run grub-probe during " +
 			"the image build; inside the container the root is fuse-overlayfs, which " +
