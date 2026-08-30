@@ -235,6 +235,34 @@ func TestMkinitcpioChrootAutodetectIsConditional(t *testing.T) {
 	})
 }
 
+func TestGrubProbeFuseOverlayfsIsConditional(t *testing.T) {
+	const errLine = "/usr/sbin/grub-probe: error: failed to get canonical path of 'fuse-overlayfs'.\n"
+	const step = "STEP 1/1: RUN apt-get install -y grub-common\n"
+
+	t.Run("recovered by the image tag", func(t *testing.T) {
+		d := scanStepDiagnostics(step + errLine +
+			"Successfully tagged ghcr.io/opencharly/debian-coder:check-debian-coder-pod\n")
+		if d.Errors != 0 || d.Allowlisted != 1 || d.fails(defaultDiagnosticPolicy()) {
+			t.Errorf("a completed image build must exempt the grub-probe error; got %+v", d)
+		}
+	})
+
+	t.Run("no recovery is fatal", func(t *testing.T) {
+		d := scanStepDiagnostics(step + errLine)
+		if d.Errors != 1 || d.Allowlisted != 0 || !d.fails(defaultDiagnosticPolicy()) {
+			t.Errorf("a build that never tags the image must still fail the step; got %+v", d)
+		}
+	})
+
+	t.Run("unrelated error is not exempted by a tag", func(t *testing.T) {
+		d := scanStepDiagnostics(step + "/usr/sbin/grub-probe: error: cannot find a GRUB drive\n" +
+			"Successfully tagged ghcr.io/opencharly/debian-coder:check-debian-coder-pod\n")
+		if d.Errors != 1 || d.Allowlisted != 0 {
+			t.Errorf("an unrelated grub-probe error must not be discharged by a tag; got %+v", d)
+		}
+	})
+}
+
 // TestAllowlistEntriesAreWellFormed keeps the audit trail honest: the Why is printed verbatim
 // into summary.yml on every run, so an empty or throwaway one silently converts a reviewed
 // exemption into an unexplained one.

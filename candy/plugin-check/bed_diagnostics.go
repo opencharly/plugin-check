@@ -422,6 +422,29 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"install. Informational dev-build behavior — not an error; suppressing it would mean " +
 			"silently loading plugins built against a different API version.",
 	},
+	{
+		ID:       "grub-probe-fuse-overlayfs-recovered",
+		Severity: severityError,
+		// Debian-family package postinsts (grub-common, mdadm) run grub-probe during the
+		// image build; inside the container the root is fuse-overlayfs, which grub-probe
+		// cannot canonicalize, so it prints this error and the postinst continues. The
+		// build completes and the image is tagged (the recovery). The capture group
+		// satisfies the error-tier conditional requirement; the recovery names no token
+		// to tie to, so the pattern is used as-is (see allowanceRecovered).
+		// GNU quoting: the OPENING delimiter is a BACKTICK (U+0060) and the closing one a
+		// straight apostrophe — `overlay' — so a pattern anchored on '...' never matches.
+		// Captured byte-for-byte with od -c from a cold debian-coder build; the subject is
+		// `overlay` (the storage driver), not `fuse-overlayfs`. The line also ends CRLF, so
+		// the trailing \r is tolerated rather than left to break the $ anchor.
+		Match:       regexp.MustCompile("^/usr/sbin/grub-probe: error: failed to get canonical path of [`']([^']+)'\\.\\r?$"),
+		RecoveredBy: `(?m)^Successfully tagged `,
+		Why: "Debian-family package postinsts (grub-common, mdadm) run grub-probe during " +
+			"the image build; inside the container the root is fuse-overlayfs, which " +
+			"grub-probe cannot canonicalize, so it prints this error and the postinst " +
+			"continues. The build completes and the image is tagged (the recovery). " +
+			"CONDITIONAL on the same log proving the image was tagged; if the build never " +
+			"tags, this entry does not claim the line and the step still fails.",
+	},
 }
 
 // allowanceRecovered reports whether a claimed line really is exempt. An unconditional entry
