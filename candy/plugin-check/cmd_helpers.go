@@ -83,9 +83,11 @@ func candyAddSteps(rp *spec.ResolvedProject, addCandies []string) []spec.Step {
 	}
 	var out []spec.Step
 	for _, ref := range addCandies {
-		if deploykit.IsRemoteCandyRef(ref) {
-			continue
-		}
+		// A remote @github ref is looked up exactly like a local one: BareRef is the
+		// map-key form (no @, no :version), and rp.CandyModels keys a FETCHED candy by
+		// precisely that. Skipping remote refs here silently dropped every baked check:
+		// step of a candy applied by ref — the normal way a bed pins one — so the bed ran
+		// only its own plan and passed while asserting almost nothing.
 		m, ok := rp.CandyModels[deploykit.BareRef(ref)]
 		if !ok {
 			continue

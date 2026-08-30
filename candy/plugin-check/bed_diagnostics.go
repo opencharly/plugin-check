@@ -188,7 +188,7 @@ var diagnosticAllowlist = []diagnosticAllowance{
 	{
 		ID:       "pacman-needed-package-already-current",
 		Severity: severityWarning,
-		Match:    regexp.MustCompile(`^warning: [A-Za-z0-9_.+-]+ is up to date -- skipping$`),
+		Match:    regexp.MustCompile(`^warning: [A-Za-z0-9_.+:-]+ is up to date -- skipping$`),
 		Why: "pacman prints this for every package an install names that is ALREADY at the " +
 			"target version, and it prints it because of `--needed` — the flag that makes a " +
 			"repeated install idempotent instead of a reinstall (R4). A candy declares the " +
@@ -198,7 +198,11 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"trade a message for a reinstall, and filtering the list would mean predicting the " +
 			"image's package state at generate time, which is exactly the decision --needed " +
 			"exists to make at run time. Scoped to the exact single-package sentence so a " +
-			"multi-line pacman warning cannot hide behind it.",
+			"multi-line pacman warning cannot hide behind it. The class includes `:` because " +
+			"pacman renders an EPOCH as `<name>-<epoch>:<ver>-<rel>` (rust-1:1.98.0-1.1): " +
+			"without it every epoch-versioned package fell through this allowance and surfaced " +
+			"as an un-allowlisted warning, which is a diagnostic about pacman's version syntax " +
+			"rather than about the box.",
 	},
 	{
 		ID:       "pacman-mirror-retrieval-recovered",
