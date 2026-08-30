@@ -427,7 +427,7 @@ var diagnosticAllowlist = []diagnosticAllowance{
 		// build completes and the image is tagged (the recovery). The capture group
 		// satisfies the error-tier conditional requirement; the recovery names no token
 		// to tie to, so the pattern is used as-is (see allowanceRecovered).
-		Match:       regexp.MustCompile(`^/usr/sbin/grub-probe: error: failed to get canonical path of ` + "`" + `([^` + "`" + `]+)` + "`" + `\.$`),
+		Match:       regexp.MustCompile(`^/usr/sbin/grub-probe: error: failed to get canonical path of '([^']+)'\.$`),
 		RecoveredBy: `(?m)^Successfully tagged `,
 		Why: "Debian-family package postinsts (grub-common, mdadm) run grub-probe during " +
 			"the image build; inside the container the root is fuse-overlayfs, which " +
