@@ -235,6 +235,45 @@ func TestMkinitcpioChrootAutodetectIsConditional(t *testing.T) {
 	})
 }
 
+// The limine alpm hook cannot succeed inside a pacstrap chroot (no mounted ESP, and
+// /etc/default/limine is written later by charly's bootloader phase). Exempting it is only
+// legitimate when that phase then DOES write the config against the real ESP — otherwise
+// the difference between "chroot artifact" and "the bootloader install is broken" is
+// exactly what the bed exists to catch.
+func TestLimineEspNotMountedInChrootIsConditional(t *testing.T) {
+	// Note the trailing space: limine emits one, and the pattern must tolerate it or the
+	// allowance silently never matches and every omarchy pacstrap build fails.
+	const errLine = "ERROR: FAT32 boot partition not found. Make sure it is mounted or configure ESP_PATH in /etc/default/limine. \n"
+	const step = "STEP 1/1: RUN pacstrap -K /target\n"
+
+	t.Run("recovered by charly writing limine.conf to the real ESP", func(t *testing.T) {
+		d := scanStepDiagnostics(step + errLine +
+			"Boot000F* Omarchy\tHD(1,GPT,c950b917,0x800,0xff800)/\\EFI\\BOOT\\BOOTX64.EFI\n" +
+			"Copied: /tmp/limine-mkinitcpio.X/linux.efi -> /boot/EFI/Linux/omarchy_linux.efi\n" +
+			"Updated: /boot/limine.conf\n")
+		if d.Errors != 0 || d.Allowlisted != 1 || d.fails(defaultDiagnosticPolicy()) {
+			t.Errorf("a build whose bootloader phase wrote limine.conf must exempt the "+
+				"chroot hook error; got %+v", d)
+		}
+	})
+
+	t.Run("no recovery is fatal", func(t *testing.T) {
+		d := scanStepDiagnostics(step + errLine)
+		if d.Errors != 1 || d.Allowlisted != 0 || !d.fails(defaultDiagnosticPolicy()) {
+			t.Errorf("a build that never writes /boot/limine.conf has a genuinely broken "+
+				"bootloader install and must still fail; got %+v", d)
+		}
+	})
+
+	t.Run("an unrelated limine error is not discharged", func(t *testing.T) {
+		d := scanStepDiagnostics(step + "ERROR: limine-install: target is not a block device\n" +
+			"Updated: /boot/limine.conf\n")
+		if d.Allowlisted != 0 {
+			t.Errorf("only the ESP-not-mounted line is exempt; got %+v", d)
+		}
+	})
+}
+
 func TestGrubProbeFuseOverlayfsIsConditional(t *testing.T) {
 	const errLine = "/usr/sbin/grub-probe: error: failed to get canonical path of 'fuse-overlayfs'.\n"
 	const step = "STEP 1/1: RUN apt-get install -y grub-common\n"

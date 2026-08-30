@@ -335,6 +335,39 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"the notice, and silencing it would mean suppressing systemd's own reload hint.",
 	},
 	{
+		ID:       "limine-esp-not-mounted-in-chroot",
+		Severity: severityError,
+		// limine's alpm hook (80-limine-efi-deploy.hook, shipped by limine-mkinitcpio-hook)
+		// deploys the bootloader to the ESP after any kernel/limine package install. Inside
+		// the pacstrap chroot the target's ESP is NOT mounted and /etc/default/limine does
+		// not exist yet — charly's own bootloader phase writes it AFTER the package
+		// transaction — so limine-entry-tool falls back to its default ESP_PATH, finds no
+		// FAT32 filesystem there, and errors. The capture group holds the error TEXT,
+		// satisfying the conditional-allowance capture-group requirement.
+		Match: regexp.MustCompile(`^ERROR: (FAT32 boot partition not found)\. Make sure it is mounted or configure ESP_PATH in /etc/default/limine\.\s*$`),
+		// The recovery is charly's bootloader phase doing the job properly against the REAL,
+		// mounted ESP later in the same build: limine's config is written to /boot. Observed
+		// live in the check-omarchy-pacstrap-vm base-image build — the hook errors at the
+		// package transaction, then `Updated: /boot/limine.conf` lands ~110 lines later,
+		// alongside the EFI boot entry (`Boot000F* Omarchy …\EFI\BOOT\BOOTX64.EFI`) and the
+		// unified kernel image (`Copied: … -> /boot/EFI/Linux/omarchy_linux.efi`).
+		RecoveredBy: `(?m)^Updated: /boot/limine\.conf$`,
+		Why: "A distro that manages its own bootloader through alpm hooks (Omarchy: limine + " +
+			"limine-mkinitcpio-hook + limine-snapper-sync) runs those hooks during the " +
+			"pacstrap transaction, where by construction no ESP is mounted and charly has " +
+			"not yet written /etc/default/limine — that happens in the bootloader phase, " +
+			"after the packages are installed. The hook therefore cannot succeed, and " +
+			"cannot be configured into succeeding: limine-entry-tool requires a genuinely " +
+			"mounted FAT32 partition, which a chroot does not have. Suppressing it would " +
+			"mean either masking the distro's own hooks (which the machine images need " +
+			"intact for kernel updates) or faking an ESP in the chroot. Inherent to ANY " +
+			"pacstrap bootstrap VM whose distro deploys a bootloader from a package hook. " +
+			"CONDITIONAL on charly's bootloader phase actually succeeding afterwards — if " +
+			"/boot/limine.conf is never written, this entry does not claim the line and the " +
+			"step still fails, which is the difference between a chroot artifact and a " +
+			"genuinely broken bootloader install.",
+	},
+	{
 		ID:       "mkinitcpio-chroot-autodetect-fallback",
 		Severity: severityError,
 		// mkinitcpio's autodetect hook reads the kernel command line / fstab to learn the
