@@ -186,6 +186,29 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"visible, separately reviewed diff.",
 	},
 	{
+		ID:       "pacman-repo-serves-older-than-installed",
+		Severity: severityWarning,
+		// Scoped to the exact single-package sentence, like the --needed entry above, so a
+		// multi-line pacman warning cannot hide behind it. The class includes `:` because
+		// pacman renders an EPOCH as `<epoch>:<ver>-<rel>`.
+		Match: regexp.MustCompile(`^warning: [A-Za-z0-9_.+-]+: downgrading from version [A-Za-z0-9_.+:-]+ to version [A-Za-z0-9_.+:-]+$`),
+		Why: "pacman prints this when a CONFIGURED REPOSITORY serves an older version than the " +
+			"one installed, and the transaction was asked to allow that (-Syuu). For a distro " +
+			"whose identity IS a frozen snapshot of an upstream repository, that is the " +
+			"intended and correct outcome, not a fault: the base container image ships " +
+			"packages at upstream's current versions, the distro pins an older set on purpose, " +
+			"and aligning the image onto it necessarily downgrades. Omarchy is the case in " +
+			"hand — layer-omarchy-base repoints pacman at stable-mirror.omarchy.org and then " +
+			"runs -Syuu precisely so the image IS that snapshot rather than a MIX of two, and " +
+			"a build producing none of these lines would mean that alignment had not run. " +
+			"There is nothing for charly to fix at either end: refusing the downgrade would " +
+			"leave the image a version mix, which is the silent failure the alignment exists " +
+			"to remove, and pacman has no quieter way to say it did what it was asked. " +
+			"NOTE the narrowness: this claims only the per-package downgrade sentence. It " +
+			"does NOT claim `error:` lines, and it does not claim a downgrade that FAILS — " +
+			"a failed transaction still reports its own error and still reds the step.",
+	},
+	{
 		ID:       "pacman-needed-package-already-current",
 		Severity: severityWarning,
 		Match:    regexp.MustCompile(`^warning: [A-Za-z0-9_.+:-]+ is up to date -- skipping$`),

@@ -615,3 +615,55 @@ func TestUpdateRcDAllowanceIsScoped(t *testing.T) {
 		}
 	}
 }
+
+// The snapshot-alignment downgrade entry, exercised on the EXACT lines a real Omarchy build
+// emits. layer-omarchy-base repoints pacman at Omarchy's frozen mirror and runs -Syuu so the
+// image IS that snapshot rather than a mix of two; these five lines are that alignment doing
+// its job, and a build producing none of them would mean it had not run.
+func TestSnapshotDowngradeIsAllowlisted(t *testing.T) {
+	log := "STEP 3/9: RUN pacman -Syuu --noconfirm\n" +
+		"warning: ca-certificates-mozilla: downgrading from version 3.128-1 to version 3.127-1\n" +
+		"warning: libcap-ng: downgrading from version 0.9.5-1 to version 0.9.3-1\n" +
+		"warning: libgcrypt: downgrading from version 1.12.3-1 to version 1.12.2-1\n" +
+		"warning: libksba: downgrading from version 1.8.1-1 to version 1.8.0-1\n" +
+		"warning: openssl: downgrading from version 3.6.4-1 to version 3.6.3-1\n"
+
+	d := scanStepDiagnostics(log)
+	if d.Allowlisted != 5 {
+		t.Errorf("Allowlisted = %d, want 5", d.Allowlisted)
+	}
+	if d.Warnings != 0 {
+		t.Errorf("Warnings = %d, want 0 — every line is the intended alignment", d.Warnings)
+	}
+	for _, f := range d.Findings {
+		if f.AllowID != "pacman-repo-serves-older-than-installed" {
+			t.Errorf("finding %q claimed by %q, want pacman-repo-serves-older-than-installed", f.Text, f.AllowID)
+		}
+	}
+}
+
+// The entry must stay NARROW. It claims the per-package downgrade sentence and nothing else:
+// not an epoch-versioned variant it was never scoped for, not a failed transaction, and not
+// a line that merely contains the word.
+func TestSnapshotDowngradeEntryDoesNotOverClaim(t *testing.T) {
+	// An epoch on either side is still the same sentence and must be claimed.
+	claimed := scanStepDiagnostics("warning: mesa: downgrading from version 1:26.2.1-1 to version 1:26.2.0-1\n")
+	if claimed.Allowlisted != 1 || claimed.Warnings != 0 {
+		t.Errorf("an epoch-versioned downgrade must be claimed: allowlisted=%d warnings=%d",
+			claimed.Allowlisted, claimed.Warnings)
+	}
+
+	// These must NOT be claimed — each is a different event that still deserves attention.
+	for _, line := range []string{
+		"error: failed to prepare transaction (could not satisfy dependencies)\n",
+		"warning: downgrading is dangerous and you should not do it\n",
+		"warning: openssl: downgrading from version 3.6.4-1 to version 3.6.3-1 and then exploding\n",
+	} {
+		d := scanStepDiagnostics(line)
+		for _, f := range d.Findings {
+			if f.AllowID == "pacman-repo-serves-older-than-installed" {
+				t.Errorf("entry over-claimed %q", line)
+			}
+		}
+	}
+}
