@@ -729,9 +729,20 @@ func printDebugRetentionNotice(w *os.File, name string, d spec.CheckBedReply) {
 	}
 	switch {
 	case d.IsVM:
+		// Both hints are keyed by the per-deploy DOMAIN IDENTITY (d.BedDomain), never by the
+		// shared kind:vm entity (d.VMTemplate). charly-<BedDomain> is the live libvirt domain
+		// AND the managed ssh alias (see waitReady above, and `charly vm destroy --domain`,
+		// whose own help says "keyed by the DEPLOY not the entity"). Printing the entity here
+		// emitted commands that CANNOT run: for bed check-omarchy-desktop-vm on entity
+		// omarchy-vm it said `charly vm ssh omarchy-vm`, which resolves the alias
+		// charly-omarchy-vm — a host that does not exist — so the one command an operator
+		// reaches for at the exact moment a bed fails died with NXDOMAIN. The cleanup path in
+		// this same file already passes `--domain d.BedDomain`; only this operator-facing
+		// message was left behind.
 		fmt.Fprintf(w, "\n[charly check run] bed %q FAILED — VM %q left running for debugging.\n"+
 			"  inspect: %s | charly vm ssh %s\n"+
-			"  destroy: charly vm destroy %s\n", name, d.VMTemplate, live, d.VMTemplate, d.VMTemplate)
+			"  destroy: charly vm destroy %s --domain %s\n",
+			name, "charly-"+d.BedDomain, live, d.BedDomain, d.VMTemplate, d.BedDomain)
 	case d.IsLocal:
 		fmt.Fprintf(w, "\n[charly check run] bed %q FAILED — local apply left in place for debugging.\n"+
 			"  destroy: charly remove %s\n", name, name)
