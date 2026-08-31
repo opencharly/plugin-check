@@ -53,6 +53,7 @@ func (e *CheckSkippedError) Error() string { return e.Msg }
 // relocation stays file-disjoint from this shared grammar struct.
 type CheckCmd struct {
 	Box     CheckBoxCmd     `cmd:"" name:"box" help:"Pure-box check (disposable container, build-scope checks)"`
+	Plan    CheckPlanCmd    `cmd:"" name:"plan" help:"Resolve a box's check plan and print it as JSON without running it"`
 	Live    CheckLiveCmd    `cmd:"" name:"live" help:"Full-stack check against a running deployment"`
 	Feature CheckFeatureCmd `cmd:"" name:"feature" help:"Run a running deployment's baked plan as acceptance tests; agent steps are agent-graded (Agent Driven Evaluation)"`
 
