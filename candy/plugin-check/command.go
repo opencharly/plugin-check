@@ -76,6 +76,8 @@ func hostCheckRunCtx(ctx context.Context, req spec.CheckRunRequest) (kit.CheckRu
 	switch req.Mode {
 	case "box":
 		return pluginCheckRunBox(cmdExec, ctx, req)
+	case "plan":
+		return pluginCheckRunPlan(cmdExec, ctx, req)
 	case "live":
 		return pluginCheckRunLive(cmdExec, ctx, req)
 	case "feature-live":
