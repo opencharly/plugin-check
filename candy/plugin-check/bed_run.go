@@ -574,6 +574,10 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// Step 4: deploy/runtime acceptance — gated out at check_level: none|build.
 	// Members are instruments for the runtime probes, so bring-up is gated with them.
 	if d.RunRuntime {
+		// A previous bed's teardown can leave aardvark-dns serving a dead network namespace,
+		// which kills container-name resolution host-wide until something repairs it. Do that
+		// here rather than letting members come up into a venue where peers cannot resolve.
+		repairStrandedContainerDNS(func(f string, a ...any) { fmt.Printf(f+"\n", a...) })
 		if err := phase("bring-up-members", bringUpMembersFresh); err != nil {
 			return fail("bring up peers for %s: %w", name, err)
 		}
