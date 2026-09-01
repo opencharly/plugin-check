@@ -50,7 +50,6 @@ type bedRunOpts struct {
 	// §5.3 snapshot-anchored mode (see anchored.go for the decision table):
 	Anchor    string            // --anchor <name>: revert this golden-disk snapshot before the checks
 	KeepVenue bool              // --keep-venue: keep the VM venue between batch runs (forces Keep)
-	Variant   string            // --variant <name>: boot the VM with the named variants: shape override
 	Vars      map[string]string // --var key=value: per-run variable passthrough into the check-run env
 }
 
@@ -199,7 +198,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 
 	// Anchored-mode validation BEFORE any step runs (bad --anchor/--variant fails
 	// fast, before anything is destroyed or persisted).
-	if verr := validateAnchoredRun(opts, d, bedNode, name); verr != nil {
+	if verr := validateAnchoredRun(opts, d, name); verr != nil {
 		return nil, verr
 	}
 
@@ -507,7 +506,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		if err := step("vm-build", "vm", "build", d.VMTemplate); err != nil {
 			return fail("vm build %s: %w", d.VMTemplate, err)
 		}
-		if err := step("vm-create", vmCreateArgs(d, opts.Variant)...); err != nil {
+		if err := step("vm-create", vmCreateArgs(d)...); err != nil {
 			return fail("vm create %s: %w", d.VMTemplate, err)
 		}
 		deployed = true // VM domain exists — keep it on any later failure

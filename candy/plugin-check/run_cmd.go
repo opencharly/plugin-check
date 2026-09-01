@@ -45,12 +45,10 @@ type CheckRunCmd struct {
 	NoRebuild bool `name:"no-rebuild" help:"check beds: skip the fresh-update R10 re-verify step (R10 acceptance gate)"`
 	// §5.3 snapshot-anchored mode (VM beds): revert the named golden-disk
 	// snapshot before the checks (the operator's FRESH lane — a run without
-	// --anchor — captures it on_finalize), keep the venue between batch runs, boot
-	// with a declared variants: shape override, and pass per-run vars into the
-	// check-run env.
+	// --anchor — captures it on_finalize), keep the venue between batch runs, and
+	// pass per-run vars into the check-run env.
 	Anchor    string   `name:"anchor" help:"check beds (VM): snapshot-anchored mode — revert this golden-disk snapshot before the checks (fresh lane captures it on_finalize)"`
 	KeepVenue bool     `name:"keep-venue" help:"check beds (VM): keep the VM venue between batch runs (forces --keep)"`
-	Variant   string   `name:"variant" help:"check beds (VM): boot the VM with this variants: shape override (must be declared in the bed)"`
 	Vars      []string `name:"var" help:"check beds: per-run variable passthrough (key=value; repeatable)"`
 
 	// Mutually-exclusive target overrides (iterate: path).
@@ -152,7 +150,6 @@ func checkRunBedOpts(c *CheckRunCmd) (bedRunOpts, error) {
 		NoRebuild: c.NoRebuild || c.Anchor != "",
 		Anchor:    c.Anchor,
 		KeepVenue: c.KeepVenue,
-		Variant:   c.Variant,
 		Vars:      vars,
 	}, nil
 }

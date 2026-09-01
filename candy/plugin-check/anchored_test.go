@@ -4,8 +4,8 @@ package check
 // (anchored.go). Every test FAILS without the new code: the helpers under test
 // did not exist before this change, so a revert of the feature removes the
 // functions the tests call (compile error = fail), and the assertions pin the
-// new behavior (revert issuance, Step-5 skip, keep-venue→Keep, variant
-// validation) rather than any pre-existing path.
+// new behavior (revert issuance, Step-5 skip, keep-venue→Keep) rather than any
+// pre-existing path.
 
 import (
 	"strings"
@@ -81,38 +81,16 @@ func TestParseRunVars_RejectsMalformed(t *testing.T) {
 	}
 }
 
-func TestValidateAnchoredRun_VariantNotDeclaredRejected(t *testing.T) {
-	opts := bedRunOpts{Variant: "big-mem"}
-	node := spec.FleetNode{Variants: map[string]*spec.VmVariant{
-		"small": {Cpus: 2},
-	}}
-	err := validateAnchoredRun(opts, vmBedReply(), node, "check-vm")
-	if err == nil {
-		t.Fatalf("undecided variant accepted, want rejection")
-	}
-	if !strings.Contains(err.Error(), "big-mem") || !strings.Contains(err.Error(), "variants: map") {
-		t.Errorf("error %q should name the variant and the variants: map", err)
-	}
-	// Declared variant passes.
-	if err := validateAnchoredRun(bedRunOpts{Variant: "small"}, vmBedReply(), node, "check-vm"); err != nil {
-		t.Errorf("declared variant rejected: %v", err)
-	}
-}
-
 func TestValidateAnchoredRun_AnchorRequiresVmBed(t *testing.T) {
-	err := validateAnchoredRun(bedRunOpts{Anchor: "golden"}, spec.CheckBedReply{IsVM: false}, spec.FleetNode{}, "check-pod")
+	err := validateAnchoredRun(bedRunOpts{Anchor: "golden"}, spec.CheckBedReply{IsVM: false}, "check-pod")
 	if err == nil {
 		t.Fatalf("--anchor on a non-VM bed accepted, want rejection")
 	}
 	if !strings.Contains(err.Error(), "VM-only") {
 		t.Errorf("error %q should say snapshot-anchored mode is VM-only", err)
 	}
-	err = validateAnchoredRun(bedRunOpts{Variant: "big"}, spec.CheckBedReply{IsVM: false}, spec.FleetNode{}, "check-pod")
-	if err == nil {
-		t.Fatalf("--variant on a non-VM bed accepted, want rejection")
-	}
 	// A plain anchored VM run validates clean.
-	if err := validateAnchoredRun(bedRunOpts{Anchor: "golden"}, vmBedReply(), spec.FleetNode{}, "check-vm"); err != nil {
+	if err := validateAnchoredRun(bedRunOpts{Anchor: "golden"}, vmBedReply(), "check-vm"); err != nil {
 		t.Errorf("valid anchored VM run rejected: %v", err)
 	}
 }
@@ -133,14 +111,10 @@ func TestAnchoredPreCheckStep_IssuesSnapshotRevert(t *testing.T) {
 	}
 }
 
-func TestVmCreateArgs_VariantPassThrough(t *testing.T) {
-	base := []string{"vm", "create", "omarchy-vm", "--domain", "check-omarchy-vm"}
-	if got := vmCreateArgs(vmBedReply(), ""); !equalArgs(got, base) {
-		t.Errorf("vmCreateArgs(no variant) = %v, want %v", got, base)
-	}
-	want := append(append([]string{}, base...), "--variant", "big-mem")
-	if got := vmCreateArgs(vmBedReply(), "big-mem"); !equalArgs(got, want) {
-		t.Errorf("vmCreateArgs(big-mem) = %v, want %v (variant must ride the vm create argv)", got, want)
+func TestVmCreateArgs_BuildsCreateArgv(t *testing.T) {
+	want := []string{"vm", "create", "omarchy-vm", "--domain", "check-omarchy-vm"}
+	if got := vmCreateArgs(vmBedReply()); !equalArgs(got, want) {
+		t.Errorf("vmCreateArgs() = %v, want %v", got, want)
 	}
 }
 

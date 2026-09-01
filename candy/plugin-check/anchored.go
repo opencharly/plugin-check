@@ -58,38 +58,13 @@ func runVarsArgv(vars map[string]string) []string {
 }
 
 // validateAnchoredRun rejects anchored-mode misuse BEFORE any step runs. The
-// snapshot chain + variants are VM-only (the spec's substrate-word checks reject
-// them on other substrates), and a selected variant MUST be declared in the
-// bed's own variants: map — a variant boots the shared golden disk with a shape
-// override, never an invented shape.
-func validateAnchoredRun(opts bedRunOpts, d spec.CheckBedReply, node spec.FleetNode, bed string) error {
+// snapshot chain is VM-only (the spec's substrate-word checks reject it on other
+// substrates).
+func validateAnchoredRun(opts bedRunOpts, d spec.CheckBedReply, bed string) error {
 	if opts.Anchor != "" && !d.IsVM {
 		return fmt.Errorf("charly check run %s: --anchor %q requires a VM bed (snapshot-anchored mode is VM-only)", bed, opts.Anchor)
 	}
-	if opts.Variant == "" {
-		return nil
-	}
-	if !d.IsVM {
-		return fmt.Errorf("charly check run %s: --variant %q requires a VM bed", bed, opts.Variant)
-	}
-	if _, declared := node.Variants[opts.Variant]; !declared {
-		return fmt.Errorf("charly check run %s: --variant %q is not declared in the bed's variants: map (declared: %s)",
-			bed, opts.Variant, variantNames(node.Variants))
-	}
 	return nil
-}
-
-// variantNames returns the sorted declared variant names for an error message.
-func variantNames(variants map[string]*spec.VmVariant) string {
-	if len(variants) == 0 {
-		return "(none)"
-	}
-	names := make([]string, 0, len(variants))
-	for name := range variants {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return strings.Join(names, ", ")
 }
 
 // anchoredPreCheckStep returns the snapshot-revert step argv an anchored run
@@ -104,20 +79,9 @@ func anchoredPreCheckStep(d spec.CheckBedReply, opts bedRunOpts) []string {
 	return []string{"vm", "snapshot", "revert", d.VMTemplate, opts.Anchor}
 }
 
-// vmCreateArgs builds the `charly vm create` argv for a bed's VM arm. A selected
-// variant passes through as --variant <name> so plugin-vm can apply the bed's
-// variants: shape override to a boot over the shared golden disk.
-//
-// NOTE (follow-up plugin-vm PR): plugin-vm's VmCreateCmd does not accept
-// --variant yet, so an opted-in --variant fails loudly at vm-create until that
-// lands. That is the honest behavior for an opt-in flag — no existing bed
-// regresses (the flag is only passed when the operator selects a variant).
-func vmCreateArgs(d spec.CheckBedReply, variant string) []string {
-	args := []string{"vm", "create", d.VMTemplate, "--domain", d.BedDomain}
-	if variant != "" {
-		args = append(args, "--variant", variant)
-	}
-	return args
+// vmCreateArgs builds the `charly vm create` argv for a bed's VM arm.
+func vmCreateArgs(d spec.CheckBedReply) []string {
+	return []string{"vm", "create", d.VMTemplate, "--domain", d.BedDomain}
 }
 
 // withRunVars folds the request's per-run vars into the check-run env so plan
