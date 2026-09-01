@@ -97,7 +97,7 @@ func TestValidateAnchoredRun_AnchorRequiresVmBed(t *testing.T) {
 
 func TestAnchoredPreCheckStep_IssuesSnapshotRevert(t *testing.T) {
 	got := anchoredPreCheckStep(vmBedReply(), bedRunOpts{Anchor: "golden"})
-	want := []string{"vm", "snapshot", "revert", "omarchy-vm", "golden", "--domain", "check-omarchy-vm"}
+	want := []string{"vm", "snapshot", "revert-and-start", "omarchy-vm", "golden", "--domain", "check-omarchy-vm"}
 	if !equalArgs(got, want) {
 		t.Fatalf("anchoredPreCheckStep = %v, want %v (the revert must fire before the checks)", got, want)
 	}

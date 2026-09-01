@@ -74,11 +74,16 @@ func validateAnchoredRun(opts bedRunOpts, d spec.CheckBedReply, bed string) erro
 // 20-30 min. The revert targets the bed's per-deploy domain (--domain
 // <BedDomain>, #33/P33): the snapshot surface is keyed on the entity, and the
 // bed's live domain is named after the DEPLOY, not the entity.
+//
+// The step is `vm snapshot revert-and-start` (the plugin-vm composite): the
+// anchored lane's venue is kept from the fresh lane (shut off after the update
+// rebuild), and the composite encapsulates stop (no-op if already off) →
+// offline revert → start, so the domain is booted and ready for the checks.
 func anchoredPreCheckStep(d spec.CheckBedReply, opts bedRunOpts) []string {
 	if opts.Anchor == "" || !d.IsVM {
 		return nil
 	}
-	return []string{"vm", "snapshot", "revert", d.VMTemplate, opts.Anchor, "--domain", d.BedDomain}
+	return []string{"vm", "snapshot", "revert-and-start", d.VMTemplate, opts.Anchor, "--domain", d.BedDomain}
 }
 
 // vmCreateArgs builds the `charly vm create` argv for a bed's VM arm.

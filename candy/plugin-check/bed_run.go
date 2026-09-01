@@ -525,16 +525,23 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 			}
 		}
 		deployed = true // VM domain exists — keep it on any later failure
-		waitReady()
-		if err := step("deploy-add", bedAdd(name, d.VMTemplate)...); err != nil {
-			return fail("fleet add %s: %w", name, err)
-		}
-		// Deploy the VM's nested HOST-ROOTED (kind:local) children only (d.LocalChildKeys, the
-		// host-resolved deployNestedLocalChildren subset). A VM's nested CONTAINER children are
-		// deployed IN-GUEST by plugin-deploy-vm's PostApply, so a host-side re-deploy would be wrong.
-		for _, childKey := range d.LocalChildKeys {
-			if err := step("deploy-"+childKey, bedAdd(name+"."+childKey)...); err != nil {
-				return fail("deploy nested local child %s.%s: %w", name, childKey, err)
+		// Anchored mode reuses the venue: the domain is already deployed from the
+		// fresh lane, so skip waitReady + deploy-add (the fleet plugin's prepare-
+		// venue would try to `vm create` the existing domain and fail). The
+		// snapshot-revert-and-start step below resets the kept domain's disk and
+		// boots it; waitReady runs after it, before the checks.
+		if opts.Anchor == "" {
+			waitReady()
+			if err := step("deploy-add", bedAdd(name, d.VMTemplate)...); err != nil {
+				return fail("fleet add %s: %w", name, err)
+			}
+			// Deploy the VM's nested HOST-ROOTED (kind:local) children only (d.LocalChildKeys, the
+			// host-resolved deployNestedLocalChildren subset). A VM's nested CONTAINER children are
+			// deployed IN-GUEST by plugin-deploy-vm's PostApply, so a host-side re-deploy would be wrong.
+			for _, childKey := range d.LocalChildKeys {
+				if err := step("deploy-"+childKey, bedAdd(name+"."+childKey)...); err != nil {
+					return fail("deploy nested local child %s.%s: %w", name, childKey, err)
+				}
 			}
 		}
 	case d.IsGroup:
@@ -610,12 +617,15 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// §5.3 anchored mode: BEFORE the checks run, reset the venue's disk to the
 	// golden snapshot (captured on_finalize by the operator's fresh lane). Revert
 	// ≈ seconds vs a fresh install ≈ 20-30 min. A missing snapshot (revert fails)
-	// fails the run with guidance to run the fresh lane first.
+	// fails the run with guidance to run the fresh lane first. The revert-and-start
+	// composite boots the domain; waitReady (skipped in the VM arm for anchored
+	// runs) runs here so the checks find SSH up.
 	if argv := anchoredPreCheckStep(d, opts); argv != nil {
 		if err := step("snapshot-revert", argv...); err != nil {
 			return fail("snapshot revert %s -> %q: %w — run the FRESH lane first: `charly check run %s` (NO --anchor) builds the golden disk and captures the snapshot on_finalize",
 				d.VMTemplate, opts.Anchor, err, name)
 		}
+		waitReady()
 	}
 
 	// Step 4: deploy/runtime acceptance — gated out at check_level: none|build.
