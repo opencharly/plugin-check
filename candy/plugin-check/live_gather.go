@@ -135,6 +135,7 @@ func pluginCheckLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.Resolved
 	resolver = stampCharlyBin(resolver)
 
 	env, hasRuntime := pluginResolverEnv(resolver)
+	env = withRunVars(env, req.Vars)
 	hostVars := map[string]string{}
 	var hostCleanups []func()
 	for _, sec := range [][]kit.LabeledDescription{set.Candy, set.Box, set.Deploy} {
@@ -319,7 +320,7 @@ func pluginCheckLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedP
 	if nestedLeaf != nil && nodeTraits(nestedLeaf).Venue == "container" {
 		parts := strings.Split(req.Name, ".")
 		guestPod := parts[len(parts)-1]
-		guestCmd := guestNestedCheckCmd(guestPod, "", req.Section, req.Filter, req.Instance)
+		guestCmd := guestNestedCheckCmd(guestPod, "", req.Section, req.Filter, req.Instance, req.Vars)
 		vmSSH := &kit.SSHExecutor{Host: kit.VmSshAlias(domainID), ConnectTimeout: 10}
 		header := fmt.Sprintf("VM: %s — nested pod %q evaluated IN the guest (%s)", kit.VmSshAlias(domainID), guestPod, kit.VmSshAlias(domainID))
 		stdout, stderr, exit, rerr := vmSSH.RunCapture(ctx, guestCmd)
@@ -344,6 +345,7 @@ func pluginCheckLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedP
 	// the reverse-channel's own ambient-executor fallback in play, which is nil for a top-level
 	// `charly check ...` command Invoke).
 	envVars, hasRuntime := pluginResolverEnv(resolver)
+	envVars = withRunVars(envVars, req.Vars)
 	hostVars, hostCleanups := resolveHostVarsForSteps(ex, ctx, dir, plan, req.Instance)
 	defer kit.CloseHostCleanups(hostCleanups)
 	runner := newPluginCheckRunner(ex, ctx, spec.CheckEnv{
@@ -406,7 +408,7 @@ func pluginCheckLiveLocal(ex *sdk.Executor, ctx context.Context, rp *spec.Resolv
 	}
 	header := fmt.Sprintf("Local deploy: %s [%s]", req.Name, venue)
 
-	results, hadPlan, err := pluginRunLocalDeployScopePlan(ex, ctx, rp, dir, node, req.Name, req.Instance, executor)
+	results, hadPlan, err := pluginRunLocalDeployScopePlan(ex, ctx, rp, dir, node, req.Name, req.Instance, req.Vars, executor)
 	if err != nil {
 		return kit.CheckRunReply{}, err
 	}
@@ -419,7 +421,7 @@ func pluginCheckLiveLocal(ex *sdk.Executor, ctx context.Context, rp *spec.Resolv
 // pluginRunLocalDeployScopePlan collects a local deployment's deploy-scope plan (the kind:local
 // template's plan + the deploy node's plan + the per-host overlay) and runs it — the port of
 // charly/check_cmd.go's runLocalDeployScopePlan.
-func pluginRunLocalDeployScopePlan(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, dir string, node *spec.FleetNode, image, instance string, exec deploykit.DeployExecutor) (results []kit.StepResult, hadPlan bool, err error) {
+func pluginRunLocalDeployScopePlan(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, dir string, node *spec.FleetNode, image, instance string, vars map[string]string, exec deploykit.DeployExecutor) (results []kit.StepResult, hadPlan bool, err error) {
 	var plan []spec.Step
 	if node != nil && strings.TrimSpace(node.From) != "" {
 		if raw, ok := templateBody(rp, "local", strings.TrimSpace(node.From)); ok {
@@ -457,6 +459,7 @@ func pluginRunLocalDeployScopePlan(ex *sdk.Executor, ctx context.Context, rp *sp
 	}
 	set := &kit.LabelDescriptionSet{Deploy: []kit.LabeledDescription{{Origin: "local:" + image, Plan: plan}}}
 	env, hasRuntime := pluginResolverEnv(resolver)
+	env = withRunVars(env, vars)
 	hostVars, hostCleanups := resolveHostVarsForSteps(ex, ctx, dir, plan, instance)
 	defer kit.CloseHostCleanups(hostCleanups)
 	runner := newPluginCheckRunner(ex, ctx, spec.CheckEnv{
@@ -498,6 +501,7 @@ func pluginCheckLiveGroup(ex *sdk.Executor, ctx context.Context, rp *spec.Resolv
 	})
 
 	env, hasRuntime := pluginResolverEnv(resolver)
+	env = withRunVars(env, req.Vars)
 	hostVars, hostCleanups := resolveHostVarsForSteps(ex, ctx, dir, plan, req.Instance)
 	defer kit.CloseHostCleanups(hostCleanups)
 	runner := newPluginCheckRunner(ex, ctx, spec.CheckEnv{

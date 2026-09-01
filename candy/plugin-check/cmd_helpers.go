@@ -54,8 +54,11 @@ func resolveNestedNode(roots map[string]spec.FleetNode, path string) *spec.Fleet
 }
 
 // guestNestedCheckCmd builds the `charly check live <pod>` command that a nested-in-VM pod
-// delegates to the guest over SSH. Ported unchanged (pure string builder, no core dependency).
-func guestNestedCheckCmd(guestPod, format, section string, filter []string, instance string) string {
+// check dispatches INTO the guest over SSH. Ported unchanged from
+// charly/check_cmd.go (pure string builder, no core dependency) plus the per-run
+// --var passthrough: vars ride along as sorted --var key=value args so the
+// guest's check-run env sees the same vars the host's direct live path sees.
+func guestNestedCheckCmd(guestPod, format, section string, filter []string, instance string, vars map[string]string) string {
 	if format == "" {
 		format = "text"
 	}
@@ -69,6 +72,12 @@ func guestNestedCheckCmd(guestPod, format, section string, filter []string, inst
 	}
 	if instance != "" {
 		cmd.WriteString(" -i " + shellquote.ShellQuote(instance))
+	}
+	// runVarsArgv is the sorted ["--var", "k=v", ...] interleave; quote only the
+	// values (flags stay bare, matching the --format/--filter pattern above).
+	vargs := runVarsArgv(vars)
+	for i := 0; i+1 < len(vargs); i += 2 {
+		cmd.WriteString(" " + vargs[i] + " " + shellquote.ShellQuote(vargs[i+1]))
 	}
 	return cmd.String()
 }

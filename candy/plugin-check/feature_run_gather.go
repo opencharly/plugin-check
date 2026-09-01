@@ -102,6 +102,7 @@ func pluginCheckRunFeatureLivePod(ex *sdk.Executor, ctx context.Context, rp *spe
 	}
 
 	env, hasRuntime := pluginResolverEnv(resolver)
+	env = withRunVars(env, req.Vars)
 	var grader kit.StepGrader
 	if !req.NoAgent {
 		ai, aerr := resolveAgentSpec(ex, ctx, rp.AgentBodies, req.Agent)
@@ -193,6 +194,7 @@ func pluginCheckRunFeatureLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec
 	set := &kit.LabelDescriptionSet{Deploy: []kit.LabeledDescription{{Origin: "vm:" + vmName, Plan: plan}}}
 
 	envVars, hasRuntime := pluginResolverEnv(resolver)
+	envVars = withRunVars(envVars, req.Vars)
 	hostVars, hostCleanups := resolveHostVarsForSteps(ex, ctx, dir, plan, req.Instance)
 	defer kit.CloseHostCleanups(hostCleanups)
 	var grader kit.StepGrader

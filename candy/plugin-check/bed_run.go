@@ -44,8 +44,14 @@ import (
 
 // bedRunOpts carries the per-run knobs (sourced from `charly check run` flags).
 type bedRunOpts struct {
-	Keep      bool // don't tear the bed down after the run (--keep)
-	NoRebuild bool // skip the fresh-update R10 re-verify step (--no-rebuild)
+	Keep      bool // don't tear the bed down after the run (--keep / --keep-venue)
+	NoRebuild bool // skip the fresh-update R10 re-verify step (--no-rebuild; forced by anchored mode)
+
+	// §5.3 snapshot-anchored mode (see anchored.go for the decision table):
+	Anchor    string            // --anchor <name>: revert this golden-disk snapshot before the checks
+	KeepVenue bool              // --keep-venue: keep the VM venue between batch runs (forces Keep)
+	Variant   string            // --variant <name>: boot the VM with the named variants: shape override
+	Vars      map[string]string // --var key=value: per-run variable passthrough into the check-run env
 }
 
 // stepResult captures one step's outcome for the summary.yml.
@@ -184,10 +190,18 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 
 	// teardown runs on EVERY exit path after a successful setup — it releases the
 	// session's locks/lease/env (NOT the deployed target). res.OK controls the
-	// preempt-lease disposition (Release vs ReleaseFailed).
+	// preempt-lease disposition (Release vs ReleaseFailed). Registered BEFORE the
+	// anchored-mode validation below: a rejected --anchor/--variant still releases
+	// the session's flock/domain locks/lease.
 	defer func() {
 		bedTeardown(ctx, ex, sess, res.OK)
 	}()
+
+	// Anchored-mode validation BEFORE any step runs (bad --anchor/--variant fails
+	// fast, before anything is destroyed or persisted).
+	if verr := validateAnchoredRun(opts, d, bedNode, name); verr != nil {
+		return nil, verr
+	}
 
 	// bestEffort runs a `charly` subcommand host-side, discarding the result (the
 	// pre-run cleanups that clear a lingering target from an interrupted run).
@@ -210,7 +224,12 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// moved verbatim (R3 — no duplication, nothing left behind in Step 3).
 	switch {
 	case d.IsVM:
-		bestEffort("vm", "destroy", d.VMTemplate, "--domain", d.BedDomain, "--if-exists")
+		// Anchored mode keeps the venue: the VM (domain + per-domain disk) survives
+		// from the fresh/previous run so the snapshot revert below can reset it to
+		// the golden disk — destroying it here would throw the golden state away.
+		if opts.Anchor == "" {
+			bestEffort("vm", "destroy", d.VMTemplate, "--domain", d.BedDomain, "--if-exists")
+		}
 	case d.IsGroup:
 		bestEffort("remove", name, "--purge")
 		_ = deploykit.TearDownMembers(&bedNode)
@@ -488,7 +507,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		if err := step("vm-build", "vm", "build", d.VMTemplate); err != nil {
 			return fail("vm build %s: %w", d.VMTemplate, err)
 		}
-		if err := step("vm-create", "vm", "create", d.VMTemplate, "--domain", d.BedDomain); err != nil {
+		if err := step("vm-create", vmCreateArgs(d, opts.Variant)...); err != nil {
 			return fail("vm create %s: %w", d.VMTemplate, err)
 		}
 		deployed = true // VM domain exists — keep it on any later failure
@@ -564,11 +583,25 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 			if i > 0 {
 				label = stepLabel + "-" + ref[len(name)+1:] // childKey after "<name>."
 			}
-			if err := step(label, "check", "live", ref); err != nil {
+			// Per-run --var passthrough rides the check-live cli-reentry argv
+			// (CheckLiveCmd.Vars → CheckRunRequest.Vars → the live runner env).
+			argv := append([]string{"check", "live", ref}, runVarsArgv(opts.Vars)...)
+			if err := step(label, argv...); err != nil {
 				return err
 			}
 		}
 		return nil
+	}
+
+	// §5.3 anchored mode: BEFORE the checks run, reset the venue's disk to the
+	// golden snapshot (captured on_finalize by the operator's fresh lane). Revert
+	// ≈ seconds vs a fresh install ≈ 20-30 min. A missing snapshot (revert fails)
+	// fails the run with guidance to run the fresh lane first.
+	if argv := anchoredPreCheckStep(d, opts); argv != nil {
+		if err := step("snapshot-revert", argv...); err != nil {
+			return fail("snapshot revert %s -> %q: %w — run the FRESH lane first: `charly check run %s` (NO --anchor) builds the golden disk and captures the snapshot on_finalize",
+				d.VMTemplate, opts.Anchor, err, name)
+		}
 	}
 
 	// Step 4: deploy/runtime acceptance — gated out at check_level: none|build.
@@ -593,8 +626,12 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		}
 	}
 
-	// Step 5: fresh-update re-verify (the R10 acceptance gate). Suppressed by --no-rebuild.
-	if !opts.NoRebuild && d.IsGroup {
+	// Step 5: fresh-update re-verify (the R10 acceptance gate). Suppressed by --no-rebuild —
+	// and structurally suppressed in anchored mode (opts.Anchor != ""): revert IS the
+	// freshness mechanism, so a fresh update against a reverted golden disk is meaningless
+	// (checkRunBedOpts also forces NoRebuild from --anchor; this guard keeps the invariant
+	// at the point of decision for any direct caller).
+	if !opts.NoRebuild && opts.Anchor == "" && d.IsGroup {
 		// Group bed: NO root container to `charly update` — a generic `charly update <bed>` would
 		// mis-resolve a TARGETLESS group as a default-pod deploy ("target pod not connected"). The R10
 		// fresh-rebuild gate instead re-builds each member image, tears the members down, re-brings
@@ -621,7 +658,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 				return fail("check live (fresh rebuild) %s: %w", name, err)
 			}
 		}
-	} else if !opts.NoRebuild {
+	} else if !opts.NoRebuild && opts.Anchor == "" {
 		// The fresh-rebuild gate must verify the JUST-BUILT per-run image, not re-resolve
 		// the untagged logical box name: `charly update` without --tag resolves "newest
 		// local CalVer", and a bed-run tag (<bed>-<calver>) is NOT a plain CalVer, so the
