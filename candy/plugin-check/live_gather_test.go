@@ -126,6 +126,26 @@ func TestPluginGuestNestedCheckCmd(t *testing.T) {
 // devices block, or an empty hostdevs list all read as 0 ("no GPU configured for this VM" →
 // legit N/A), and a declared hostdevs list reports its length (the GPU check then HARD-FAILS if
 // the guest can't see the device).
+// TestPluginCheckRunFeatureLive_VmDispatch proves the feature-live ADE path
+// classifies a VM target via checkVmTarget (the same classifier the check-live
+// path uses) — the dispatch that routes a VM target to the VM arm
+// (pluginCheckRunFeatureLiveVM) rather than the container-only path. Before the
+// fix, the feature-live path called deploykit.ResolveContainer directly and a
+// VM target failed with "container ... is not running".
+func TestPluginCheckRunFeatureLive_VmDispatch(t *testing.T) {
+	sshDescent := &spec.DescentDescriptor{Venue: "ssh"}
+	tree := map[string]spec.FleetNode{
+		"check-omarchy-pr-vm": {Target: "vm", From: "omarchy-vm", Descent: sshDescent},
+		"check-omarchy-suite-pod": {Target: "pod", Descent: &spec.DescentDescriptor{Venue: "container"}},
+	}
+	if _, isVM := checkVmTarget(tree, "check-omarchy-pr-vm"); !isVM {
+		t.Fatal("feature-live VM dispatch: checkVmTarget did not classify the VM target as a VM")
+	}
+	if _, isVM := checkVmTarget(tree, "check-omarchy-suite-pod"); isVM {
+		t.Fatal("feature-live VM dispatch: checkVmTarget misclassified the pod target as a VM")
+	}
+}
+
 func TestPluginVmHostdevCount(t *testing.T) {
 	cases := []struct {
 		name string
