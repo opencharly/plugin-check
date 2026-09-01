@@ -187,6 +187,14 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	var bedNode spec.FleetNode
 	_ = json.Unmarshal(d.NodeJSON, &bedNode)
 
+	// The bed's snapshot: policy keep_venue: true forces --keep: a batch loop keeps
+	// this VM between runs (the golden snapshot + venue survive for the anchored
+	// lanes); teardown happens only at batch end. The policy is the validated
+	// default; the --keep-venue flag is the operator override (same effect).
+	if bedNode.Snapshot != nil && bedNode.Snapshot.KeepVenue {
+		opts.Keep = true
+	}
+
 	// teardown runs on EVERY exit path after a successful setup — it releases the
 	// session's locks/lease/env (NOT the deployed target). res.OK controls the
 	// preempt-lease disposition (Release vs ReleaseFailed). Registered BEFORE the
