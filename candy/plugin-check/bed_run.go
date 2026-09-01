@@ -506,8 +506,15 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		if err := step("vm-build", "vm", "build", d.VMTemplate); err != nil {
 			return fail("vm build %s: %w", d.VMTemplate, err)
 		}
-		if err := step("vm-create", vmCreateArgs(d)...); err != nil {
-			return fail("vm create %s: %w", d.VMTemplate, err)
+		// Anchored mode keeps the venue: the domain exists from the fresh lane
+		// (which captured the golden snapshot on_finalize). Skip vm-create — the
+		// snapshot-revert step below resets the kept domain's disk. A missing
+		// domain (anchored lane without a fresh lane first) fails at the revert
+		// with guidance to run the fresh lane.
+		if opts.Anchor == "" {
+			if err := step("vm-create", vmCreateArgs(d)...); err != nil {
+				return fail("vm create %s: %w", d.VMTemplate, err)
+			}
 		}
 		deployed = true // VM domain exists — keep it on any later failure
 		waitReady()
