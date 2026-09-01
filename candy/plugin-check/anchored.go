@@ -71,12 +71,14 @@ func validateAnchoredRun(opts bedRunOpts, d spec.CheckBedReply, bed string) erro
 // issues BEFORE the checks run, or nil when the run is not anchored (or the bed
 // is not a VM). The revert resets the venue's disk to the golden snapshot
 // captured by the operator's fresh lane — revert ≈ seconds vs a fresh install ≈
-// 20-30 min.
+// 20-30 min. The revert targets the bed's per-deploy domain (--domain
+// <BedDomain>, #33/P33): the snapshot surface is keyed on the entity, and the
+// bed's live domain is named after the DEPLOY, not the entity.
 func anchoredPreCheckStep(d spec.CheckBedReply, opts bedRunOpts) []string {
 	if opts.Anchor == "" || !d.IsVM {
 		return nil
 	}
-	return []string{"vm", "snapshot", "revert", d.VMTemplate, opts.Anchor}
+	return []string{"vm", "snapshot", "revert", d.VMTemplate, opts.Anchor, "--domain", d.BedDomain}
 }
 
 // vmCreateArgs builds the `charly vm create` argv for a bed's VM arm.
