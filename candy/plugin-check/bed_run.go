@@ -586,7 +586,6 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		}
 	}
 
-	
 	// checkLiveTree runs each `charly check live` exactly once against the bed's substrate AND every
 	// nested child through the multi-hop chain (bedCheckLiveRefs, resolved host-side
 	// into d.CheckLiveRefs). Readiness synchronization happens before this function;
@@ -734,7 +733,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		}
 	}
 
-// §5.3 snapshot: on_finalize capture — the FRESH lane (no --anchor) captures
+	// §5.3 snapshot: on_finalize capture — the FRESH lane (no --anchor) captures
 	// the golden snapshot at install finalize, per the bed's snapshot: policy. The
 	// anchored lane (--anchor) reverts to it instead of reinstalling. The capture
 	// targets the bed's per-deploy domain (--domain <BedDomain>, #33/P33) and is

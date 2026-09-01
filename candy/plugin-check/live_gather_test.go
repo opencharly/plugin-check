@@ -144,7 +144,7 @@ func TestPluginGuestNestedCheckCmd(t *testing.T) {
 func TestPluginCheckRunFeatureLive_VmDispatch(t *testing.T) {
 	sshDescent := &spec.DescentDescriptor{Venue: "ssh"}
 	tree := map[string]spec.FleetNode{
-		"check-omarchy-pr-vm": {Target: "vm", From: "omarchy-vm", Descent: sshDescent},
+		"check-omarchy-pr-vm":     {Target: "vm", From: "omarchy-vm", Descent: sshDescent},
 		"check-omarchy-suite-pod": {Target: "pod", Descent: &spec.DescentDescriptor{Venue: "container"}},
 	}
 	if arm := featureLiveArm(tree, "check-omarchy-pr-vm"); arm != "vm" {
