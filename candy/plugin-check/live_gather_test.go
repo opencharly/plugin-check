@@ -127,22 +127,22 @@ func TestPluginGuestNestedCheckCmd(t *testing.T) {
 // legit N/A), and a declared hostdevs list reports its length (the GPU check then HARD-FAILS if
 // the guest can't see the device).
 // TestPluginCheckRunFeatureLive_VmDispatch proves the feature-live ADE path
-// classifies a VM target via checkVmTarget (the same classifier the check-live
-// path uses) — the dispatch that routes a VM target to the VM arm
-// (pluginCheckRunFeatureLiveVM) rather than the container-only path. Before the
-// fix, the feature-live path called deploykit.ResolveContainer directly and a
-// VM target failed with "container ... is not running".
+// dispatches a VM target to the VM arm (featureLiveArm returns "vm") rather than
+// the container-only path. Before the fix, the feature-live path called
+// deploykit.ResolveContainer directly and a VM target failed with "container ...
+// is not running" — there was no dispatch at all, so this test fails without
+// the fix (featureLiveArm does not exist).
 func TestPluginCheckRunFeatureLive_VmDispatch(t *testing.T) {
 	sshDescent := &spec.DescentDescriptor{Venue: "ssh"}
 	tree := map[string]spec.FleetNode{
 		"check-omarchy-pr-vm": {Target: "vm", From: "omarchy-vm", Descent: sshDescent},
 		"check-omarchy-suite-pod": {Target: "pod", Descent: &spec.DescentDescriptor{Venue: "container"}},
 	}
-	if _, isVM := checkVmTarget(tree, "check-omarchy-pr-vm"); !isVM {
-		t.Fatal("feature-live VM dispatch: checkVmTarget did not classify the VM target as a VM")
+	if arm := featureLiveArm(tree, "check-omarchy-pr-vm"); arm != "vm" {
+		t.Fatalf("feature-live VM dispatch: want the VM arm, got %q", arm)
 	}
-	if _, isVM := checkVmTarget(tree, "check-omarchy-suite-pod"); isVM {
-		t.Fatal("feature-live VM dispatch: checkVmTarget misclassified the pod target as a VM")
+	if arm := featureLiveArm(tree, "check-omarchy-suite-pod"); arm != "pod" {
+		t.Fatalf("feature-live VM dispatch: want the pod arm, got %q", arm)
 	}
 }
 

@@ -39,6 +39,18 @@ import (
 // unless req.NoAgent. The port of the former core hostFeatureLive, mirroring
 // live_gather.go's pluginCheckLivePod's pod-venue construction (this mode is always a pod/
 // container deployment — the core original never classified vm/local/group here either).
+// featureLiveArm classifies a feature-live target: "vm" routes to the VM arm
+// (pluginCheckRunFeatureLiveVM), anything else to the pod arm. Extracted from
+// pluginCheckRunFeatureLive so the dispatch is testable — before the fix, the
+// feature-live path was container-only (deploykit.ResolveContainer directly) and
+// a VM target failed with "container ... is not running".
+func featureLiveArm(tree map[string]spec.FleetNode, name string) string {
+	if _, isVM := checkVmTarget(tree, name); isVM {
+		return "vm"
+	}
+	return "pod"
+}
+
 func pluginCheckRunFeatureLive(ex *sdk.Executor, ctx context.Context, req spec.CheckRunRequest) (kit.CheckRunReply, error) {
 	dir, _ := os.Getwd()
 	rp, err := resolvedProject(ex, ctx, dir)
@@ -49,7 +61,7 @@ func pluginCheckRunFeatureLive(ex *sdk.Executor, ctx context.Context, req spec.C
 	// Connect the out-of-process check-verb plugins (mcp/cdp/vnc/dbus/spice/…) the live plan
 	// references — ONCE, at command scope, before the per-kind dispatch (task #62).
 	checkLoadPlugins(ex, ctx, req.Name, dir)
-	if _, isVM := checkVmTarget(tree, req.Name); isVM {
+	if featureLiveArm(tree, req.Name) == "vm" {
 		return pluginCheckRunFeatureLiveVM(ex, ctx, rp, tree, dir, req)
 	}
 	return pluginCheckRunFeatureLivePod(ex, ctx, rp, tree, dir, req)
@@ -181,6 +193,8 @@ func pluginCheckRunFeatureLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec
 	set := &kit.LabelDescriptionSet{Deploy: []kit.LabeledDescription{{Origin: "vm:" + vmName, Plan: plan}}}
 
 	envVars, hasRuntime := pluginResolverEnv(resolver)
+	hostVars, hostCleanups := resolveHostVarsForSteps(ex, ctx, dir, plan, req.Instance)
+	defer kit.CloseHostCleanups(hostCleanups)
 	var grader kit.StepGrader
 	if !req.NoAgent {
 		ai, aerr := resolveAgentSpec(ex, ctx, rp.AgentBodies, req.Agent)
@@ -205,6 +219,8 @@ func pluginCheckRunFeatureLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec
 		VmName:               domainID,
 		SkipDeterministicRun: true,
 		CandyDirs:            candyDirsFromEnvelope(rp),
+		HostVars:             hostVars,
+		TargetResolver:       pluginVenueResolver(ex, ctx, dir, req.Instance),
 		Grader:               grader,
 	})
 	results := kit.RunPlan(ctx, runner, set, req.Strict)
