@@ -43,6 +43,13 @@ type CheckRunCmd struct {
 	// bed-path flags (ignored on the iterate: path).
 	Keep      bool `name:"keep" help:"check beds: don't tear the bed down after the run"`
 	NoRebuild bool `name:"no-rebuild" help:"check beds: skip the fresh-update R10 re-verify step (R10 acceptance gate)"`
+	// §5.3 snapshot-anchored mode (VM beds): revert the named golden-disk
+	// snapshot before the checks (the operator's FRESH lane — a run without
+	// --anchor — captures it on_finalize), keep the venue between batch runs, and
+	// pass per-run vars into the check-run env.
+	Anchor    string   `name:"anchor" help:"check beds (VM): snapshot-anchored mode — revert this golden-disk snapshot before the checks (fresh lane captures it on_finalize)"`
+	KeepVenue bool     `name:"keep-venue" help:"check beds (VM): keep the VM venue between batch runs (forces --keep)"`
+	Vars      []string `name:"var" help:"check beds: per-run variable passthrough (key=value; repeatable)"`
 
 	// Mutually-exclusive target overrides (iterate: path).
 	Pod  string `name:"on-pod" xor:"target" help:"Override the iterate target with this pod deployment"`
@@ -92,7 +99,11 @@ func (c *CheckRunCmd) Run() error {
 	// Dispatch: an entity carrying an iterate: block → the AI loop; a plain check bed
 	// → the deterministic R10 sequence.
 	if (!reply.HasNode || !reply.HasIterate) && reply.IsBed {
-		res, runErr := runCheckBed(ctx, ex, c.Name, bedRunOpts{Keep: c.Keep, NoRebuild: c.NoRebuild})
+		opts, optsErr := checkRunBedOpts(c)
+		if optsErr != nil {
+			return optsErr
+		}
+		res, runErr := runCheckBed(ctx, ex, c.Name, opts)
 		// A skipped bed (absent host prereq) is not a run — report SKIPPED and
 		// propagate CheckSkippedExitCode (3).
 		if res != nil && res.SkippedPrereq {
@@ -121,6 +132,26 @@ func bedVerdictLine(name string, ok bool, steps int, repoOverride string) string
 		verdict += fmt.Sprintf(" — repo override active (%s=%s): verdict is about the LOCAL tree, not the PR head", proc.RepoOverrideEnv, repoOverride)
 	}
 	return verdict
+}
+
+// checkRunBedOpts derives the bed-run knobs from the `charly check run` flags.
+// --keep-venue forces --keep (a batch loop never tears the venue down between
+// runs), and an anchored run forces NoRebuild: the Step-5 fresh-update re-verify
+// gate (the `!opts.NoRebuild` block) is meaningless against a reverted
+// golden disk — revert IS the freshness mechanism (R10's fresh-rebuild gate,
+// replaced).
+func checkRunBedOpts(c *CheckRunCmd) (bedRunOpts, error) {
+	vars, err := parseRunVars(c.Vars)
+	if err != nil {
+		return bedRunOpts{}, err
+	}
+	return bedRunOpts{
+		Keep:      c.Keep || c.KeepVenue,
+		NoRebuild: c.NoRebuild || c.Anchor != "",
+		Anchor:    c.Anchor,
+		KeepVenue: c.KeepVenue,
+		Vars:      vars,
+	}, nil
 }
 
 // runIterateEntity drives the iterate: AI iteration loop for the named entity: it

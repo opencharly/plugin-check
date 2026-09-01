@@ -87,6 +87,7 @@ func TestPluginGuestNestedCheckCmd(t *testing.T) {
 		section  string
 		filter   []string
 		instance string
+		vars     map[string]string
 		want     string
 	}{
 		{
@@ -110,10 +111,18 @@ func TestPluginGuestNestedCheckCmd(t *testing.T) {
 			instance: "work",
 			want:     "charly check live 'p' --format 'json' --section 'deploy' --filter 'cdp' --filter 'wl' -i 'work'",
 		},
+		{
+			name:     "per-run vars pass through sorted",
+			pod:      "p",
+			format:   "text",
+			vars:     map[string]string{"z": "1", "pr": "9345"},
+			instance: "work",
+			want:     "charly check live 'p' --format 'text' -i 'work' --var 'pr=9345' --var 'z=1'",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := guestNestedCheckCmd(tc.pod, tc.format, tc.section, tc.filter, tc.instance)
+			got := guestNestedCheckCmd(tc.pod, tc.format, tc.section, tc.filter, tc.instance, tc.vars)
 			if got != tc.want {
 				t.Errorf("guestNestedCheckCmd = %q, want %q", got, tc.want)
 			}
@@ -135,7 +144,7 @@ func TestPluginGuestNestedCheckCmd(t *testing.T) {
 func TestPluginCheckRunFeatureLive_VmDispatch(t *testing.T) {
 	sshDescent := &spec.DescentDescriptor{Venue: "ssh"}
 	tree := map[string]spec.FleetNode{
-		"check-omarchy-pr-vm": {Target: "vm", From: "omarchy-vm", Descent: sshDescent},
+		"check-omarchy-pr-vm":     {Target: "vm", From: "omarchy-vm", Descent: sshDescent},
 		"check-omarchy-suite-pod": {Target: "pod", Descent: &spec.DescentDescriptor{Venue: "container"}},
 	}
 	if arm := featureLiveArm(tree, "check-omarchy-pr-vm"); arm != "vm" {

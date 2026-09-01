@@ -24,15 +24,21 @@ type CheckLiveCmd struct {
 	Format   string   `name:"format" default:"text" help:"Output format: text, json, tap"`
 	Filter   []string `name:"filter" help:"Only run checks with these verbs (repeatable)"`
 	Section  string   `name:"section" help:"Only run this section: candy, box, or deploy"`
+	Vars     []string `name:"var" help:"Per-run variable passthrough (key=value; repeatable) — merged into the check-run env"`
 }
 
 func (c *CheckLiveCmd) Run() error {
+	vars, err := parseRunVars(c.Vars)
+	if err != nil {
+		return err
+	}
 	reply, err := hostCheckRun(spec.CheckRunRequest{
 		Mode:     "live",
 		Name:     c.Box,
 		Instance: c.Instance,
 		Section:  c.Section,
 		Filter:   c.Filter,
+		Vars:     vars,
 	})
 	if err != nil {
 		return err
