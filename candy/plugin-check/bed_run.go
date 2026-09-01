@@ -571,28 +571,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		}
 	}
 
-	// §5.3 snapshot: on_finalize capture — the FRESH lane (no --anchor) captures
-	// the golden snapshot at install finalize, per the bed's snapshot: policy. The
-	// anchored lane (--anchor) reverts to it instead of reinstalling. The capture
-	// targets the bed's per-deploy domain (--domain <BedDomain>, #33/P33) and is
-	// idempotent: an already-captured baseline (a re-run of the fresh lane) skips.
-	if d.IsVM && opts.Anchor == "" && bedNode.Snapshot != nil && bedNode.Snapshot.OnFinalize != "" {
-		verb := "create"
-		if bedNode.Snapshot.Consistent {
-			verb = "create-consistent"
-		}
-		argv := []string{"vm", "snapshot", verb, d.VMTemplate, bedNode.Snapshot.OnFinalize, "--domain", d.BedDomain}
-		if bedNode.Snapshot.Mode != "" {
-			argv = append(argv, "--mode", bedNode.Snapshot.Mode)
-		}
-		if err := step("snapshot-capture", argv...); err != nil {
-			if !strings.Contains(err.Error(), "already exists") {
-				return fail("snapshot capture %s -> %q: %w", d.VMTemplate, bedNode.Snapshot.OnFinalize, err)
-			}
-			fmt.Fprintf(os.Stderr, "note: snapshot %q already captured on %s \u2014 keeping the existing baseline\n", bedNode.Snapshot.OnFinalize, d.BedDomain)
-		}
-	}
-
+	
 	// checkLiveTree runs each `charly check live` exactly once against the bed's substrate AND every
 	// nested child through the multi-hop chain (bedCheckLiveRefs, resolved host-side
 	// into d.CheckLiveRefs). Readiness synchronization happens before this function;
@@ -737,6 +716,28 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 			if err := step("feature-run-rebuild", featureRunArgs()...); err != nil {
 				return fail("feature run (fresh rebuild) %s: %w", name, err)
 			}
+		}
+	}
+
+// §5.3 snapshot: on_finalize capture — the FRESH lane (no --anchor) captures
+	// the golden snapshot at install finalize, per the bed's snapshot: policy. The
+	// anchored lane (--anchor) reverts to it instead of reinstalling. The capture
+	// targets the bed's per-deploy domain (--domain <BedDomain>, #33/P33) and is
+	// idempotent: an already-captured baseline (a re-run of the fresh lane) skips.
+	if d.IsVM && opts.Anchor == "" && bedNode.Snapshot != nil && bedNode.Snapshot.OnFinalize != "" {
+		verb := "create"
+		if bedNode.Snapshot.Consistent {
+			verb = "create-consistent"
+		}
+		argv := []string{"vm", "snapshot", verb, d.VMTemplate, bedNode.Snapshot.OnFinalize, "--domain", d.BedDomain}
+		if bedNode.Snapshot.Mode != "" {
+			argv = append(argv, "--mode", bedNode.Snapshot.Mode)
+		}
+		if err := step("snapshot-capture", argv...); err != nil {
+			if !strings.Contains(err.Error(), "already exists") {
+				return fail("snapshot capture %s -> %q: %w", d.VMTemplate, bedNode.Snapshot.OnFinalize, err)
+			}
+			fmt.Fprintf(os.Stderr, "note: snapshot %q already captured on %s \u2014 keeping the existing baseline\n", bedNode.Snapshot.OnFinalize, d.BedDomain)
 		}
 	}
 
