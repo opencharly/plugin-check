@@ -82,11 +82,15 @@ func recordWrapSteps(dir string, rec map[string]any) (startPath, stopPath string
 		}
 		startIn["record_env"] = extra
 	}
+	// The injected steps are the DESUGARED wire form of an authored `record:` step:
+	// the parse-time sugar (<word>: <input> -> plugin: <word> + plugin_input) is skipped for
+	// injected steps, so Op.Plugin must be set explicitly (the record verb's discriminator).
 	start := []spec.Step{{
 		Check: "whole-run recording starts",
 		Op: spec.Op{
 			ID:          "record-wrap-start",
 			Context:     []spec.Context{"runtime"},
+			Plugin:      "record",
 			PluginInput: startIn,
 		},
 	}}
@@ -95,6 +99,7 @@ func recordWrapSteps(dir string, rec map[string]any) (startPath, stopPath string
 		Op: spec.Op{
 			ID:      "record-wrap-stop",
 			Context: []spec.Context{"runtime"},
+			Plugin:  "record",
 			PluginInput: map[string]any{
 				"method":      "stop",
 				"record_name": name,
