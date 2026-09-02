@@ -127,7 +127,12 @@ func pluginCheckLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.Resolved
 		// deployment's own acceptance spec, so it runs against empty metadata.
 		meta = &spec.BoxMetadata{}
 	}
+	// Whole-run recording wrap seam: --steps-file injected steps run INSTEAD of
+	// the baked plan (an isolated live invocation with only the record start/stop
+	// steps, so the recording session brackets the phases). Everything else (no
+	// --steps-file) is the standard baked + overlay merge.
 	set := kit.MergeDeployDescriptions(meta.Description, overlayPlan, req.Name)
+	set = wrapStepsFileSet(set, req.Plan, "pod:"+req.Name)
 	if set == nil || set.IsEmpty() {
 		return kit.CheckRunReply{NoSteps: true}, nil
 	}
@@ -331,10 +336,15 @@ func pluginCheckLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedP
 		return kit.CheckRunReply{Header: header, Passthrough: pass}, nil
 	}
 
-	if len(plan) == 0 {
+	if len(plan) == 0 && len(req.Plan) == 0 {
 		return kit.CheckRunReply{NoSteps: true}, nil
 	}
+	// Whole-run recording wrap seam: --steps-file injected steps run INSTEAD of
+	// the baked VM plan (an isolated live invocation with only the record
+	// start/stop steps, bracketing the phases). The runner then executes only
+	// the injected steps.
 	set := &kit.LabelDescriptionSet{Deploy: []kit.LabeledDescription{{Origin: "vm:" + vmName, Plan: plan}}}
+	set = wrapStepsFileSet(set, req.Plan, "vm:"+vmName)
 
 	// newPluginCheckRunner's VerbResolver reads THIS runner's live Exec() (a back-reference,
 	// plugin_runner.go) on every out-of-process verb dispatch, so `executor` — a plain
@@ -408,7 +418,7 @@ func pluginCheckLiveLocal(ex *sdk.Executor, ctx context.Context, rp *spec.Resolv
 	}
 	header := fmt.Sprintf("Local deploy: %s [%s]", req.Name, venue)
 
-	results, hadPlan, err := pluginRunLocalDeployScopePlan(ex, ctx, rp, dir, node, req.Name, req.Instance, req.Vars, executor)
+	results, hadPlan, err := pluginRunLocalDeployScopePlan(ex, ctx, rp, dir, node, req.Name, req.Instance, req.Vars, executor, req.Plan)
 	if err != nil {
 		return kit.CheckRunReply{}, err
 	}
@@ -421,7 +431,7 @@ func pluginCheckLiveLocal(ex *sdk.Executor, ctx context.Context, rp *spec.Resolv
 // pluginRunLocalDeployScopePlan collects a local deployment's deploy-scope plan (the kind:local
 // template's plan + the deploy node's plan + the per-host overlay) and runs it — the port of
 // charly/check_cmd.go's runLocalDeployScopePlan.
-func pluginRunLocalDeployScopePlan(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, dir string, node *spec.FleetNode, image, instance string, vars map[string]string, exec deploykit.DeployExecutor) (results []kit.StepResult, hadPlan bool, err error) {
+func pluginRunLocalDeployScopePlan(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, dir string, node *spec.FleetNode, image, instance string, vars map[string]string, exec deploykit.DeployExecutor, stepsOverride []spec.Step) (results []kit.StepResult, hadPlan bool, err error) {
 	var plan []spec.Step
 	if node != nil && strings.TrimSpace(node.From) != "" {
 		if raw, ok := templateBody(rp, "local", strings.TrimSpace(node.From)); ok {
@@ -454,10 +464,11 @@ func pluginRunLocalDeployScopePlan(ex *sdk.Executor, ctx context.Context, rp *sp
 		"HOME":     home,
 	})
 
-	if len(plan) == 0 {
+	if len(plan) == 0 && len(stepsOverride) == 0 {
 		return nil, false, nil
 	}
 	set := &kit.LabelDescriptionSet{Deploy: []kit.LabeledDescription{{Origin: "local:" + image, Plan: plan}}}
+	set = wrapStepsFileSet(set, stepsOverride, "local:"+image)
 	env, hasRuntime := pluginResolverEnv(resolver)
 	env = withRunVars(env, vars)
 	hostVars, hostCleanups := resolveHostVarsForSteps(ex, ctx, dir, plan, instance)
@@ -521,6 +532,7 @@ func pluginCheckLiveGroup(ex *sdk.Executor, ctx context.Context, rp *spec.Resolv
 		TargetResolver: pluginVenueResolver(ex, ctx, dir, req.Instance),
 	})
 	set := &kit.LabelDescriptionSet{Deploy: []kit.LabeledDescription{{Origin: "group:" + req.Name, Plan: plan}}}
+	set = wrapStepsFileSet(set, req.Plan, "group:"+req.Name)
 	results := kit.RunPlan(ctx, runner, set, false)
 	return kit.CheckRunReply{Steps: results, Header: header}, nil
 }

@@ -630,6 +630,30 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 
 	// Step 4: deploy/runtime acceptance — gated out at check_level: none|build.
 	// Members are instruments for the runtime probes, so bring-up is gated with them.
+	// Whole-run recording wrap: start the recording BEFORE the first live pass
+	// and stop it AFTER the first one — the R10 rebuild phase recreates the
+	// venue, so the session cannot outlive the pre-update VM; the wrap captures
+	// the install-to-check flow (recordings.yml picks the stop output up;
+	// survived_teardown is inherent). Visible to both the group and non-group
+	// fresh-rebuild arms below.
+	var recStartF, recStopF string
+	if rec, ok := deployRecordWrap(d.NodeJSON); ok {
+		var werr error
+		recStartF, recStopF, werr = recordWrapSteps(d.LogDir, rec)
+		if werr != nil {
+			return fail("record wrap %s: %w", name, werr)
+		}
+	}
+	recordWrapStop := func() {
+		if recStopF == "" {
+			return
+		}
+		_ = step("record-wrap-stop", wrapLiveArgv(name, recStopF, runVarsArgv(opts.Vars))...)
+	}
+	if recStartF != "" {
+		_ = step("record-wrap-start", wrapLiveArgv(name, recStartF, runVarsArgv(opts.Vars))...)
+	}
+
 	if d.RunRuntime {
 		// A previous bed's teardown can leave aardvark-dns serving a dead network namespace,
 		// which kills container-name resolution host-wide until something repairs it. Do that
@@ -641,6 +665,13 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		if err := checkLiveTree("check-live"); err != nil {
 			return fail("check live %s: %w", name, err)
 		}
+		// Whole-run wrap: stop the recording after the FIRST live pass. The R10
+		// fresh-rebuild phase below RECREATES the VM domain, so a pre-update
+		// recording session cannot survive to a post-rebuild stop — the wrap
+		// captures the install-to-check flow, which is the deploy-context stream
+		// the bed records. (recordings.yml still picks the stop output up and
+		// asserts host survival after teardown.)
+		recordWrapStop()
 
 		// Step 4b: ADE acceptance — run the bed image's baked plan steps. Pod beds only.
 		if !d.IsVM && !d.IsLocal && !d.IsExternal && d.Image != "" {

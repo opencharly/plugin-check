@@ -72,7 +72,7 @@ func scanRecordingsLog(body string) []recordingEntry {
 // artifacts on the host (survival after teardown), and writes recordings.yml.
 func writeRecordingsManifest(dir string) error {
 	var entries []recordingEntry
-	for _, name := range []string{"check-live.log", "check-live-rebuild.log", "feature-run.log", "feature-run-rebuild.log"} {
+	for _, name := range []string{"check-live.log", "check-live-rebuild.log", "feature-run.log", "feature-run-rebuild.log", "record-wrap-start.log", "record-wrap-stop.log"} {
 		body, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			continue

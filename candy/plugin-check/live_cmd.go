@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/opencharly/spec/spec"
 )
 
@@ -24,13 +26,24 @@ type CheckLiveCmd struct {
 	Format   string   `name:"format" default:"text" help:"Output format: text, json, tap"`
 	Filter   []string `name:"filter" help:"Only run checks with these verbs (repeatable)"`
 	Section  string   `name:"section" help:"Only run this section: candy, box, or deploy"`
-	Vars     []string `name:"var" help:"Per-run variable passthrough (key=value; repeatable) — merged into the check-run env"`
+	Vars      []string `name:"var" help:"Per-run variable passthrough (key=value; repeatable) — merged into the check-run env"`
+	StepsFile string   `name:"steps-file" help:"YAML file of plan steps to run INSTEAD of the baked plan (the whole-run recording wrap: a live invocation with only the injected steps)"`
 }
 
 func (c *CheckLiveCmd) Run() error {
 	vars, err := parseRunVars(c.Vars)
 	if err != nil {
 		return err
+	}
+	var injected []spec.Step
+	if c.StepsFile != "" {
+		b, err := os.ReadFile(c.StepsFile)
+		if err != nil {
+			return fmt.Errorf("--steps-file %s: %w", c.StepsFile, err)
+		}
+		if err := yaml.Unmarshal(b, &injected); err != nil {
+			return fmt.Errorf("--steps-file %s: %w", c.StepsFile, err)
+		}
 	}
 	reply, err := hostCheckRun(spec.CheckRunRequest{
 		Mode:     "live",
@@ -39,6 +52,7 @@ func (c *CheckLiveCmd) Run() error {
 		Section:  c.Section,
 		Filter:   c.Filter,
 		Vars:     vars,
+		Plan:     injected,
 	})
 	if err != nil {
 		return err
