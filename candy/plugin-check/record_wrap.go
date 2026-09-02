@@ -18,17 +18,27 @@ import (
 	"github.com/opencharly/spec/spec"
 )
 
-// deployRecordWrap extracts the deploy record: block from the bed node JSON
-// (a generic map — robust to the spec regenerating the Go shape).
+// deployRecordWrap extracts the deploy record: block from the bed node JSON.
+// The node JSON is the bed ROOT FleetNode (spec.Deploy) serialized — a map whose
+// TOP level IS the deploy spec (record, disposable, lifecycle, ...), with nested
+// peer Members. Parse generically so a spec regen of the Go shape cannot break
+// the seam.
 func deployRecordWrap(nodeJSON []byte) (map[string]any, bool) {
-	var node struct {
-		Deploy map[string]any `yaml:"deploy"`
-	}
-	if err := yaml.Unmarshal(nodeJSON, &node); err != nil || node.Deploy == nil {
+	var node map[string]any
+	if err := yaml.Unmarshal(nodeJSON, &node); err != nil || node == nil {
 		return nil, false
 	}
-	rw, ok := node.Deploy["record"]
+	// Canonical shape: record: at the TOP level of the FleetNode (the deploy spec).
+	rw, ok := node["record"]
 	if !ok {
+		// Envelope shape: a wrapper map may carry the deploy spec under a "deploy" key.
+		if dep, has := node["deploy"]; has {
+			if dm, isMap := dep.(map[string]any); isMap {
+				rw, ok = dm["record"]
+			}
+		}
+	}
+	if !ok || rw == nil {
 		return nil, false
 	}
 	m, ok := rw.(map[string]any)
