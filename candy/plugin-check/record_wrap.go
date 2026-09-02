@@ -15,6 +15,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/opencharly/sdk/kit"
 	"github.com/opencharly/spec/spec"
 )
 
@@ -119,6 +120,20 @@ func writeStepsYAML(path string, steps []spec.Step) error {
 		return err
 	}
 	return os.WriteFile(path, b, 0o600)
+}
+
+// wrapStepsFileSet returns the steps-file override set when steps are injected
+// (the whole-run recording wrap seam: an isolated live invocation runs ONLY the
+// injected record start/stop steps instead of the baked plan); otherwise the
+// given set unchanged. One canonical implementation shared by every live arm
+// (pod/vm/local/group) so the seam cannot drift per arm (R3).
+func wrapStepsFileSet(set *kit.LabelDescriptionSet, steps []spec.Step, origin string) *kit.LabelDescriptionSet {
+	if len(steps) == 0 {
+		return set
+	}
+	return &kit.LabelDescriptionSet{
+		Deploy: []kit.LabeledDescription{{Origin: "steps-file", Plan: steps}},
+	}
 }
 
 // wrapLiveArgv builds the check-live argv for one wrap invocation.
