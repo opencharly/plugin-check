@@ -127,7 +127,16 @@ func pluginCheckLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.Resolved
 		// deployment's own acceptance spec, so it runs against empty metadata.
 		meta = &spec.BoxMetadata{}
 	}
+	// Whole-run recording wrap seam: --steps-file injected steps run INSTEAD of
+	// the baked plan (an isolated live invocation with only the record start/stop
+	// steps, so the recording session brackets the phases). Everything else (no
+	// --steps-file) is the standard baked + overlay merge.
 	set := kit.MergeDeployDescriptions(meta.Description, overlayPlan, req.Name)
+	if len(req.Plan) > 0 {
+		set = &kit.LabelDescriptionSet{
+			Deploy: []kit.LabeledDescription{{Origin: "steps-file", Plan: req.Plan}},
+		}
+	}
 	if set == nil || set.IsEmpty() {
 		return kit.CheckRunReply{NoSteps: true}, nil
 	}

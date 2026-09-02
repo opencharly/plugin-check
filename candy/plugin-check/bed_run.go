@@ -630,6 +630,28 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 
 	// Step 4: deploy/runtime acceptance — gated out at check_level: none|build.
 	// Members are instruments for the runtime probes, so bring-up is gated with them.
+	// Whole-run recording wrap: start the recording BEFORE the first live pass
+	// and stop it AFTER the last one (recordings.yml picks the stop output up;
+	// survived_teardown is inherent). Visible to both the group and non-group
+	// fresh-rebuild arms below.
+	var recStartF, recStopF string
+	if rec, ok := deployRecordWrap(d.NodeJSON); ok {
+		var werr error
+		recStartF, recStopF, werr = recordWrapSteps(d.LogDir, rec)
+		if werr != nil {
+			return fail("record wrap %s: %w", name, werr)
+		}
+	}
+	recordWrapStop := func() {
+		if recStopF == "" {
+			return
+		}
+		_ = step("record-wrap-stop", wrapLiveArgv(name, recStopF, runVarsArgv(opts.Vars))...)
+	}
+	if recStartF != "" {
+		_ = step("record-wrap-start", wrapLiveArgv(name, recStartF, runVarsArgv(opts.Vars))...)
+	}
+
 	if d.RunRuntime {
 		// A previous bed's teardown can leave aardvark-dns serving a dead network namespace,
 		// which kills container-name resolution host-wide until something repairs it. Do that
@@ -733,6 +755,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 			if err := checkLiveTree("check-live-rebuild"); err != nil {
 				return fail("check live (fresh rebuild) %s: %w", name, err)
 			}
+			recordWrapStop() // whole-run wrap: stop the recording after the last live pass
 		}
 		// Re-run the bed image's baked plan steps on the fresh rebuild (pod beds).
 		if d.RunRuntime && !d.IsVM && !d.IsLocal && !d.IsExternal && d.Image != "" {
