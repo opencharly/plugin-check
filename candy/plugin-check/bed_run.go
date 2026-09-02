@@ -771,6 +771,9 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	}
 
 	writeBedSummary(d.LogDir, res)
+	// G5: the recordings manifest (record: stop outputs + host survival after
+	// teardown) — best-effort; a run with no record steps has no manifest.
+	_ = writeRecordingsManifest(d.LogDir)
 	if !res.OK {
 		return res, fmt.Errorf("bed %s: one or more steps failed", name)
 	}
