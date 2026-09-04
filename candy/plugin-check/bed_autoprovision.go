@@ -2,6 +2,7 @@ package check
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"time"
@@ -12,6 +13,10 @@ import (
 //
 //	charly vm snapshot create check-charly-omarchy-vm golden
 var missingGoldenRe = regexp.MustCompile(`vm "([^"]+)": snapshot "golden" does not exist`)
+
+// logPathRe extracts the step log path from the runner's error summary
+// (the missing-golden detail lives in the log file, not the summary).
+var logPathRe = regexp.MustCompile(`log: (\S+)`)
 
 // provisionBaseGoldenRun runs the base bed's FRESH lane (captures the golden).
 // A var so a unit test can substitute a fake.
@@ -31,9 +36,17 @@ var provisionBaseGoldenRun = func(baseBed string) error {
 
 // autoProvisionBaseGolden inspects a vm-build error; when it is the missing-base-
 // golden error, it auto-provisions the base and reports that a retry is warranted.
-// visited guards against clone cycles.
+// visited guards against clone cycles. The runner's step error is the subcommand
+// SUMMARY ("exited 1 …; log: <path>") — the missing-golden detail lives in the
+// referenced log file, so the seam also scans that log.
 func autoProvisionBaseGolden(err error, visited map[string]bool, baseIsDisposable func(string) bool) (retry bool, provisionErr error) {
-	m := missingGoldenRe.FindStringSubmatch(err.Error())
+	haystack := err.Error()
+	if m := logPathRe.FindStringSubmatch(haystack); m != nil {
+		if data, rerr := os.ReadFile(m[1]); rerr == nil {
+			haystack += "\n" + string(data)
+		}
+	}
+	m := missingGoldenRe.FindStringSubmatch(haystack)
 	if m == nil {
 		return false, nil
 	}
