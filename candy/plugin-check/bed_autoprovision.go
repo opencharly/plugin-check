@@ -1,0 +1,52 @@
+package check
+
+import (
+	"fmt"
+	"os/exec"
+	"regexp"
+	"time"
+)
+
+// missingGoldenRe matches the sdk clone-enforcement error and extracts the base vm.
+// e.g.: vm "check-charly-omarchy-vm": snapshot "golden" does not exist; create with:
+//
+//	charly vm snapshot create check-charly-omarchy-vm golden
+var missingGoldenRe = regexp.MustCompile(`vm "([^"]+)": snapshot "golden" does not exist`)
+
+// provisionBaseGoldenRun runs the base bed's FRESH lane (captures the golden).
+// A var so a unit test can substitute a fake.
+var provisionBaseGoldenRun = func(baseBed string) error {
+	cmd := exec.Command("charly", "check", "run", baseBed)
+	cmd.Env = append(cmd.Environ(), "CHARLY_BED_AUTOPROVISION=1")
+	done := make(chan error, 1)
+	go func() { done <- cmd.Run() }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(25 * time.Minute):
+		_ = cmd.Process.Kill()
+		return fmt.Errorf("auto-provision of base bed %s timed out", baseBed)
+	}
+}
+
+// autoProvisionBaseGolden inspects a vm-build error; when it is the missing-base-
+// golden error, it auto-provisions the base and reports that a retry is warranted.
+// visited guards against clone cycles.
+func autoProvisionBaseGolden(err error, visited map[string]bool, baseIsDisposable func(string) bool) (retry bool, provisionErr error) {
+	m := missingGoldenRe.FindStringSubmatch(err.Error())
+	if m == nil {
+		return false, nil
+	}
+	base := m[1]
+	if visited[base] {
+		return false, fmt.Errorf("auto-provision cycle detected at %q", base)
+	}
+	if baseIsDisposable != nil && !baseIsDisposable(base) {
+		return false, fmt.Errorf("auto-provision refused: base bed %q is not disposable", base)
+	}
+	visited[base] = true
+	if err := provisionBaseGoldenRun(base); err != nil {
+		return false, fmt.Errorf("auto-provision of %q failed: %w", base, err)
+	}
+	return true, nil
+}

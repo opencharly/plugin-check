@@ -511,8 +511,21 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// base off the ENTITY; every `charly vm …` that touches THIS domain passes
 		// --domain <BedDomain>. The pre-run `vm destroy --if-exists` now runs in the
 		// hoisted pre-run-cleanup block above, before persist.
+		// MISSING-GOLDEN AUTO-PROVISION (visited set scoped to this run): a clone
+		// bed whose base golden is absent provisions the base bed's FRESH lane
+		// (captures the golden) and retries the build once — R4: the manual
+		// "provision the base first" ordering is replaced by the runner.
+		provisioned := map[string]bool{}
 		if err := step("vm-build", "vm", "build", d.VMTemplate); err != nil {
-			return fail("vm build %s: %w", d.VMTemplate, err)
+			if retry, perr := autoProvisionBaseGolden(err, provisioned, nil); perr != nil {
+				return fail("vm build %s: %w (auto-provision: %v)", d.VMTemplate, err, perr)
+			} else if retry {
+				if err2 := step("vm-build", "vm", "build", d.VMTemplate); err2 != nil {
+					return fail("vm build %s after auto-provision: %w", d.VMTemplate, err2)
+				}
+			} else {
+				return fail("vm build %s: %w", d.VMTemplate, err)
+			}
 		}
 		// Anchored mode keeps the venue: the domain exists from the fresh lane
 		// (which captured the golden snapshot on_finalize). Skip vm-create — the
