@@ -688,23 +688,32 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		}
 	}
 
-	// Step 5: fresh-update re-verify (the R10 acceptance gate). Suppressed by --no-rebuild —
-	// and structurally suppressed in anchored mode (opts.Anchor != ""): revert IS the
-	// freshness mechanism, so a fresh update against a reverted golden disk is meaningless
-	// (checkRunBedOpts also forces NoRebuild from --anchor; this guard keeps the invariant
-	// at the point of decision for any direct caller).
-	if !opts.NoRebuild && opts.Anchor == "" && d.IsGroup {
+	// Step 5: fresh-update re-verify (the R10 acceptance gate). The gate's change
+	// class comes from the plan's declarative update_gate: field (full default =
+	// the canonical `charly update` destroy+recreate; restart-only = reboot the
+	// existing clone/container and re-check; skip = nothing), suppressed by
+	// --no-rebuild — and structurally suppressed in anchored mode (opts.Anchor !=
+	// ""): revert IS the freshness mechanism, so a fresh update against a rever-
+	// ted golden disk is meaningless (checkRunBedOpts also forces NoRebuild from
+	// --anchor; this guard keeps the invariant at the point of decision for any
+	// direct caller).
+	gate := updateGateFor(opts, &bedNode)
+	if gate != updateGateSkip && opts.Anchor == "" && d.IsGroup {
 		// Group bed: NO root container to `charly update` — a generic `charly update <bed>` would
 		// mis-resolve a TARGETLESS group as a default-pod deploy ("target pod not connected"). The R10
 		// fresh-rebuild gate instead re-builds each member image, tears the members down, re-brings
 		// them up, and re-check-lives — mirroring the initial group deploy (the old runCheckBed group
 		// rebuild arm). VM/local members carry no Image and are skipped (as on the initial build).
-		for _, m := range d.Members {
-			if m.Image == "" {
-				continue
-			}
-			if err := step("update-image-"+m.Key, withRunTag([]string{"box", "build", m.Image, "--dev-local-pkg"}, d.ImageTag)...); err != nil {
-				return fail("rebuild member image %s (%s): %w", m.Key, m.Image, err)
+		// restart-only skips the per-member image REBUILD (nothing can change in a runtime-injection
+		// eval) but keeps the members-down/up cycle — the members restart on their existing images.
+		if gate == updateGateFull {
+			for _, m := range d.Members {
+				if m.Image == "" {
+					continue
+				}
+				if err := step("update-image-"+m.Key, withRunTag([]string{"box", "build", m.Image, "--dev-local-pkg"}, d.ImageTag)...); err != nil {
+					return fail("rebuild member image %s (%s): %w", m.Key, m.Image, err)
+				}
 			}
 		}
 		if err := phase("rebuild-members-down", func() error {
@@ -720,7 +729,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 				return fail("check live (fresh rebuild) %s: %w", name, err)
 			}
 		}
-	} else if !opts.NoRebuild && opts.Anchor == "" {
+	} else if gate != updateGateSkip && opts.Anchor == "" {
 		// The fresh-rebuild gate must verify the JUST-BUILT per-run image, not re-resolve
 		// the untagged logical box name: `charly update` without --tag resolves "newest
 		// local CalVer", and a bed-run tag (<bed>-<calver>) is NOT a plain CalVer, so the
@@ -728,8 +737,18 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// OLDER cached bed image (the check-live-rebuild stale-image defect). Pin the same
 		// per-run tag the build + deploy-add steps used — the exact principle the
 		// runTaggedImageRef comment above states for the check steps.
-		if err := step("update", withRunTag([]string{"update", name}, d.ImageTag)...); err != nil {
-			return fail("update %s: %w", name, err)
+		//
+		// restart-only REPLACES the update step by change class: a VM bed reboots its
+		// existing per-deploy domain (vm stop → vm start, same clone disk — no destroy,
+		// no recreate, no reinstall; the tail below waits for SSH and then redeploys
+		// the one-time children exactly like the full gate's tail), a pod bed restarts
+		// its container (`charly restart`, same image). An in-place (local/external)
+		// bed has no restartable venue: there the gate step is the in-place re-apply
+		// itself, unchanged (full's own step).
+		for _, gs := range updateGateSteps(gate, d, name, d.ImageTag, isInPlace) {
+			if err := step(gs.name, gs.argv...); err != nil {
+				return fail("%s %s: %w", gs.name, name, err)
+			}
 		}
 		// EVERY runtime, non-in-place bed gets a genuine post-rebuild check-live pass — not just
 		// ones with nested children. Before this fix, a childless bed's `checkLiveTree` call was

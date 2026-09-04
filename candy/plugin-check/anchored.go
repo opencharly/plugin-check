@@ -91,6 +91,75 @@ func vmCreateArgs(d spec.CheckBedReply) []string {
 	return []string{"vm", "create", d.VMTemplate, "--domain", d.BedDomain}
 }
 
+// update_gate change-class values — the bed plan's declarative R10 fresh-update
+// gate (the spec #Deploy update_gate: field). full (the authored-absent default)
+// is the canonical destroy+recreate gate; restart-only replaces the destroy/
+// recreate with a plain venue RESTART (a VM boots its existing clone again) and
+// re-checks the restarted venue — the change class for runtime-PR-injection
+// software evals; skip is the declarative twin of --no-rebuild.
+const (
+	updateGateFull        = "full"         // `charly update` — destroy + recreate the venue, then re-check
+	updateGateRestartOnly = "restart-only" // reboot the existing clone/container, then re-check
+	updateGateSkip        = "skip"         // no update phase and no post-update pass
+)
+
+// updateGateFor resolves the bed's Step-5 gate class: the operator's
+// --no-rebuild flag wins (forces skip — the pre-existing invariant), else the
+// plan's authored update_gate: field, else the full gate (back-compat default;
+// an unknown authored value ALSO falls back to full rather than silently
+// skipping the acceptance gate). Anchored mode is handled at the call site
+// (revert IS the freshness mechanism — Step 5 is structurally suppressed).
+func updateGateFor(opts bedRunOpts, bedNode *spec.FleetNode) string {
+	if opts.NoRebuild {
+		return updateGateSkip
+	}
+	if bedNode == nil || bedNode.UpdateGate == "" {
+		return updateGateFull
+	}
+	switch bedNode.UpdateGate {
+	case updateGateFull, updateGateRestartOnly, updateGateSkip:
+		return bedNode.UpdateGate
+	default:
+		return updateGateFull
+	}
+}
+
+// gateStep is ONE Step-5 gate step: its summary.yml/step-log name + argv.
+// The VM restart-only pair is two steps because every `charly vm …` subcommand
+// is one recorded step; the runCheckBed caller stamps both exactly like full's
+// `update` step (diag-scanned logs included).
+type gateStep struct {
+	name string
+	argv []string
+}
+
+// updateGateSteps returns the Step-5 GATE steps (non-group arm) by change class:
+//   - full — the canonical `charly update` destroy+recreate (tag-pinned to the
+//     per-run build, exactly as before).
+//   - restart-only, VM — reboot the EXISTING per-deploy domain: `vm stop --force`
+//     then `vm start` on the same clone disk. No destroy, no recreate, no
+//     reinstall. --force makes the power-cycle deterministic on ANY guest (a
+//     golden without acpid ignores the ACPI shutdown and the graceful stop would
+//     burn its 3m grace cap — measured on the scratch restart-only run);
+//     `vm start` is idempotent (an already-running domain is a clean success).
+//   - restart-only, pod/container venue — `charly restart` (same image).
+//   - restart-only, in-place (local/external) — no restartable venue: the gate
+//     step is the in-place re-apply itself, unchanged (full's own step).
+//   - skip — never called (the caller skips the whole Step-5 block); returns nil.
+func updateGateSteps(gate string, d spec.CheckBedReply, name, imageTag string, isInPlace bool) []gateStep {
+	switch {
+	case gate == updateGateRestartOnly && d.IsVM:
+		return []gateStep{
+			{"gate-restart-stop", []string{"vm", "stop", "--force", d.VMTemplate, "--domain", d.BedDomain}},
+			{"gate-restart-start", []string{"vm", "start", d.VMTemplate, "--domain", d.BedDomain}},
+		}
+	case gate == updateGateRestartOnly && !isInPlace:
+		return []gateStep{{"gate-restart", []string{"restart", name}}}
+	default:
+		return []gateStep{{"update", withRunTag([]string{"update", name}, imageTag)}}
+	}
+}
+
 // withRunVars folds the request's per-run vars into the check-run env so plan
 // steps can ${VAR} them (the CheckRunRequest.Vars consumer — the field's spec
 // contract is "per-run variable passthrough"). Operator passthrough wins over
