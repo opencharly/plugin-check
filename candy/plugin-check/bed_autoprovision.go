@@ -25,13 +25,23 @@ var provisionBaseGoldenRun = func(baseBed string) error {
 	cmd.Env = append(cmd.Environ(), "CHARLY_BED_AUTOPROVISION=1")
 	done := make(chan error, 1)
 	go func() { done <- cmd.Run() }()
+	var err error
 	select {
-	case err := <-done:
-		return err
+	case err = <-done:
 	case <-time.After(25 * time.Minute):
 		_ = cmd.Process.Kill()
 		return fmt.Errorf("auto-provision of base bed %s timed out", baseBed)
 	}
+	if err != nil {
+		return err
+	}
+	// The base's keep_venue domain stays RUNNING and holds the golden as its live
+	// backing — the retried clone vm-create would collide (measured: "Is another
+	// process using the image"). Stop the base domain so the golden is free.
+	// Best-effort; the next vm-build re-creates it.
+	stop := exec.Command("charly", "vm", "stop", baseBed, "--domain", baseBed, "--force")
+	_ = stop.Run()
+	return nil
 }
 
 // autoProvisionBaseGolden inspects a vm-build error; when it is the missing-base-
