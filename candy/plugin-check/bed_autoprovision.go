@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -23,26 +24,63 @@ var logPathRe = regexp.MustCompile(`log: (\S+)`)
 // A var so a unit test can substitute a fake.
 var provisionBaseGoldenRun = func(baseBed string) error {
 	cmd := exec.Command("charly", "check", "run", baseBed)
-	cmd.Env = append(cmd.Environ(), "CHARLY_BED_AUTOPROVISION=1")
-	done := make(chan error, 1)
-	go func() { done <- cmd.Run() }()
-	var err error
-	select {
-	case err = <-done:
-	case <-time.After(25 * time.Minute):
-		_ = cmd.Process.Kill()
-		return fmt.Errorf("auto-provision of base bed %s timed out", baseBed)
-	}
-	if err != nil {
+	if err := cmd.Start(); err != nil {
 		return err
 	}
-	// The base's keep_venue domain stays RUNNING and holds the golden as its live
-	// backing — the retried clone vm-create would collide (measured: "Is another
-	// process using the image"). Stop the base domain so the golden is free.
-	// Best-effort; the next vm-build re-creates it.
-	stop := exec.Command("charly", "vm", "stop", baseBed, "--domain", baseBed, "--force")
-	_ = stop.Run()
-	return nil
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	tick := time.NewTicker(5 * time.Second)
+	defer tick.Stop()
+	last := baseRunProgress(baseBed)
+	var stall time.Time
+	for {
+		select {
+		case err := <-done:
+			return err // the base run concluded (its steps are individually bounded)
+		case <-tick.C:
+			p := baseRunProgress(baseBed)
+			if p.After(last) {
+				last = p
+				stall = time.Time{}
+				continue
+			}
+			if stall.IsZero() {
+				stall = time.Now()
+				continue
+			}
+			if time.Since(stall) > 2*time.Minute {
+				_ = cmd.Process.Kill()
+				return fmt.Errorf("auto-provision of base bed %s STALLED (no phase progress for 2m) — failing fast", baseBed)
+			}
+		}
+	}
+}
+
+// baseRunProgress returns the newest phase-log mtime for a bed's run (durable
+// stall detection for the auto-provision: the nested run must keep advancing
+// phases; a stall beyond the bound fails fast instead of waiting on nothing).
+// Also treats a freshly-created summary.yml as progress (the run concluded).
+func baseRunProgress(bed string) time.Time {
+	newest := time.Time{}
+	entries, err := os.ReadDir(filepath.Join(".check", bed))
+	if err != nil {
+		return newest
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		logs, err := os.ReadDir(filepath.Join(".check", bed, e.Name()))
+		if err != nil {
+			continue
+		}
+		for _, l := range logs {
+			if fi, err := l.Info(); err == nil && fi.ModTime().After(newest) {
+				newest = fi.ModTime()
+			}
+		}
+	}
+	return newest
 }
 
 // baseIsProvablyBed is the REAL disposable guard predicate (B17): the auto-provision
@@ -51,12 +89,30 @@ var provisionBaseGoldenRun = func(baseBed string) error {
 // enforceable backstop — the guard prevents even spawning it for non-beds.
 func baseIsProvablyBed(name string) bool { return strings.HasPrefix(name, "check-") }
 
-// autoProvisionBaseGolden inspects a vm-build error; when it is the missing-base-
-// golden error, it auto-provisions the base and reports that a retry is warranted.
-// visited guards against clone cycles. The runner's step error is the subcommand
-// SUMMARY ("exited 1 …; log: <path>") — the missing-golden detail lives in the
-// referenced log file, so the seam also scans that log.
-func autoProvisionBaseGolden(err error, visited map[string]bool, baseIsDisposable func(string) bool) (retry bool, provisionErr error) {
+// buildVmWithProvisionRetry IS the production seam (bed_run.go calls this): parse +
+// guard the missing-base-golden error, provision the parsed BASE bed (real name),
+// then retry build once. Unit tests exercise THIS function.
+func buildVmWithProvisionRetry(build func() error, provision func(string) error) error {
+	if err := build(); err == nil {
+		return nil
+	} else {
+		base, retry, perr := autoProvisionBaseGolden(err, map[string]bool{}, baseIsProvablyBed)
+		if perr != nil || !retry {
+			return err
+		}
+		if perr2 := provision(base); perr2 != nil {
+			return perr2
+		}
+		return build()
+	}
+}
+
+// autoProvisionBaseGolden inspects a vm-build error: when it is the missing-base-
+// golden error it PARSEs the sdk-enforcement message (also scanning the referenced
+// step log — the runner error is the subcommand SUMMARY) + applies the guards
+// (cycle via visited, disposable via baseIsDisposable) and returns the parsed base
+// for the caller to provision. It does NOT provision itself.
+func autoProvisionBaseGolden(err error, visited map[string]bool, baseIsDisposable func(string) bool) (base string, retry bool, provisionErr error) {
 	haystack := err.Error()
 	if m := logPathRe.FindStringSubmatch(haystack); m != nil {
 		if data, rerr := os.ReadFile(m[1]); rerr == nil {
@@ -65,18 +121,15 @@ func autoProvisionBaseGolden(err error, visited map[string]bool, baseIsDisposabl
 	}
 	m := missingGoldenRe.FindStringSubmatch(haystack)
 	if m == nil {
-		return false, nil
+		return "", false, nil
 	}
-	base := m[1]
+	base = m[1]
 	if visited[base] {
-		return false, fmt.Errorf("auto-provision cycle detected at %q", base)
+		return "", false, fmt.Errorf("auto-provision cycle detected at %q", base)
 	}
 	if baseIsDisposable != nil && !baseIsDisposable(base) {
-		return false, fmt.Errorf("auto-provision refused: base bed %q is not disposable", base)
+		return "", false, fmt.Errorf("auto-provision refused: base bed %q is not disposable", base)
 	}
 	visited[base] = true
-	if err := provisionBaseGoldenRun(base); err != nil {
-		return false, fmt.Errorf("auto-provision of %q failed: %w", base, err)
-	}
-	return true, nil
+	return base, true, nil
 }

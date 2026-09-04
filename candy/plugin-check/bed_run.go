@@ -515,17 +515,11 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// bed whose base golden is absent provisions the base bed's FRESH lane
 		// (captures the golden) and retries the build once — R4: the manual
 		// "provision the base first" ordering is replaced by the runner.
-		provisioned := map[string]bool{}
-		if err := step("vm-build", "vm", "build", d.VMTemplate); err != nil {
-			if retry, perr := autoProvisionBaseGolden(err, provisioned, baseIsProvablyBed); perr != nil {
-				return fail("vm build %s: %w (auto-provision: %v)", d.VMTemplate, err, perr)
-			} else if retry {
-				if err2 := step("vm-build", "vm", "build", d.VMTemplate); err2 != nil {
-					return fail("vm build %s after auto-provision: %w", d.VMTemplate, err2)
-				}
-			} else {
-				return fail("vm build %s: %w", d.VMTemplate, err)
-			}
+		if err := buildVmWithProvisionRetry(
+			func() error { return step("vm-build", "vm", "build", d.VMTemplate) },
+			provisionBaseGoldenRun,
+		); err != nil {
+			return fail("vm build %s: %w", d.VMTemplate, err)
 		}
 		// Anchored mode keeps the venue: the domain exists from the fresh lane
 		// (which captured the golden snapshot on_finalize). Skip vm-create — the
