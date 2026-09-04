@@ -136,8 +136,11 @@ type gateStep struct {
 // updateGateSteps returns the Step-5 GATE steps (non-group arm) by change class:
 //   - full — the canonical `charly update` destroy+recreate (tag-pinned to the
 //     per-run build, exactly as before).
-//   - restart-only, VM — reboot the EXISTING per-deploy domain: `vm stop` then
-//     `vm start` on the same clone disk. No destroy, no recreate, no reinstall;
+//   - restart-only, VM — reboot the EXISTING per-deploy domain: `vm stop --force`
+//     then `vm start` on the same clone disk. No destroy, no recreate, no
+//     reinstall. --force makes the power-cycle deterministic on ANY guest (a
+//     golden without acpid ignores the ACPI shutdown and the graceful stop would
+//     burn its 3m grace cap — measured on the scratch restart-only run);
 //     `vm start` is idempotent (an already-running domain is a clean success).
 //   - restart-only, pod/container venue — `charly restart` (same image).
 //   - restart-only, in-place (local/external) — no restartable venue: the gate
@@ -147,7 +150,7 @@ func updateGateSteps(gate string, d spec.CheckBedReply, name, imageTag string, i
 	switch {
 	case gate == updateGateRestartOnly && d.IsVM:
 		return []gateStep{
-			{"gate-restart-stop", []string{"vm", "stop", d.VMTemplate, "--domain", d.BedDomain}},
+			{"gate-restart-stop", []string{"vm", "stop", "--force", d.VMTemplate, "--domain", d.BedDomain}},
 			{"gate-restart-start", []string{"vm", "start", d.VMTemplate, "--domain", d.BedDomain}},
 		}
 	case gate == updateGateRestartOnly && !isInPlace:

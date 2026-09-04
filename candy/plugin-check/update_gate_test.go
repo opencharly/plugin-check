@@ -62,10 +62,10 @@ func TestUpdateGateSteps(t *testing.T) {
 			[]gateStep{{"update", []string{"update", name, "--tag", tag}}},
 		},
 		{
-			"restart-only VM stops then starts the SAME domain",
+			"restart-only VM force-stops then starts the SAME domain",
 			updateGateRestartOnly, vm, false,
 			[]gateStep{
-				{"gate-restart-stop", []string{"vm", "stop", "omarchy-vm", "--domain", "check-omarchy-eval"}},
+				{"gate-restart-stop", []string{"vm", "stop", "--force", "omarchy-vm", "--domain", "check-omarchy-eval"}},
 				{"gate-restart-start", []string{"vm", "start", "omarchy-vm", "--domain", "check-omarchy-eval"}},
 			},
 		},
