@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -43,6 +44,12 @@ var provisionBaseGoldenRun = func(baseBed string) error {
 	_ = stop.Run()
 	return nil
 }
+
+// baseIsProvablyBed is the REAL disposable guard predicate (B17): the auto-provision
+// may only target a bed-shaped name (beds follow the project check-* convention);
+// charly check run itself REFUSES non-disposable beds, so the subprocess is the
+// enforceable backstop — the guard prevents even spawning it for non-beds.
+func baseIsProvablyBed(name string) bool { return strings.HasPrefix(name, "check-") }
 
 // autoProvisionBaseGolden inspects a vm-build error; when it is the missing-base-
 // golden error, it auto-provisions the base and reports that a retry is warranted.

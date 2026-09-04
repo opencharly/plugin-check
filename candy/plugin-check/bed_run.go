@@ -517,7 +517,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// "provision the base first" ordering is replaced by the runner.
 		provisioned := map[string]bool{}
 		if err := step("vm-build", "vm", "build", d.VMTemplate); err != nil {
-			if retry, perr := autoProvisionBaseGolden(err, provisioned, nil); perr != nil {
+			if retry, perr := autoProvisionBaseGolden(err, provisioned, baseIsProvablyBed); perr != nil {
 				return fail("vm build %s: %w (auto-provision: %v)", d.VMTemplate, err, perr)
 			} else if retry {
 				if err2 := step("vm-build", "vm", "build", d.VMTemplate); err2 != nil {
