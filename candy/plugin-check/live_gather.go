@@ -45,6 +45,21 @@ import (
 
 // pluginCheckRunLive classifies req.Name via the SAME shared checkVmTarget/checkLocalTarget
 // classifiers Unit A's resolveCheckVenue uses (R3) and runs the matching per-kind gather.
+
+// wrapStepsFileSet returns the steps-file override set when steps are injected
+// (`charly check live --steps-file`: an isolated live invocation runs ONLY the injected
+// steps instead of the baked plan — the per-invocation set-replacement seam); otherwise
+// the given set unchanged. One canonical implementation shared by every live arm
+// (pod/vm/local/group) so the seam cannot drift per arm (R3).
+func wrapStepsFileSet(set *kit.LabelDescriptionSet, steps []spec.Step, origin string) *kit.LabelDescriptionSet {
+	if len(steps) == 0 {
+		return set
+	}
+	return &kit.LabelDescriptionSet{
+		Deploy: []kit.LabeledDescription{{Origin: "steps-file", Plan: steps}},
+	}
+}
+
 func pluginCheckRunLive(ex *sdk.Executor, ctx context.Context, req spec.CheckRunRequest) (kit.CheckRunReply, error) {
 	dir, _ := os.Getwd()
 	rp, err := resolvedProject(ex, ctx, dir)

@@ -45,6 +45,13 @@ func (provider) Invoke(ctx context.Context, req *pb.InvokeRequest) (*pb.InvokeRe
 	if req.GetOp() == sdk.OpVerifyChecks {
 		return verifyChecksForHost(ctx, req)
 	}
+	// verb:session — the generic runner-owned background-session service seam (Cutover
+	// A, A-task-2): capture providers reach it over the RunHostStep reverse leg
+	// (invokeExternalStep dispatches ClassVerb + OpExecute here); the request carries the
+	// recorder command + session identity, never a systemd unit.
+	if req.GetOp() == sdk.OpExecute && req.GetClass() == "verb" && req.GetReserved() == "session" {
+		return dispatchSessionSeam(ctx, req.GetParamsJson())
+	}
 	if req.GetOp() != sdk.OpRun {
 		return nil, fmt.Errorf("plugin-check: unsupported op %q (want %q, %q, %q, %q, %q, or %q)",
 			req.GetOp(), sdk.OpRun, sdk.OpResolve, sdk.OpResolveEndpoint, sdk.OpResolveImageLabel, sdk.OpDrainEndpointCleanups, sdk.OpVerifyChecks)
