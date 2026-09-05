@@ -15,6 +15,8 @@
 package check
 
 import (
+	"sync"
+
 	"context"
 	"encoding/json"
 	"fmt"
@@ -278,10 +280,23 @@ type instrumentDispatcher interface {
 // resolver reaches the provider registry (newPluginCheckRunner + the pluginVerbResolver) —
 // placement-invisible, exactly what the plan walk dispatches through.
 type venueInstrumentDispatcher struct {
+	mu     sync.Mutex
 	runner *kit.Runner
+	build  func(context.Context) (*kit.Runner, error)
+	built  bool
 }
 
 func (d *venueInstrumentDispatcher) dispatch(ctx context.Context, op *spec.Op) error {
+	if !d.built {
+		runner, err := d.build(ctx)
+		if err != nil {
+			return err
+		}
+		d.mu.Lock()
+		d.runner = runner
+		d.built = true
+		d.mu.Unlock()
+	}
 	res, handled := d.runner.Verbs().RunVerb(ctx, op)
 	if !handled {
 		return fmt.Errorf("verb %q: not handled by the registry", op.Plugin)
@@ -320,9 +335,11 @@ type sessionEnvelope struct {
 // method-session input + the session envelope + the authored input fields.
 func buildInstrumentOp(e *instrumentEntry, op string, env sessionEnvelope) *spec.Op {
 	input := map[string]any{
-		"method":  "session",
-		"op":      op,
-		"session": map[string]any{"id": env.ID, "state_dir": env.StateDir, "log_dir": env.LogDir},
+		"method":     "session",
+		"action":     op,
+		"session_id": env.ID,
+		"state_dir":  env.StateDir,
+		"log_dir":    env.LogDir,
 	}
 	for k, v := range e.Input {
 		input[k] = v
@@ -352,11 +369,9 @@ func newInstrumentRuntime(ctx context.Context, ex *sdk.Executor, d *spec.CheckBe
 		if _, ok := rt.dispatchers[e.Venue]; ok {
 			continue
 		}
-		runner, rerr := instrumentRunnerFor(ctx, ex, d, e.Venue, name)
-		if rerr != nil {
-			return nil, fmt.Errorf("instrument venue %s: %w", e.Venue, rerr)
-		}
-		rt.dispatchers[e.Venue] = &venueInstrumentDispatcher{runner: runner}
+		rt.dispatchers[e.Venue] = &venueInstrumentDispatcher{build: func(context.Context) (*kit.Runner, error) {
+			return instrumentRunnerFor(ctx, ex, d, e.Venue, name)
+		}}
 	}
 	return rt, nil
 }

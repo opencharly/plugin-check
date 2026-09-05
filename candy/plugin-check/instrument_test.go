@@ -163,12 +163,11 @@ func TestInstrumentBracketDispatch(t *testing.T) {
 		if i >= 3 {
 			want = "stop"
 		}
-		if input["op"] != want {
-			t.Errorf("op %d op = %v, want %s", i, input["op"], want)
+		if input["action"] != want {
+			t.Errorf("op %d action = %v, want %s", i, input["action"], want)
 		}
-		sess, _ := input["session"].(map[string]any)
-		if sess == nil || sess["id"] == "" || sess["state_dir"] == "" {
-			t.Errorf("op %d missing session envelope: %+v", i, input["session"])
+		if input["session_id"] == "" || input["state_dir"] == "" {
+			t.Errorf("op %d missing session envelope (session_id/state_dir): %+v", i, input)
 		}
 	}
 	rows := rt.collector.sorted()
