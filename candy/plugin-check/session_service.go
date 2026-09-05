@@ -188,16 +188,31 @@ func spawnSystemdUnit(ctx context.Context, h *sessionHandle, opts sessionSpawnOp
 // the parent, the pidfile is the liveness key, SIGTERM triggers the recorder's
 // end-of-stream marker.
 func spawnSetsidProcess(ctx context.Context, h *sessionHandle, opts sessionSpawnOpts) error {
-	cmd := exec.CommandContext(ctx, opts.Command[0], opts.Command[1:]...)
+	// NOT exec.CommandContext: the recorder is DETACHED by design (setsid + pidfile,
+	// the handle is the liveness key) and must outlive the caller. The reverse-leg
+	// InvokeProvider that dispatches this seam wraps its ctx with a timeout + defer
+	// cancel() — the cancel fires the moment the spawn call returns, and
+	// CommandContext would SIGKILL the just-spawned recorder before it ever dials
+	// (RCA'd live: every instrument-bed recorder died at spawn with an empty
+	// recorder.log and no evidence row). The ctx bounds nothing here: the spawn is
+	// fast, and the process lifetime is owned by the handle + the stop ladder.
+	cmd := exec.Command(opts.Command[0], opts.Command[1:]...)
 	if opts.Dir != "" {
 		cmd.Dir = opts.Dir
 	}
 	cmd.Env = append(os.Environ(), envPairs(opts.Env)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// The recorder is detached — its stdout/stderr belong to its own session, not the bed's
-	// step log. The disk handle + the recorder's end-of-stream artifact ARE the record.
+	// step log. The disk handle + the recorder's end-of-stream artifact ARE the record; the
+	// recorder's OWN stderr is retained to <state_dir>/recorder.log so a recorder that
+	// exits without its end-of-stream artifact (a dial failure, a crash) is diagnosable
+	// instead of a silent "evidence row missing" (R1: the failure must be visible).
 	cmd.Stdout = nil
-	cmd.Stderr = nil
+	if logf, lerr := os.Create(filepath.Join(h.StateDir, "recorder.log")); lerr == nil {
+		cmd.Stderr = logf
+	} else {
+		cmd.Stderr = nil
+	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("setsid start: %w", err)
 	}

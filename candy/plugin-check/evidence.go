@@ -235,9 +235,18 @@ func (rt *instrumentRuntime) runInstrumentEvidencePhase(ctx context.Context) err
 			for k, v := range pw.Input {
 				input[k] = v
 			}
-			if _, has := input["artifact"]; !has {
-				if art := rt.primaryArtifact(e.ScopedID); art != "" {
+			if art := rt.primaryArtifact(e.ScopedID); art != "" {
+				// The entry's primary artifact is the pipeline's SOURCE: thread it
+				// under both the generic artifact key (the shared validators'
+				// contract) and the explicit source_artifact key (the transcode
+				// verb's source contract — the provider reads the input first, the
+				// check env second; the env is fixed at runner construction, so
+				// the input is the only channel that can carry a per-entry path).
+				if _, has := input["artifact"]; !has {
 					input["artifact"] = art
+				}
+				if _, has := input["source_artifact"]; !has {
+					input["source_artifact"] = art
 				}
 			}
 			op := &spec.Op{ID: e.ScopedID + ".pipeline." + pw.Plugin, Plugin: pw.Plugin, PluginInput: input}
