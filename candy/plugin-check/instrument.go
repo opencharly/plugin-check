@@ -340,12 +340,12 @@ type sessionEnvelope struct {
 // method-session input + the session envelope + the authored input fields.
 func buildInstrumentOp(e *instrumentEntry, op string, env sessionEnvelope) *spec.Op {
 	input := map[string]any{
-		"method":     "session",
-		"action":     op,
-		"session_id": env.ID,
-		"state_dir":  env.StateDir,
+		"method":       "session",
+		"action":       op,
+		"session_id":   env.ID,
+		"state_dir":    env.StateDir,
 		"log_dir":      env.LogDir,
-			"artifact_dir": env.ArtifactDir,
+		"artifact_dir": env.ArtifactDir,
 	}
 	for k, v := range e.Input {
 		input[k] = v
