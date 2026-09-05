@@ -242,6 +242,13 @@ func parsePipelines(raw any) ([]pipelineWord, error) {
 		if !ok {
 			return nil, fmt.Errorf("pipeline[%d]: must be a mapping", i)
 		}
+		// The desugared pair plugin/plugin_input is ONE verb (the #Step contract, same as
+		// instrumentVerb): plugin = the word, plugin_input = its payload.
+		if pw, okp := m["plugin"].(string); okp && pw != "" {
+			inp, _ := m["plugin_input"].(map[string]any)
+			out = append(out, pipelineWord{Plugin: pw, Input: inp})
+			continue
+		}
 		var word string
 		var input map[string]any
 		for k, v := range m {
