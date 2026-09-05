@@ -329,6 +329,11 @@ type sessionEnvelope struct {
 	ID       string `json:"id"`
 	StateDir string `json:"state_dir"`
 	LogDir   string `json:"log_dir"`
+	// ArtifactDir is the run's generic evidence-artifact directory (verb-agnostic;
+	// the provider appends its own filename/extension - plugin-check owns zero
+	// capture-format knowledge). Injected on stop for session verbs that pull a
+	// recording to the host (e.g. record's tmux -> .cast).
+	ArtifactDir string `json:"artifact_dir"`
 }
 
 // buildInstrumentOp assembles the dispatch op for one instrument at one bracket end: the
@@ -339,7 +344,8 @@ func buildInstrumentOp(e *instrumentEntry, op string, env sessionEnvelope) *spec
 		"action":     op,
 		"session_id": env.ID,
 		"state_dir":  env.StateDir,
-		"log_dir":    env.LogDir,
+		"log_dir":      env.LogDir,
+			"artifact_dir": env.ArtifactDir,
 	}
 	for k, v := range e.Input {
 		input[k] = v
@@ -448,7 +454,7 @@ func (rt *instrumentRuntime) runInstrumentBracket(ctx context.Context, p instrum
 		if !ok {
 			return fmt.Errorf("instrument %s: no dispatcher for venue %s", e.ScopedID, e.Venue)
 		}
-		env := sessionEnvelope{ID: e.ScopedID, StateDir: rt.stateDir(e.ScopedID), LogDir: rt.logDir}
+		env := sessionEnvelope{ID: e.ScopedID, StateDir: rt.stateDir(e.ScopedID), LogDir: rt.logDir, ArtifactDir: filepath.Join(rt.logDir, "media")}
 		if derr := disp.dispatch(ctx, buildInstrumentOp(e, op, env)); derr != nil {
 			return fmt.Errorf("instrument %s %s: %w", e.ScopedID, op, derr)
 		}
