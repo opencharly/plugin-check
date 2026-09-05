@@ -204,6 +204,20 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		bedTeardown(ctx, ex, sess, res.OK)
 	}()
 
+	// Capture-session lifecycle (Cutover A): the bedSetup orphan sweep reaps stale recorder
+	// sessions a previous run of THIS bed left behind (a crashed invocation survives in
+	// .check/<bed>/*/capture — the unit name / pidfile is the liveness key, RDD-2), then the
+	// run's instrument: entries resolve per venue (venue-scoped ids) and the EVERY-terminal-
+	// path finalizer arms (stops live sessions + runs the evidence phase + writes
+	// evidence.yml — idempotent and best-effort, so instrument failure never masks the
+	// bed's own verdict).
+	sweepStaleSessions(ctx, filepath.Join(".check", name))
+	inst, ierr := newInstrumentRuntime(ctx, ex, &d, name)
+	if ierr != nil {
+		return nil, fmt.Errorf("check run %s: instruments: %w", name, ierr)
+	}
+	defer inst.finalizeRunInstruments(ctx)
+
 	// Anchored-mode validation BEFORE any step runs (bad --anchor/--variant fails
 	// fast, before anything is destroyed or persisted).
 	if verr := validateAnchoredRun(opts, d, name); verr != nil {
@@ -454,6 +468,14 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		return res, fmt.Errorf(format, args...)
 	}
 
+	// Instrument phase bracket: BUILD — around the image/domain build steps (the group
+	// member builds + Steps 1+2 below). Start before the first build step; the stop runs
+	// after the last build step. A build-step failure between them skips the stop — the
+	// EVERY-terminal-path finalizer (registered above) still finalizes live sessions.
+	if err := inst.runInstrumentBracket(ctx, phaseBuild, "start"); err != nil {
+		return fail("instruments (build start) %s: %w", name, err)
+	}
+
 	// GROUP beds have no root image — build EACH member's substrate BEFORE members-up (the host
 	// bringUpMembers assumes pre-built images). Per-member coordinates ride the descriptor's Members
 	// (the host-resolved {Key, IsVM, Image, From}). A VM member builds its disk (`vm build <from>`,
@@ -501,6 +523,12 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 				return fail("check box %s: %w", d.Image, err)
 			}
 		}
+	}
+
+	// Instrument phase bracket: BUILD stop — after the last build step. A build-phase
+	// instrument with a started capture segment ends its segment here (Cutover A).
+	if err := inst.runInstrumentBracket(ctx, phaseBuild, "stop"); err != nil {
+		return fail("instruments (build stop) %s: %w", name, err)
 	}
 
 	// Step 3: bring up the bed.
@@ -636,29 +664,15 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	}
 
 	// Step 4: deploy/runtime acceptance — gated out at check_level: none|build.
-	// Members are instruments for the runtime probes, so bring-up is gated with them.
-	// Whole-run recording wrap: start the recording BEFORE the first live pass
-	// and stop it AFTER the first one — the R10 rebuild phase recreates the
-	// venue, so the session cannot outlive the pre-update VM; the wrap captures
-	// the install-to-check flow (recordings.yml picks the stop output up;
-	// survived_teardown is inherent). Visible to both the group and non-group
-	// fresh-rebuild arms below.
-	var recStartF, recStopF string
-	if rec, ok := deployRecordWrap(d.NodeJSON); ok {
-		var werr error
-		recStartF, recStopF, werr = recordWrapSteps(d.LogDir, rec)
-		if werr != nil {
-			return fail("record wrap %s: %w", name, werr)
-		}
-	}
-	recordWrapStop := func() {
-		if recStopF == "" {
-			return
-		}
-		_ = step("record-wrap-stop", wrapLiveArgv(name, recStopF, runVarsArgv(opts.Vars))...)
-	}
-	if recStartF != "" {
-		_ = step("record-wrap-start", wrapLiveArgv(name, recStartF, runVarsArgv(opts.Vars))...)
+	// Members are the runtime probes' instruments, so bring-up is gated with them.
+	// Instrument phase bracket: LIVE — start BEFORE the first live pass, stop AFTER the
+	// whole first live pass (bring-up-members → check-live → feature-run). The R10 rebuild
+	// phase below RECREATES the venue, so a live-phase capture session cannot outlive the
+	// pre-update venue — the bracket captures the install-to-check flow (a session that
+	// also spans the rebuild does so as its OWN [update] segment; the venue is recreated,
+	// never re-attached — honest segments, Cutover A A-task-4).
+	if err := inst.runInstrumentBracket(ctx, phaseLive, "start"); err != nil {
+		return fail("instruments (live start) %s: %w", name, err)
 	}
 
 	if d.RunRuntime {
@@ -672,20 +686,18 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		if err := checkLiveTree("check-live"); err != nil {
 			return fail("check live %s: %w", name, err)
 		}
-		// Whole-run wrap: stop the recording after the FIRST live pass. The R10
-		// fresh-rebuild phase below RECREATES the VM domain, so a pre-update
-		// recording session cannot survive to a post-rebuild stop — the wrap
-		// captures the install-to-check flow, which is the deploy-context stream
-		// the bed records. (recordings.yml still picks the stop output up and
-		// asserts host survival after teardown.)
-		recordWrapStop()
-
 		// Step 4b: ADE acceptance — run the bed image's baked plan steps. Pod beds only.
 		if !d.IsVM && !d.IsLocal && !d.IsExternal && d.Image != "" {
 			if err := step("feature-run", featureRunArgs()...); err != nil {
 				return fail("feature run %s: %w", name, err)
 			}
 		}
+	}
+
+	// Instrument phase bracket: LIVE stop — the first live pass is over; live-phase
+	// segments end here (the rebuild's own pass is the [update] bracket's).
+	if err := inst.runInstrumentBracket(ctx, phaseLive, "stop"); err != nil {
+		return fail("instruments (live stop) %s: %w", name, err)
 	}
 
 	// Step 5: fresh-update re-verify (the R10 acceptance gate). The gate's change
@@ -698,6 +710,15 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// --anchor; this guard keeps the invariant at the point of decision for any
 	// direct caller).
 	gate := updateGateFor(opts, &bedNode)
+	// Instrument phase bracket: UPDATE — around the fresh-rebuild/update gate steps. A
+	// [live, update] instrument yields TWO evidence segments across the rebuild (the venue
+	// is recreated — honest, never re-attached); an update-gate skip suppresses the
+	// bracket entirely (there is no update phase to capture).
+	if gate != updateGateSkip && opts.Anchor == "" {
+		if err := inst.runInstrumentBracket(ctx, phaseUpdate, "start"); err != nil {
+			return fail("instruments (update start) %s: %w", name, err)
+		}
+	}
 	if gate != updateGateSkip && opts.Anchor == "" && d.IsGroup {
 		// Group bed: NO root container to `charly update` — a generic `charly update <bed>` would
 		// mis-resolve a TARGETLESS group as a default-pod deploy ("target pod not connected"). The R10
@@ -800,6 +821,15 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		}
 	}
 
+	// Instrument phase bracket: UPDATE stop — the fresh-rebuild pass is over; update-phase
+	// segments end here (the venue the rebuild created is captured, the pre-update venue is
+	// gone — honest segments).
+	if gate != updateGateSkip && opts.Anchor == "" {
+		if err := inst.runInstrumentBracket(ctx, phaseUpdate, "stop"); err != nil {
+			return fail("instruments (update stop) %s: %w", name, err)
+		}
+	}
+
 	// §5.3 snapshot: on_finalize capture — the FRESH lane (no --anchor) captures
 	// the golden snapshot at install finalize, per the bed's snapshot: policy. The
 	// anchored lane (--anchor) reverts to it instead of reinstalling. The capture
@@ -822,15 +852,41 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		}
 	}
 
+	// Instrument phase bracket: TEARDOWN — before the venue teardown steps. A kept venue
+	// (--keep) is not torn down, so a teardown-phase capture would record an empty span —
+	// the bracket runs only when the teardown actually happens.
+	if !opts.Keep {
+		if err := inst.runInstrumentBracket(ctx, phaseTeardown, "start"); err != nil {
+			return fail("instruments (teardown start) %s: %w", name, err)
+		}
+	}
+
+	// Evidence phase (Cutover A, the plan's binding): pipelines dispatch BEFORE the venue
+	// teardown steps — an in-venue pipeline word must still resolve its venue. The
+	// teardown-bracket instruments (whose captures complete during cleanup) dispatch their
+	// pipelines at the every-terminal-path finalizer instead.
+	if err := inst.runInstrumentEvidencePhase(ctx); err != nil {
+		return fail("evidence phase %s: %w", name, err)
+	}
+
 	// Step 6: tear down (suppressed by --keep). Cleanup is part of the acceptance contract.
+	// A teardown-phase instrument's stop runs AFTER the teardown steps (its capture window
+	// IS the teardown); the bracket pairs with the start above on the same keep gate.
 	if err := cleanup(); err != nil {
 		return fail("clean up %s: %w", name, err)
 	}
+	if !opts.Keep {
+		if err := inst.runInstrumentBracket(ctx, phaseTeardown, "stop"); err != nil {
+			return fail("instruments (teardown stop) %s: %w", name, err)
+		}
+	}
+
+	// The evidence envelope lands next to summary.yml (the deferred finalizer covers every
+	// other terminal path; this explicit write covers the success tail so the summary's
+	// reference is truthful at write time).
+	_ = inst.writeRunEvidence()
 
 	writeBedSummary(d.LogDir, res)
-	// G5: the recordings manifest (record: stop outputs + host survival after
-	// teardown) — best-effort; a run with no record steps has no manifest.
-	_ = writeRecordingsManifest(d.LogDir)
 	if !res.OK {
 		return res, fmt.Errorf("bed %s: one or more steps failed", name)
 	}
@@ -915,6 +971,11 @@ func writeBedSummary(dir string, res *bedRunResult) {
 	fmt.Fprintf(&buf, "calver: %s\n", res.CalVer)
 	if res.RepoOverride != "" {
 		fmt.Fprintf(&buf, "repo_override: %s\n", res.RepoOverride)
+	}
+	// The capture-session evidence envelope (Cutover A) sits beside the summary when the
+	// run's instruments produced rows; the reference is truthful — the file exists.
+	if _, err := os.Stat(filepath.Join(dir, "evidence.yml")); err == nil {
+		fmt.Fprintln(&buf, "evidence: evidence.yml")
 	}
 	fmt.Fprintln(&buf, "steps:")
 	var total time.Duration

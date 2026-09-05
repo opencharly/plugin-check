@@ -48,6 +48,12 @@ func NewMeta() pb.PluginMetaServer {
 			// classify a check target's venue instead of an in-core classifier duplicate. Not a
 			// CLI subcommand (mirrors verb:status-fanout's internal-only dispatch), so no schema.
 			{Class: "verb", Word: "check-resolve"},
+			// verb:session — the GENERIC runner-owned background-session service seam (Cutover
+			// A, A-task-2b): capture providers (plugin-spice/plugin-record session methods)
+			// submit recorder spawn/stop/status requests over the RunHostStep reverse leg
+			// (session_seam.go). Internal-only dispatch (no CLI surface), so no schema — the
+			// verb:check-resolve precedent.
+			{Class: "verb", Word: "session"},
 		},
 		nil)
 }
