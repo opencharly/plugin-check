@@ -161,6 +161,16 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		return nil, err
 	}
 
+	// Connect the out-of-process check-verb plugins (spice/record/wl/vnc/cdp/adb/appium) the
+	// bed's INSTRUMENT entries reference — the SAME check-load-plugins seam `charly check live`
+	// and `feature run` invoke at command scope (live_gather.go / feature_run_gather.go). The
+	// check-run sequence drives the instrument brackets (runInstrumentBracket) over the
+	// in-process provider registry, so without this call the capture verbs' serving plugins are
+	// never connected and the instrument live-start fails with "no provider registered for
+	// plugin verb spice" (the baked search path is empty under CHARLY_PLUGIN_ONLY=1).
+	dir, _ := os.Getwd()
+	checkLoadPlugins(ex, ctx, name, dir)
+
 	res := &bedRunResult{Bed: name, CalVer: d.Calver, OK: true}
 	if sess != nil {
 		res.RepoOverride = sess.repoOvPair
