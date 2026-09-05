@@ -208,13 +208,24 @@ func spawnSetsidProcess(ctx context.Context, h *sessionHandle, opts sessionSpawn
 	// exits without its end-of-stream artifact (a dial failure, a crash) is diagnosable
 	// instead of a silent "evidence row missing" (R1: the failure must be visible).
 	cmd.Stdout = nil
-	if logf, lerr := os.Create(filepath.Join(h.StateDir, "recorder.log")); lerr == nil {
+	var logf *os.File
+	if f, lerr := os.Create(filepath.Join(h.StateDir, "recorder.log")); lerr == nil {
+		logf = f
 		cmd.Stderr = logf
 	} else {
 		cmd.Stderr = nil
 	}
 	if err := cmd.Start(); err != nil {
+		if logf != nil {
+			_ = logf.Close()
+		}
 		return fmt.Errorf("setsid start: %w", err)
+	}
+	// The recorder is detached and outlives the caller: the child inherited its own
+	// fd reference at fork, so the parent's copy must be closed here or it leaks on
+	// every spawn (B18).
+	if logf != nil {
+		_ = logf.Close()
 	}
 	pid := cmd.Process.Pid
 	pidfile := filepath.Join(h.StateDir, "pid")
