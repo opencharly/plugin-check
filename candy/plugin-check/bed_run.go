@@ -496,7 +496,11 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	if d.IsGroup {
 		for _, m := range d.Members {
 			if m.IsVM {
-				if err := step("vm-build-"+m.Key, "vm", "build", m.From); err != nil {
+				buildArgs := []string{"vm", "build", m.From}
+				if m.FromSnapshot != "" {
+					buildArgs = append(buildArgs, "--from-snapshot", m.FromSnapshot)
+				}
+				if err := step("vm-build-"+m.Key, buildArgs...); err != nil {
 					return fail("vm build member %s (%s): %w", m.Key, m.From, err)
 				}
 				continue
@@ -554,7 +558,13 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// (captures the golden) and retries the build once — R4: the manual
 		// "provision the base first" ordering is replaced by the runner.
 		if err := buildVmWithProvisionRetry(
-			func() error { return step("vm-build", "vm", "build", d.VMTemplate) },
+			func() error {
+				buildArgs := []string{"vm", "build", d.VMTemplate}
+				if d.FromSnapshot != "" {
+					buildArgs = append(buildArgs, "--from-snapshot", d.FromSnapshot)
+				}
+				return step("vm-build", buildArgs...)
+			},
 			provisionBaseGoldenRun,
 		); err != nil {
 			return fail("vm build %s: %w", d.VMTemplate, err)
