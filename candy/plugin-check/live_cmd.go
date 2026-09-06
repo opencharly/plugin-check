@@ -10,7 +10,7 @@ import (
 )
 
 // live_cmd.go — the `charly check live` leaf. It gathers no config itself: the full-stack live
-// gathering (vm/pod/local/group classification, venue construction, OCI-label plan extraction,
+// gathering (vm/pod/local classification, venue construction, OCI-label plan extraction,
 // runtime-var resolution) runs PLUGIN-side (hostCheckRun's Mode:"live" → pluginCheckRunLive); the
 // plugin sends the CLI inputs, prints the kind-specific Header banner, and formats the
 // returned []StepResult. The one non-plan-run live path — a nested pod-in-VM leaf whose check the
@@ -18,7 +18,7 @@ import (
 // back as reply.Passthrough, whose stdout/stderr + exit code the plugin forwards verbatim.
 
 // CheckLiveCmd runs the full three-section check against a running deployment (pod / vm / local /
-// group — the host classifies and routes internally). Mirrors the former in-core CheckLiveCmd
+// external — the host classifies and routes internally). Mirrors the former in-core CheckLiveCmd
 // flags + help so the externalized CLI is behaviour-neutral.
 type CheckLiveCmd struct {
 	Box       string   `arg:"" help:"Box name"`

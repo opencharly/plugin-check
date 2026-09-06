@@ -159,8 +159,10 @@ func arbiterInvoke(ctx context.Context, ex *sdk.Executor, in spec.ArbiterInvokeI
 // candy/plugin-preempt already, keyed by Claimant — so `charly preempt restore` reconciles
 // identically regardless of which caller acquired the lease, AS LONG AS the ArbiterInvokeInput
 // shape matches the former core acquireDispatch field-for-field (verified below:
-// Action/Claimant/Tokens/ClaimAddr/Transient/IsGroup/IsPodMember/SecurityDevices, the same 8
-// fields in the same shapes).
+// Action/Claimant/Tokens/ClaimAddr/Transient/IsPodMember/SecurityDevices, the same field set in
+// the same shapes). is_group is left Go-zero since the group-kind cutover (spec #105): a bed
+// claimant is always a primary substrate node now — the former targetless group shape cannot
+// exist, and the wire field itself is a spec#105 residual kept for plugin-preempt.
 func arbiterAcquire(ctx context.Context, ex *sdk.Executor, claimant string, node spec.FleetNode, transient bool) (active bool, err error) {
 	if os.Getenv(envPreemptLeaseHeld) != "" {
 		return false, nil
@@ -181,7 +183,6 @@ func arbiterAcquire(ctx context.Context, ex *sdk.Executor, claimant string, node
 		Tokens:          tokens,
 		ClaimAddr:       fleet.HolderAddrFor(claimant, node),
 		Transient:       transient,
-		IsGroup:         node.IsGroup(),
 		IsPodMember:     fleet.IsContainerVenue(&node),
 		SecurityDevices: secDevices,
 	})
@@ -247,7 +248,7 @@ func bedCheckLevel(uf *spec.UnifiedFile, node spec.FleetNode) string {
 	return spec.ResolveCheckLevel(bc.CheckLevel)
 }
 
-// bedMemberDescriptors projects a group bed's deploy-level (alongside) members into the descriptor
+// bedMemberDescriptors projects a bed root's deploy-level (alongside) members into the descriptor
 // the plugin drives its per-member image-build loop from, in AUTHORED tree order (the ordered
 // member tree replaces the former sorted map keys). Ported from charly/host_build_check_bed.go,
 // using fleet.IsVmVenue instead of the former core-private isVmMember (same Descent-stamped read).
@@ -432,10 +433,11 @@ func bedSetup(ctx context.Context, ex *sdk.Executor, bed, dir string) (spec.Chec
 	isVM := fleet.IsVmVenue(&node)
 	isLocal := fleet.HostRooted(&node)
 	isExternal := fleet.ExternalInPlaceVenue(&node)
-	isGroup := node.IsGroup()
 
-	// VM/group beds need the libvirt user-session daemon (probes + the backend resolver). Best-effort.
-	if isVM || isGroup {
+	// VM beds need the libvirt user-session daemon (probes + the backend resolver). Best-effort.
+	// (The former group arm is gone with the group kind — spec #105; a bed root is always a
+	// primary substrate node now, and only the VM substrate needs the session daemon.)
+	if isVM {
 		hostenv.StartLibvirtUserSession()
 	}
 
@@ -446,7 +448,6 @@ func bedSetup(ctx context.Context, ex *sdk.Executor, bed, dir string) (spec.Chec
 		LogDir:         logDir,
 		IsVM:           isVM,
 		IsLocal:        isLocal,
-		IsGroup:        isGroup,
 		IsExternal:     isExternal,
 		NodeJSON:       nodeJSON,
 		Image:          node.Image,

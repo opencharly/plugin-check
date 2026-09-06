@@ -69,9 +69,10 @@ func bedConfigReader(ctx context.Context, ex *sdk.Executor) func() (*deploykit.F
 // fleet.ExternalInPlaceVenue, #55 W3 B2-full — no more host registry round-trip). Each member is
 // persisted from the root's deploy-level member entries, with externalInPlace derived the SAME way
 // (fleet.ExternalInPlaceVenue, R3 — one shared predicate, no third copy). deploykit.
-// PersistBedDeployOverrides internally self-skips a group root (IsGroup), a local/host-rooted
-// node, and an in-place external node — so calling it unconditionally for the root + members is
-// safe + matches the former host behavior. Best-effort (stderr warnings, no error return) —
+// PersistBedDeployOverrides internally self-skips a local/host-rooted node and an in-place
+// external node (the former group-root self-skip is gone with the group kind — spec #105: a bed
+// root is always a primary substrate node now, so the root persist is meaningful) — so calling it
+// unconditionally for the root + members is safe + matches the former host behavior. Best-effort (stderr warnings, no error return) —
 // matching the former host wrapper (a persist failure does not abort the bed run; the bed's own
 // `charly config` re-saves the overlay).
 func persistBedDeployOverridePluginSide(ctx context.Context, ex *sdk.Executor, name string, d spec.CheckBedReply) {
@@ -86,7 +87,7 @@ func persistBedDeployOverridePluginSide(ctx context.Context, ex *sdk.Executor, n
 	marshalNode := bedMarshalNode(ctx, ex)
 	reader := bedConfigReader(ctx, ex)
 	// Root persist — guarded !IsVM (a VM bed runs no `charly config`); the deploykit func self-skips
-	// group/local/external-in-place.
+	// local/external-in-place.
 	if !d.IsVM {
 		deploykit.PersistBedDeployOverrides(name, deploykit.FleetNode(root), d.IsExternal, marshalNode, reader)
 	}
