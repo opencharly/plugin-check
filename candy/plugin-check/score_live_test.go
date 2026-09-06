@@ -125,17 +125,17 @@ func TestPluginResolveDottedAgentProvisionedVenue(t *testing.T) {
 			Target:           "vm",
 			From:             "nested-check-vm",
 			AgentProvisioned: true,
-			Children: map[string]*spec.FleetNode{
-				"inner-app-pod": {
+			Member: []spec.Member{
+				{Name: "inner-app-pod", Position: spec.PositionInSubstrate, Node: &spec.FleetNode{
 					Target:           "pod",
 					AgentProvisioned: true,
-					Children: map[string]*spec.FleetNode{
-						"nested-redis-pod": {
+					Member: []spec.Member{
+						{Name: "nested-redis-pod", Position: spec.PositionInSubstrate, Node: &spec.FleetNode{
 							Target:           "pod",
 							AgentProvisioned: true,
-						},
+						}},
 					},
-				},
+				}},
 			},
 		},
 	})

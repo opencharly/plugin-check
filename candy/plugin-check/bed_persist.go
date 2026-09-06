@@ -3,7 +3,7 @@ package check
 // bed_persist.go — the bed-root + member deploy-override PERSIST, plugin-side (#55 coneC-dsh β1).
 // The former host-side wrapper (charly/check_bed_run.go's persistBedDeployOverrides) + its
 // deploykit import shed from charly core; the host "check-bed" setup seam now threads the bed-root
-// FleetNode (with nested peer Members) as spec.CheckBedReply.NodeJSON, and this helper calls
+// FleetNode (with its ordered member tree) as spec.CheckBedReply.NodeJSON, and this helper calls
 // deploykit.PersistBedDeployOverrides itself — supplying its OWN loader-threaded marshalNode +
 // reader (the deployMarshalNode/deployConfigReader pattern candy/plugin-deploy-pod +
 // candy/plugin-fleet already use over the PERMANENT HostBuild("loader-threaded") leg), so the
@@ -63,11 +63,11 @@ func bedConfigReader(ctx context.Context, ex *sdk.Executor) func() (*deploykit.F
 // persistBedDeployOverridesPluginSide seeds the per-host charly.yml with the bed ROOT's + each
 // MEMBER's project-declared deploy-shaped overrides (port / volume / env / security / network + the
 // resource-arbitration role) PLUGIN-SIDE, replacing the former host-side persistBedDeployOverrides
-// wrapper. The bed-root FleetNode (with nested peer Members) arrives as d.NodeJSON; the root
+// wrapper. The bed-root FleetNode (with its ordered member tree) arrives as d.NodeJSON; the root
 // persist is guarded by !d.IsVM (matching the former host guard — a VM bed runs no `charly config`)
 // and passes d.IsExternal as externalInPlace (bed_session.go's bedSetup computes it via
 // fleet.ExternalInPlaceVenue, #55 W3 B2-full — no more host registry round-trip). Each member is
-// persisted from the root's nested peer map, with externalInPlace derived the SAME way
+// persisted from the root's deploy-level member entries, with externalInPlace derived the SAME way
 // (fleet.ExternalInPlaceVenue, R3 — one shared predicate, no third copy). deploykit.
 // PersistBedDeployOverrides internally self-skips a group root (IsGroup), a local/host-rooted
 // node, and an in-place external node — so calling it unconditionally for the root + members is
@@ -90,15 +90,15 @@ func persistBedDeployOverridePluginSide(ctx context.Context, ex *sdk.Executor, n
 	if !d.IsVM {
 		deploykit.PersistBedDeployOverrides(name, deploykit.FleetNode(root), d.IsExternal, marshalNode, reader)
 	}
-	// Member persist — each peer member from the root's nested map, BEFORE members-up
-	// runs the member's `charly config`/`charly start`. A member's externalInPlace is derivable from
-	// its stamped Descent (fleet.ExternalInPlaceVenue). Mirrors the former bringUpMembers per-member
-	// persist.
-	for _, memberKey := range spec.SortedMemberKeys(root.Members) {
-		member := root.Members[memberKey]
-		if member == nil {
+	// Member persist — each deploy-level (alongside) member of the root's ordered member tree,
+	// BEFORE members-up runs the member's `charly config`/`charly start`. A member's externalInPlace
+	// is derivable from its stamped Descent (fleet.ExternalInPlaceVenue). Mirrors the former
+	// bringUpMembers per-member persist (the sorted map-key order is gone: the tree preserves
+	// the authored order).
+	for _, m := range root.DeployLevelMembers() {
+		if m.Node == nil {
 			continue
 		}
-		deploykit.PersistBedDeployOverrides(memberKey, *member, fleet.ExternalInPlaceVenue(member), marshalNode, reader)
+		deploykit.PersistBedDeployOverrides(m.Name, *m.Node, fleet.ExternalInPlaceVenue(m.Node), marshalNode, reader)
 	}
 }

@@ -22,16 +22,16 @@ func desc(v string) *spec.DescentDescriptor { return &spec.DescentDescriptor{Ven
 func newVenueTestTree() map[string]spec.FleetNode {
 	return map[string]spec.FleetNode{
 		"cachyos-gpu": {Descent: desc("ssh")}, // vm entity (ssh venue): its own name IS the domain identity
-		"web-pod": {Descent: desc("container"), Children: map[string]*spec.FleetNode{
+		"web-pod": {Descent: desc("container"), Member: []spec.Member{
 			// RCA #12: a vm CHILD (ssh) nested under a non-vm (container) parent — the leaf, not
 			// the root, is the vm. And a local (shell) leaf under the same pod root.
-			"web-pod-vm":    {Descent: desc("ssh")},
-			"web-pod-local": {Descent: desc("shell")},
+			{Name: "web-pod-vm", Position: spec.PositionInSubstrate, Node: &spec.FleetNode{Descent: desc("ssh")}},
+			{Name: "web-pod-local", Position: spec.PositionInSubstrate, Node: &spec.FleetNode{Descent: desc("shell")}},
 		}},
-		"k3s-vm": {Descent: desc("ssh"), Children: map[string]*spec.FleetNode{
+		"k3s-vm": {Descent: desc("ssh"), Member: []spec.Member{
 			// Delegate-into-guest: the ROOT is the vm, the leaf is something nested INSIDE its
 			// guest — the leaf check falls through to the root fallback, not a second vm.
-			"inner-app": {Descent: desc("shell")},
+			{Name: "inner-app", Position: spec.PositionInSubstrate, Node: &spec.FleetNode{Descent: desc("shell")}},
 		}},
 		"bare-vm-dep": {Descent: desc("ssh")},
 		"my-local":    {Descent: desc("shell")},
