@@ -305,6 +305,34 @@ func TestGrubProbeFuseOverlayfsIsConditional(t *testing.T) {
 // TestAllowlistEntriesAreWellFormed keeps the audit trail honest: the Why is printed verbatim
 // into summary.yml on every run, so an empty or throwaway one silently converts a reviewed
 // exemption into an unexplained one.
+// TestCachyosLocalNewerAllowances gates the binutils/libtool entries (RCA 2026-09-06): the
+// check-instrument-cachyos-vm R10 bed run surfaced them as UN-allowlisted "local newer than
+// repo" warnings - the SAME upstream skew the zstd/pacman-contrib entries document. Each
+// line MUST be claimed by its own entry (and would fail with the entries absent).
+func TestCachyosLocalNewerAllowances(t *testing.T) {
+	claimed := map[string]string{
+		"warning: binutils: local (2.44-1) is newer than cachyos-v3 (2.43-2)": "cachyos-binutils-local-newer-than-repo",
+		"warning: libtool: local (2.5.4-1) is newer than cachyos-v3 (2.5.3-2)": "cachyos-libtool-local-newer-than-repo",
+		"warning: zstd: local (1.5.7-3) is newer than cachyos-v3 (1.5.7-2)":   "cachyos-zstd-local-newer-than-repo",
+	}
+	for line, wantID := range claimed {
+		sev, _, ok := classifyDiagnosticLine(line)
+		if !ok {
+			t.Fatalf("%q was not recognised as a diagnostic at all", line)
+		}
+		a := allowanceFor(sev, line)
+		if a == nil || a.ID != wantID {
+			t.Errorf("%q: want the %s allowance, got %v", line, wantID, a)
+		}
+	}
+	unrelated := "warning: gcc: local (14.2.1-2) is newer than cachyos-v3 (14.2.1-1)"
+	if sev, _, ok := classifyDiagnosticLine(unrelated); ok {
+		if a := allowanceFor(sev, unrelated); a != nil {
+			t.Errorf("%q must NOT be claimed by any cachyos-local-newer entry", unrelated)
+		}
+	}
+}
+
 func TestAllowlistEntriesAreWellFormed(t *testing.T) {
 	seen := map[string]bool{}
 	for _, a := range diagnosticAllowlist {
