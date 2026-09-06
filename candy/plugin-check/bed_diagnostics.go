@@ -188,7 +188,7 @@ var diagnosticAllowlist = []diagnosticAllowance{
 	{
 		ID:       "cachyos-binutils-local-newer-than-repo",
 		Severity: severityWarning,
-		Match:    regexp.MustCompile(`^warning: binutils: local ([^)]+) is newer than [A-Za-z0-9_.-]+ ([^)]+)$`),
+		Match:    regexp.MustCompile(`^warning: binutils: local \([^)]+\) is newer than [A-Za-z0-9_.-]+ \([^)]+\)$`),
 		Why: "Identical upstream skew to the zstd entry, for binutils: the published " +
 			"CachyOS image installs a newer build than the CachyOS repos carry (surfaced live by " +
 			"the check-instrument-cachyos-vm deploy-add/update, RCA 2026-09-06). Listed as its " +
@@ -197,7 +197,7 @@ var diagnosticAllowlist = []diagnosticAllowance{
 	{
 		ID:       "cachyos-libtool-local-newer-than-repo",
 		Severity: severityWarning,
-		Match:    regexp.MustCompile(`^warning: libtool: local ([^)]+) is newer than [A-Za-z0-9_.-]+ ([^)]+)$`),
+		Match:    regexp.MustCompile(`^warning: libtool: local \([^)]+\) is newer than [A-Za-z0-9_.-]+ \([^)]+\)$`),
 		Why: "Identical upstream skew to the zstd entry, for libtool: the published " +
 			"CachyOS image installs a newer build than the CachyOS repos carry (surfaced live by " +
 			"the check-instrument-cachyos-vm deploy-add/update, RCA 2026-09-06). Listed as its " +
