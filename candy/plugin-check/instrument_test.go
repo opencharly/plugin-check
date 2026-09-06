@@ -263,3 +263,22 @@ func TestProviderRowMerge(t *testing.T) {
 		t.Errorf("primary artifact = %q", p)
 	}
 }
+
+// TestVenueKindOfIgnoresGroupField pins the group-kind cutover (spec #105): the
+// CheckBedReply.IsGroup wire field is a spec-side residual (consumed by plugin-preempt) that
+// plugin-check never sets non-zero, and venueKindOf must not classify from it even if a stale
+// writer did — a bed root is always a primary substrate node now, so an all-false descriptor is
+// a POD, never the deleted "group" kind. (The pre-cutover venueKindOf had an `case d.IsGroup:
+// return "group"` arm — this test fails on that tree.)
+func TestVenueKindOfIgnoresGroupField(t *testing.T) {
+	if got := venueKindOf(&spec.CheckBedReply{}); got != "pod" {
+		t.Errorf("venueKindOf(all-zero descriptor) = %q, want %q", got, "pod")
+	}
+	residual := &spec.CheckBedReply{IsGroup: true} // the residual field, set by a stale writer
+	if got := venueKindOf(residual); got != "pod" {
+		t.Errorf("venueKindOf(residual IsGroup descriptor) = %q, want %q — the deleted group kind must not classify", got, "pod")
+	}
+	if got := venueKindOf(&spec.CheckBedReply{IsVM: true, IsGroup: true}); got != "vm" {
+		t.Errorf("venueKindOf(vm+residual) = %q, want %q — substrate classification wins", got, "vm")
+	}
+}
