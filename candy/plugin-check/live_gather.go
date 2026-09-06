@@ -195,23 +195,19 @@ func pluginCheckLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.Resolved
 // optional nested-leaf node (for a dotted "parent.child" path), and the per-deploy domain
 // identity — the port of charly/check_cmd.go's CheckLiveCmd.resolveVmTarget, off the envelope
 // tree instead of *UnifiedFile.
-// isVmTemplate reports whether name is a kind:vm TEMPLATE (in the deploy map's FROM
-// sense: a name NOT in the Fleet tree is a standalone template; a bed/deploy lives in
-// the tree). Used by the live-target deploy-hop to skip re-hoping a template name.
-func isVmTemplate(name string, tree map[string]spec.FleetNode) bool {
-	_, inTree := tree[name]
-	return !inTree
-}
-
 func pluginResolveVmTarget(tree map[string]spec.FleetNode, name string) (vmName, domainID string, nestedLeaf *spec.FleetNode) {
 	vmName = name
 	domainKey := name
 	if entry, ok := tree[name]; ok && nodeTraits(&entry).Venue == "ssh" && entry.From != "" {
 		vmName = entry.From
 		// The from: name:tag deploy-hop (Phase 3): the from: may name the clone-base
-		// BED (a deploy whose own from: names the terminal kind:vm template). Hop
-		// the chain so the live spec lookup (templateBody) finds the template.
-		if base, ok := tree[vmName]; ok && base.From != "" && !isVmTemplate(vmName, tree) {
+		// BED (a deploy whose own from: names the terminal kind:vm template), so
+		// the live spec lookup (templateBody) would still miss. Hop the chain once:
+		// an entry.From that is itself a bed resolves to THE BED's from: (the
+		// terminal template); an entry.From NOT in the tree IS the template already
+		// (the tree lookup misses, no hop) — exactly the single-hop semantics of
+		// the ONE chain resolver (sdk/loaderkit DeployTargetEntity).
+		if base, ok := tree[vmName]; ok && base.From != "" {
 			vmName = base.From
 		}
 	} else if idx := strings.Index(name, "."); idx > 0 {
