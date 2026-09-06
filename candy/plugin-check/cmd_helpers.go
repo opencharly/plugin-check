@@ -28,8 +28,10 @@ import (
 	"github.com/opencharly/spec/spec"
 )
 
-// resolveNestedNode walks a dotted path through roots[root].Children, returning the leaf node (or
-// nil if any segment is absent). Ported unchanged from charly/check_cmd.go.
+// resolveNestedNode walks a dotted path through roots[root]'s ordered member tree — the
+// IN-SUBSTRATE positions, the successor of the former Children map — returning the leaf node (or
+// nil if any segment is absent). Ported from charly/check_cmd.go; the position-derived lookup
+// (MemberByName + InSubstrate) replaces the former dual-map index.
 func resolveNestedNode(roots map[string]spec.FleetNode, path string) *spec.FleetNode {
 	parts := strings.Split(path, ".")
 	if len(parts) == 0 {
@@ -41,14 +43,11 @@ func resolveNestedNode(roots map[string]spec.FleetNode, path string) *spec.Fleet
 	}
 	current := &entry
 	for _, p := range parts[1:] {
-		if current.Children == nil {
+		m := current.MemberByName(p)
+		if m == nil || !m.InSubstrate() || m.Node == nil {
 			return nil
 		}
-		next, ok := current.Children[p]
-		if !ok || next == nil {
-			return nil
-		}
-		current = next
+		current = m.Node
 	}
 	return current
 }

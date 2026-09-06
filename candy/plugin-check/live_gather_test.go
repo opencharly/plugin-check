@@ -27,11 +27,11 @@ func TestPluginResolveVmTarget_LeafVmUnderNonVmParent(t *testing.T) {
 	// what the host's stampFleetDescents pass would produce for the given Target.
 	sshDescent := &spec.DescentDescriptor{Venue: "ssh"}
 	tree := map[string]spec.FleetNode{
-		"web-pod": {Target: "pod", Descent: &spec.DescentDescriptor{Venue: "container"}, Children: map[string]*spec.FleetNode{
-			"web-pod-vm": {Target: "vm", From: "eval-vm", Descent: sshDescent},
+		"web-pod": {Target: "pod", Descent: &spec.DescentDescriptor{Venue: "container"}, Member: []spec.Member{
+			{Name: "web-pod-vm", Position: spec.PositionInSubstrate, Node: &spec.FleetNode{Target: "vm", From: "eval-vm", Descent: sshDescent}},
 		}},
-		"k3s-vm": {Target: "vm", From: "k3s-vm-entity", Descent: sshDescent, Children: map[string]*spec.FleetNode{
-			"inner-app": {Target: "local", Descent: &spec.DescentDescriptor{Venue: "host"}},
+		"k3s-vm": {Target: "vm", From: "k3s-vm-entity", Descent: sshDescent, Member: []spec.Member{
+			{Name: "inner-app", Position: spec.PositionInSubstrate, Node: &spec.FleetNode{Target: "local", Descent: &spec.DescentDescriptor{Venue: "host"}}},
 		}},
 	}
 

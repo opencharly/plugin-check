@@ -247,18 +247,17 @@ func bedCheckLevel(uf *spec.UnifiedFile, node spec.FleetNode) string {
 	return spec.ResolveCheckLevel(bc.CheckLevel)
 }
 
-// bedMemberDescriptors projects a group bed's sibling members into the descriptor the plugin
-// drives its per-member image-build loop from. Ported from charly/host_build_check_bed.go, using
-// fleet.IsVmVenue instead of the former core-private isVmMember (same Descent-stamped read).
-func bedMemberDescriptors(members map[string]*spec.FleetNode) []spec.CheckBedMember {
-	keys := spec.SortedMemberKeys(members)
-	if len(keys) == 0 {
-		return nil
-	}
-	out := make([]spec.CheckBedMember, 0, len(keys))
-	for _, key := range keys {
-		m := members[key]
-		out = append(out, spec.CheckBedMember{Key: key, IsVM: fleet.IsVmVenue(m), Image: m.Image, From: m.From, FromSnapshot: m.FromSnapshot})
+// bedMemberDescriptors projects a group bed's deploy-level (alongside) members into the descriptor
+// the plugin drives its per-member image-build loop from, in AUTHORED tree order (the ordered
+// member tree replaces the former sorted map keys). Ported from charly/host_build_check_bed.go,
+// using fleet.IsVmVenue instead of the former core-private isVmMember (same Descent-stamped read).
+func bedMemberDescriptors(members []*spec.Member) []spec.CheckBedMember {
+	var out []spec.CheckBedMember
+	for _, m := range members {
+		if m.Node == nil {
+			continue
+		}
+		out = append(out, spec.CheckBedMember{Key: m.Name, IsVM: fleet.IsVmVenue(m.Node), Image: m.Node.Image, From: m.Node.From, FromSnapshot: m.Node.FromSnapshot})
 	}
 	return out
 }
@@ -273,17 +272,26 @@ func bedRunImageTag(bed, calver string) string {
 	return bed + "-" + calver
 }
 
-// bedLocalChildKeys is the HOST-ROOTED (kind:local) subset of a node's nested children, in
-// sortedNestedKeys order — the set a VM root deploys host-side. Ported from
-// charly/host_build_check_bed.go, using fleet.HostRooted instead of the former core-private
-// nodeTraits(child).HostRooted read (same Descent-stamped predicate, already promoted #55 U4).
-func bedLocalChildKeys(children map[string]*spec.FleetNode) []string {
+// bedLocalChildKeys is the HOST-ROOTED (kind:local) subset of a node's in-substrate members, in
+// authored tree order (the ordered member tree replaces the former sorted map keys) — the set a
+// VM root deploys host-side. Ported from charly/host_build_check_bed.go, using fleet.HostRooted
+// instead of the former core-private nodeTraits(child).HostRooted read (same Descent-stamped
+// predicate, already promoted #55 U4).
+func bedLocalChildKeys(members []*spec.Member) []string {
 	var out []string
-	for _, childKey := range fleet.SortedNestedKeys(children) {
-		child := children[childKey]
-		if fleet.HostRooted(child) {
-			out = append(out, childKey)
+	for _, m := range members {
+		if m.Node != nil && fleet.HostRooted(m.Node) {
+			out = append(out, m.Name)
 		}
+	}
+	return out
+}
+
+// memberNames projects a member list to its tree keys, in authored order.
+func memberNames(members []*spec.Member) []string {
+	var out []string
+	for _, m := range members {
+		out = append(out, m.Name)
 	}
 	return out
 }
@@ -449,10 +457,10 @@ func bedSetup(ctx context.Context, ex *sdk.Executor, bed, dir string) (spec.Chec
 		ImageTag:       imageTag,
 		LocalRef:       node.From,
 		VMDomains:      domains,
-		CheckLiveRefs:  fleet.BedCheckLiveRefs(bed, node.Children),
-		ChildKeys:      fleet.SortedNestedKeys(node.Children),
-		LocalChildKeys: bedLocalChildKeys(node.Children),
-		Members:        bedMemberDescriptors(node.Members),
+		CheckLiveRefs:  fleet.BedCheckLiveRefs(bed, &node),
+		ChildKeys:      memberNames(node.InSubstrateMembers()),
+		LocalChildKeys: bedLocalChildKeys(node.InSubstrateMembers()),
+		Members:        bedMemberDescriptors(node.DeployLevelMembers()),
 		RunBuild:       spec.CheckLevelReaches(level, spec.CheckLevelBuild),
 		RunRuntime:     spec.CheckLevelReaches(level, spec.CheckLevelNoAgent),
 		RunAgent:       spec.CheckLevelReaches(level, spec.CheckLevelAgent),

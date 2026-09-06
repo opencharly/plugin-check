@@ -23,7 +23,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 
 	"gopkg.in/yaml.v3"
 
@@ -111,25 +110,25 @@ func resolveInstruments(nodeJSON []byte, bed string) ([]instrumentEntry, error) 
 	if err := add(bed, rootNode["instrument"]); err != nil {
 		return nil, err
 	}
-	// Member venues: the peer (brought-up-alongside) and nested (deploy-into) member maps of
-	// the serialized FleetNode (spec.Deploy.Members/Children, wire keys "peer"/"nested").
-	for _, mapKey := range []string{"peer", "nested"} {
-		members, ok := node[mapKey].(map[string]any)
-		if !ok {
-			continue
-		}
-		keys := make([]string, 0, len(members))
-		for k := range members {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			m, ok := members[k].(map[string]any)
+	// Member venues: every entry of the serialized FleetNode's ordered member tree
+	// (spec.Deploy.Member, wire shape [{name, position, node}]) — BOTH positions carry member
+	// instruments: deploy-level (the former peer map, brought up alongside) and in-substrate
+	// (the former nested map, deployed into the parent's venue). The tree preserves the authored
+	// order (the former sort.Strings over the map keys is gone).
+	rawMembers, ok := node["member"].([]any)
+	if ok {
+		for _, item := range rawMembers {
+			m, ok := item.(map[string]any)
 			if !ok {
 				continue
 			}
-			venue := bed + "." + k
-			if err := add(venue, m["instrument"]); err != nil {
+			memberName, _ := m["name"].(string)
+			child, _ := m["node"].(map[string]any)
+			if memberName == "" || child == nil {
+				continue
+			}
+			venue := bed + "." + memberName
+			if err := add(venue, child["instrument"]); err != nil {
 				return nil, err
 			}
 		}

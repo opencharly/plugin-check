@@ -203,8 +203,8 @@ func checkLocalTarget(tree map[string]spec.FleetNode, name string) (spec.FleetNo
 }
 
 // resolveDeployNodeByPath resolves a (possibly DOTTED) deploy name to its FleetNode, descending
-// node.Children for each dotted segment. Ported unchanged from charly/check_cmd.go (pure, no
-// core-only dependency).
+// the ordered member tree's IN-SUBSTRATE members for each dotted segment (the successor of the
+// former Children map walk). Ported from charly/check_cmd.go (pure, no core-only dependency).
 func resolveDeployNodeByPath(tree map[string]spec.FleetNode, name string) (*spec.FleetNode, bool) {
 	name, _ = vmshared.SplitVmAddress(name)
 	parts := strings.Split(name, ".")
@@ -214,11 +214,11 @@ func resolveDeployNodeByPath(tree map[string]spec.FleetNode, name string) (*spec
 	}
 	cur := &root
 	for _, seg := range parts[1:] {
-		child, ok := cur.Children[seg]
-		if !ok || child == nil {
+		m := cur.MemberByName(seg)
+		if m == nil || !m.InSubstrate() || m.Node == nil {
 			return nil, false
 		}
-		cur = child
+		cur = m.Node
 	}
 	return cur, true
 }

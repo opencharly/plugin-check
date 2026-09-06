@@ -529,7 +529,7 @@ func pluginCheckLiveGroup(ex *sdk.Executor, ctx context.Context, rp *spec.Resolv
 	if len(plan) == 0 {
 		return kit.CheckRunReply{NoSteps: true}, nil
 	}
-	header := fmt.Sprintf("Group bed: %s [%d sibling member(s); venue-dispatched, no root container]", req.Name, len(entry.Members))
+	header := fmt.Sprintf("Group bed: %s [%d sibling member(s); venue-dispatched, no root container]", req.Name, len(entry.DeployLevelMembers()))
 
 	resolver := newPluginRuntimeCheckVarResolver(map[string]string{
 		"IMAGE":    req.Name,

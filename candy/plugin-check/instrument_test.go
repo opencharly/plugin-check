@@ -25,10 +25,16 @@ func resolvedNodeJSON(t *testing.T) []byte {
 			map[string]any{"id": "screen", "phase": []any{"live"}, "spice": map[string]any{"method": "session", "fps": 5}},
 			map[string]any{"id": "term", "record": map[string]any{"method": "session"}},
 		},
-		"peer": map[string]any{
-			"driver": map[string]any{
-				"local":      map[string]any{"from": "driver-tpl"},
-				"instrument": []any{map[string]any{"id": "probe", "phase": []any{"live", "update"}, "record": map[string]any{"method": "session"}}},
+		// The ordered member tree (spec.Deploy.Member, wire shape [{name, position, node}]) —
+		// a deploy-level (peer) member carrying its own instrument block.
+		"member": []any{
+			map[string]any{
+				"name":     "driver",
+				"position": "deploy-level",
+				"node": map[string]any{
+					"local":      map[string]any{"from": "driver-tpl"},
+					"instrument": []any{map[string]any{"id": "probe", "phase": []any{"live", "update"}, "record": map[string]any{"method": "session"}}},
+				},
 			},
 		},
 	}
