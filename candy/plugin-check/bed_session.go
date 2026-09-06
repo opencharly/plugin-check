@@ -258,7 +258,7 @@ func bedMemberDescriptors(members map[string]*spec.FleetNode) []spec.CheckBedMem
 	out := make([]spec.CheckBedMember, 0, len(keys))
 	for _, key := range keys {
 		m := members[key]
-		out = append(out, spec.CheckBedMember{Key: key, IsVM: fleet.IsVmVenue(m), Image: m.Image, From: m.From})
+		out = append(out, spec.CheckBedMember{Key: key, IsVM: fleet.IsVmVenue(m), Image: m.Image, From: m.From, FromSnapshot: m.FromSnapshot})
 	}
 	return out
 }
@@ -444,6 +444,7 @@ func bedSetup(ctx context.Context, ex *sdk.Executor, bed, dir string) (spec.Chec
 		Image:          node.Image,
 		HasAddCandy:    len(node.AddCandy) > 0,
 		VMTemplate:     node.From,
+		FromSnapshot:   node.FromSnapshot,
 		BedDomain:      bedDomain,
 		ImageTag:       imageTag,
 		LocalRef:       node.From,

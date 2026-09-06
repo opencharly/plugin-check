@@ -137,6 +137,18 @@ func configStartArgs(name, imageTag string, hasAddCandy bool) (configArgs, start
 	return configArgs, startArgs
 }
 
+// vmBuildArgs returns the vm-build step args: `vm build <entity>` threaded with
+// --from-snapshot <snapshot> when the deploy carries one (the unified from: name:tag
+// clone drive — the bed builds the entity as a clone of its own golden at that
+// snapshot). Extracted for the unit gate.
+func vmBuildArgs(entity, snapshot string) []string {
+	args := []string{"vm", "build", entity}
+	if snapshot != "" {
+		args = append(args, "--from-snapshot", snapshot)
+	}
+	return args
+}
+
 // runTaggedImageRef returns the exact OCI image reference produced by the
 // bed's `box build --tag`. Artifact verification must consume this reference,
 // not re-resolve the untagged logical box name: an older locally cached bed
@@ -496,7 +508,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	if d.IsGroup {
 		for _, m := range d.Members {
 			if m.IsVM {
-				if err := step("vm-build-"+m.Key, "vm", "build", m.From); err != nil {
+				if err := step("vm-build-"+m.Key, vmBuildArgs(m.From, m.FromSnapshot)...); err != nil {
 					return fail("vm build member %s (%s): %w", m.Key, m.From, err)
 				}
 				continue
@@ -554,7 +566,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// (captures the golden) and retries the build once — R4: the manual
 		// "provision the base first" ordering is replaced by the runner.
 		if err := buildVmWithProvisionRetry(
-			func() error { return step("vm-build", "vm", "build", d.VMTemplate) },
+			func() error { return step("vm-build", vmBuildArgs(d.VMTemplate, d.FromSnapshot)...) },
 			provisionBaseGoldenRun,
 		); err != nil {
 			return fail("vm build %s: %w", d.VMTemplate, err)
