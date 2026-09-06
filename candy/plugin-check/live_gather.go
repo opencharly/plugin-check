@@ -200,6 +200,16 @@ func pluginResolveVmTarget(tree map[string]spec.FleetNode, name string) (vmName,
 	domainKey := name
 	if entry, ok := tree[name]; ok && nodeTraits(&entry).Venue == "ssh" && entry.From != "" {
 		vmName = entry.From
+		// The from: name:tag deploy-hop (Phase 3): the from: may name the clone-base
+		// BED (a deploy whose own from: names the terminal kind:vm template), so
+		// the live spec lookup (templateBody) would still miss. Hop the chain once:
+		// an entry.From that is itself a bed resolves to THE BED's from: (the
+		// terminal template); an entry.From NOT in the tree IS the template already
+		// (the tree lookup misses, no hop) — exactly the single-hop semantics of
+		// the ONE chain resolver (sdk/loaderkit DeployTargetEntity).
+		if base, ok := tree[vmName]; ok && base.From != "" {
+			vmName = base.From
+		}
 	} else if idx := strings.Index(name, "."); idx > 0 {
 		if leaf, venue, ok := resolveLeafVenue(tree, name); ok && venue == "ssh" {
 			if leaf.From != "" {

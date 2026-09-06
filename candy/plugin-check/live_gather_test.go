@@ -175,3 +175,38 @@ func TestPluginVmHostdevCount(t *testing.T) {
 		}
 	}
 }
+
+// TestPluginResolveVmTarget_DeployHop covers the from: name:tag deploy-chain hop (Phase 3): a
+// converted bed's from: names the clone-base BED (a deploy whose own from: names the terminal
+// kind:vm template) — the live target must hop the chain ONCE so the spec lookup finds the
+// template. A from: that is itself missing from the tree IS the template already (no hop) —
+// the same single-hop semantics as sdk/loaderkit DeployTargetEntity. Removing the hop fails
+// the bed case (vmName would name the clone-base BED, not the template).
+func TestPluginResolveVmTarget_DeployHop(t *testing.T) {
+	sshDescent := &spec.DescentDescriptor{Venue: "ssh"}
+	convTree := map[string]spec.FleetNode{
+		// The check bed (the live target) — from: names the clone-base BED.
+		"check-instrument-cachyos-vm": {Target: "check", From: "check-vm-clone-base", Descent: sshDescent},
+		// The clone-base BED — itself a deploy whose from: names the terminal template.
+		"check-vm-clone-base": {Target: "check", From: "cachyos-vm", Descent: sshDescent},
+	}
+
+	t.Run("bed-from-bed-hops-to-the-terminal-template", func(t *testing.T) {
+		vmName, _, _ := pluginResolveVmTarget(convTree, "check-instrument-cachyos-vm")
+		if vmName != "cachyos-vm" {
+			t.Fatalf("vmName = %q, want %q (the terminal template after ONE hop)", vmName, "cachyos-vm")
+		}
+	})
+
+	t.Run("bed-from-template-passes-through", func(t *testing.T) {
+		// The old spelling: a bed whose from: names the template directly — the tree lookup
+		// misses (a template is not in the Fleet tree), so no hop; the template IS the target.
+		plain := map[string]spec.FleetNode{
+			"check-plain-bed": {Target: "check", From: "cachyos-vm", Descent: sshDescent},
+		}
+		vmName, _, _ := pluginResolveVmTarget(plain, "check-plain-bed")
+		if vmName != "cachyos-vm" {
+			t.Fatalf("vmName = %q, want %q (the from: template, no hop)", vmName, "cachyos-vm")
+		}
+	})
+}
