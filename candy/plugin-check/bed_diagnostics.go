@@ -186,6 +186,24 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"visible, separately reviewed diff.",
 	},
 	{
+		ID:       "cachyos-binutils-local-newer-than-repo",
+		Severity: severityWarning,
+		Match:    regexp.MustCompile(`^warning: binutils: local ([^)]+) is newer than [A-Za-z0-9_.-]+ ([^)]+)$`),
+		Why: "Identical upstream skew to the zstd entry, for binutils: the published " +
+			"CachyOS image installs a newer build than the CachyOS repos carry (surfaced live by " +
+			"the check-instrument-cachyos-vm deploy-add/update, RCA 2026-09-06). Listed as its " +
+			"own entry per the documented one-package-per-entry pattern.",
+	},
+	{
+		ID:       "cachyos-libtool-local-newer-than-repo",
+		Severity: severityWarning,
+		Match:    regexp.MustCompile(`^warning: libtool: local ([^)]+) is newer than [A-Za-z0-9_.-]+ ([^)]+)$`),
+		Why: "Identical upstream skew to the zstd entry, for libtool: the published " +
+			"CachyOS image installs a newer build than the CachyOS repos carry (surfaced live by " +
+			"the check-instrument-cachyos-vm deploy-add/update, RCA 2026-09-06). Listed as its " +
+			"own entry per the documented one-package-per-entry pattern.",
+	},
+	{
 		ID:       "pacman-repo-serves-older-than-installed",
 		Severity: severityWarning,
 		// Scoped to the exact single-package sentence, like the --needed entry above, so a
