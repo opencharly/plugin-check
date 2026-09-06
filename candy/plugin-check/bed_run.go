@@ -553,8 +553,15 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// bed whose base golden is absent provisions the base bed's FRESH lane
 		// (captures the golden) and retries the build once — R4: the manual
 		// "provision the base first" ordering is replaced by the runner.
+		// The deploy's from: name:tag snapshot (Cutover A addendum) flows to the build:
+		// `charly vm build <entity> --from-snapshot <tag>` builds the entity as a CLONE
+		// of its own golden at the named snapshot (the unified pod/VM from: syntax).
+		vmBuildArgs := []string{"vm", "build", d.VMTemplate}
+		if d.FromSnapshot != "" {
+			vmBuildArgs = append(vmBuildArgs, "--from-snapshot", d.FromSnapshot)
+		}
 		if err := buildVmWithProvisionRetry(
-			func() error { return step("vm-build", "vm", "build", d.VMTemplate) },
+			func() error { return step("vm-build", vmBuildArgs...) },
 			provisionBaseGoldenRun,
 		); err != nil {
 			return fail("vm build %s: %w", d.VMTemplate, err)

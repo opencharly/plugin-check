@@ -444,6 +444,7 @@ func bedSetup(ctx context.Context, ex *sdk.Executor, bed, dir string) (spec.Chec
 		Image:          node.Image,
 		HasAddCandy:    len(node.AddCandy) > 0,
 		VMTemplate:     node.From,
+		FromSnapshot:   node.FromSnapshot,
 		BedDomain:      bedDomain,
 		ImageTag:       imageTag,
 		LocalRef:       node.From,
