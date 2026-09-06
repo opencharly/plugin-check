@@ -50,7 +50,7 @@ import (
 // (`charly check live --steps-file`: an isolated live invocation runs ONLY the injected
 // steps instead of the baked plan — the per-invocation set-replacement seam); otherwise
 // the given set unchanged. One canonical implementation shared by every live arm
-// (pod/vm/local/group) so the seam cannot drift per arm (R3).
+// (pod/vm/local) so the seam cannot drift per arm (R3).
 func wrapStepsFileSet(set *kit.LabelDescriptionSet, steps []spec.Step, origin string) *kit.LabelDescriptionSet {
 	if len(steps) == 0 {
 		return set
@@ -69,16 +69,14 @@ func pluginCheckRunLive(ex *sdk.Executor, ctx context.Context, req spec.CheckRun
 	tree := derefDeployTree(rp.Deploy)
 	// Connect the out-of-process check-verb plugins (mcp/cdp/vnc/dbus/spice/…) the live plan
 	// references — ONCE, at command scope, before the per-kind dispatch, so every arm (pod/vm/
-	// local/group) has them connected (task #62; the M-mechanism seam, args uniform across arms).
+	// local) has them connected (task #62; the M-mechanism seam, args uniform across arms; the
+	// former group arm is gone with the group kind — spec #105).
 	checkLoadPlugins(ex, ctx, req.Name, dir)
 	if _, isVM := checkVmTarget(tree, req.Name); isVM {
 		return pluginCheckLiveVM(ex, ctx, rp, tree, dir, req)
 	}
 	if _, isLocal := checkLocalTarget(tree, req.Name); isLocal {
 		return pluginCheckLiveLocal(ex, ctx, rp, tree, dir, req)
-	}
-	if entry, ok := tree[req.Name]; ok && entry.IsGroup() {
-		return pluginCheckLiveGroup(ex, ctx, rp, tree, dir, req)
 	}
 	return pluginCheckLivePod(ex, ctx, rp, tree, dir, req)
 }
@@ -515,51 +513,6 @@ func pluginRunLocalDeployScopePlan(ex *sdk.Executor, ctx context.Context, rp *sp
 		TargetResolver: pluginVenueResolver(ex, ctx, dir, instance),
 	})
 	return kit.RunPlan(ctx, runner, set, false), true, nil
-}
-
-// pluginCheckLiveGroup runs a targetless GROUP bed's flattened, venue-stamped plan — the port of
-// charly/check_cmd.go's checkLiveGroup. Every step venue-dispatches to its member (its own venue
-// != the group root name), so the placeholder base executor below is never actually used.
-func pluginCheckLiveGroup(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, tree map[string]spec.FleetNode, dir string, req spec.CheckRunRequest) (kit.CheckRunReply, error) {
-	entry, ok := tree[req.Name]
-	if !ok {
-		return kit.CheckRunReply{}, fmt.Errorf("check live: group bed %q not found", req.Name)
-	}
-	plan := entry.Plan
-	if len(plan) == 0 {
-		return kit.CheckRunReply{NoSteps: true}, nil
-	}
-	header := fmt.Sprintf("Group bed: %s [%d sibling member(s); venue-dispatched, no root container]", req.Name, len(entry.DeployLevelMembers()))
-
-	resolver := newPluginRuntimeCheckVarResolver(map[string]string{
-		"IMAGE":    req.Name,
-		"INSTANCE": req.Instance,
-	})
-
-	env, hasRuntime := pluginResolverEnv(resolver)
-	env = withRunVars(env, req.Vars)
-	hostVars, hostCleanups := resolveHostVarsForSteps(ex, ctx, dir, plan, req.Instance)
-	defer kit.CloseHostCleanups(hostCleanups)
-	runner := newPluginCheckRunner(ex, ctx, spec.CheckEnv{
-		Mode:      "live",
-		Box:       req.Name,
-		Instance:  req.Instance,
-		VenueKind: "shell",
-	}, kit.RunnerConfig{
-		Exec:           kit.ShellExecutor{},
-		Mode:           kit.ModeLive,
-		Env:            env,
-		HasRuntime:     hasRuntime,
-		Box:            req.Name,
-		Instance:       req.Instance,
-		CandyDirs:      candyDirsFromEnvelope(rp),
-		HostVars:       hostVars,
-		TargetResolver: pluginVenueResolver(ex, ctx, dir, req.Instance),
-	})
-	set := &kit.LabelDescriptionSet{Deploy: []kit.LabeledDescription{{Origin: "group:" + req.Name, Plan: plan}}}
-	set = wrapStepsFileSet(set, req.Plan, "group:"+req.Name)
-	results := kit.RunPlan(ctx, runner, set, false)
-	return kit.CheckRunReply{Steps: results, Header: header}, nil
 }
 
 // newPluginRuntimeCheckVarResolver constructs a runtime check-var resolver (HasRuntime true) from

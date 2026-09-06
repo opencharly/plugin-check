@@ -28,7 +28,7 @@ import (
 // The VerbResolver holds a BACK-REFERENCE to the constructed *kit.Runner (pvr.kr = kr, mirroring
 // charly/checkrun.go's hvr.kr = kr) so an out-of-process verb dispatch (InvokeProvider's S1
 // VenueDescriptor seam) always threads the runner's CURRENT executor — including one SwapVenue
-// retargeted mid-plan for a cross-deployment (`on:`/${HOST:member}) or GROUP-member step, never a
+// retargeted mid-plan for a cross-deployment (`on:`/${HOST:member}) or member step, never a
 // venue frozen at construction time. RCA'd live (check-k3s-vm SIGSEGV'd on a nil cc.Exec() inside
 // a `command:` step on a VM target): the former static-venueDesc-at-construction design left
 // InvokeProvider's fallback ("thread the caller's incoming s.exec") in play whenever the runner's

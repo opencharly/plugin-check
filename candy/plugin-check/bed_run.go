@@ -273,9 +273,6 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		if opts.Anchor == "" {
 			bestEffort("vm", "destroy", d.VMTemplate, "--domain", d.BedDomain, "--if-exists")
 		}
-	case d.IsGroup:
-		bestEffort("remove", name, "--purge")
-		_ = deploykit.TearDownMembers(&bedNode)
 	default:
 		if d.IsExternal {
 			bestEffort("fleet", "del", name)
@@ -294,7 +291,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// `remove --purge`/CleanDeployEntry, and this persist's arbitration-role fields (Preemptible/
 	// RequiresExclusive/RequiresShared) have no downstream re-writer — running it before cleanup let
 	// cleanup silently destroy what it had just seeded (#21, first site). This call covers the
-	// default (non-group) arm's own `charly config`/`charly start` steps below; the peer-members path
+	// default arm's own `charly config`/`charly start` steps below; the peer-members path
 	// (BringUpMembers, both call sites) re-asserts the SAME invariant itself — see bringUpMembersFresh.
 	persistBedDeployOverridePluginSide(ctx, ex, name, d)
 
@@ -458,8 +455,6 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		switch {
 		case d.IsVM:
 			targetErr = step("cleanup", "vm", "destroy", d.VMTemplate, "--domain", d.BedDomain, "--if-exists")
-		case d.IsGroup:
-			// A targetless group has NO root container — members-down is the whole teardown.
 		case d.IsExternal:
 			targetErr = step("cleanup", "fleet", "del", name)
 		default:
@@ -490,7 +485,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		return res, fmt.Errorf(format, args...)
 	}
 
-	// Instrument phase bracket: BUILD — around the image/domain build steps (the group
+	// Instrument phase bracket: BUILD — around the image/domain build steps (the deploy-level
 	// member builds + Steps 1+2 below). Start before the first build step; the stop runs
 	// after the last build step. A build-step failure between them skips the stop — the
 	// EVERY-terminal-path finalizer (registered above) still finalizes live sessions.
@@ -498,14 +493,18 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		return fail("instruments (build start) %s: %w", name, err)
 	}
 
-	// GROUP beds have no root image — build EACH member's substrate BEFORE members-up (the host
-	// bringUpMembers assumes pre-built images). Per-member coordinates ride the descriptor's Members
-	// (the host-resolved {Key, IsVM, Image, From}). A VM member builds its disk (`vm build <from>`,
-	// ENTITY-scoped — bringUpMembers does the per-member `vm create --domain` + ssh-wait); a pod / kubernetes
-	// member builds its box image (+ RunBuild-gated `check box`); a kind:local member carries no image
-	// (applies candies in place). Mirrors the core runCheckBed group loop. libvirt was already started
-	// by the check-bed setup op (vm/group beds), so no per-member start is needed here.
-	if d.IsGroup {
+	// Deploy-level members (the migrated former-group shape: a primary substrate root carrying
+	// sibling members — the targetless group kind itself was deleted at spec #105) need EACH
+	// member's substrate built BEFORE members-up (the host bringUpMembers assumes pre-built
+	// images). Per-member coordinates ride the descriptor's Members (the host-resolved {Key, IsVM,
+	// Image, From}). A VM member builds its disk (`vm build <from>`, ENTITY-scoped —
+	// bringUpMembers does the per-member `vm create --domain` + ssh-wait); a pod / kubernetes
+	// member builds its box image (+ RunBuild-gated `check box`); a kind:local member carries no
+	// image (applies candies in place). The root's OWN substrate builds in Steps 1+2 below — the
+	// former group arm was the whole build only because a targetless group had no root image.
+	// libvirt was already started by the check-bed setup op (VM beds), so no per-member start is
+	// needed here.
+	if len(d.Members) > 0 {
 		for _, m := range d.Members {
 			if m.IsVM {
 				if err := step("vm-build-"+m.Key, vmBuildArgs(m.From, m.FromSnapshot)...); err != nil {
@@ -601,13 +600,6 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 				}
 			}
 		}
-	case d.IsGroup:
-		// Group bed: no root container — the members (subject + driver) ARE the deployment.
-		// bringUpMembers (the members-up op in the runtime block below) deploys each member
-		// (config+start per pod member, fleet add per local member). There is no root
-		// deploy-add/config/start. The pre-run `remove --purge` + TearDownMembers now run in the
-		// hoisted pre-run-cleanup block above, before persist.
-		deployed = true // members will be brought up — keep state on a later failure
 	default:
 		// Pod beds → image ref; kind:local beds → local template ref; an EXTERNAL
 		// deploy substrate composes its candies via add_candy: and carries no ref.
@@ -741,14 +733,16 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 			return fail("instruments (update start) %s: %w", name, err)
 		}
 	}
-	if gate != updateGateSkip && opts.Anchor == "" && d.IsGroup {
-		// Group bed: NO root container to `charly update` — a generic `charly update <bed>` would
-		// mis-resolve a TARGETLESS group as a default-pod deploy ("target pod not connected"). The R10
-		// fresh-rebuild gate instead re-builds each member image, tears the members down, re-brings
-		// them up, and re-check-lives — mirroring the initial group deploy (the old runCheckBed group
-		// rebuild arm). VM/local members carry no Image and are skipped (as on the initial build).
-		// restart-only skips the per-member image REBUILD (nothing can change in a runtime-injection
-		// eval) but keeps the members-down/up cycle — the members restart on their existing images.
+	if gate != updateGateSkip && opts.Anchor == "" {
+		// Deploy-level members (the migrated former-group shape: a primary substrate root carrying
+		// sibling members — the targetless group kind itself was deleted at spec #105) cycle down/up
+		// around the root's own rebuild: the full gate re-builds each member image first (VM/local
+		// members carry no Image and are skipped, as on the initial build); restart-only skips the
+		// per-member image REBUILD (nothing can change in a runtime-injection eval) but keeps the
+		// members-down/up cycle — the members restart on their existing images. The root is now a
+		// real substrate deploy, so its OWN update steps (updateGateSteps) run below — the former
+		// group arm skipped them only because a targetless group had no root to update (a generic
+		// `charly update <bed>` mis-resolved it as a default-pod deploy).
 		if gate == updateGateFull {
 			for _, m := range d.Members {
 				if m.Image == "" {
@@ -759,20 +753,13 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 				}
 			}
 		}
-		if err := phase("rebuild-members-down", func() error {
-			return deploykit.TearDownMembers(&bedNode)
-		}); err != nil {
-			return fail("tear down members for fresh rebuild of %s: %w", name, err)
-		}
-		if d.RunRuntime {
-			if err := phase("re-bring-up-members", bringUpMembersFresh); err != nil {
-				return fail("re-bring up members for %s: %w", name, err)
-			}
-			if err := checkLiveTree("check-live-rebuild"); err != nil {
-				return fail("check live (fresh rebuild) %s: %w", name, err)
+		if len(d.Members) > 0 {
+			if err := phase("rebuild-members-down", func() error {
+				return deploykit.TearDownMembers(&bedNode)
+			}); err != nil {
+				return fail("tear down members for fresh rebuild of %s: %w", name, err)
 			}
 		}
-	} else if gate != updateGateSkip && opts.Anchor == "" {
 		// The fresh-rebuild gate must verify the JUST-BUILT per-run image, not re-resolve
 		// the untagged logical box name: `charly update` without --tag resolves "newest
 		// local CalVer", and a bed-run tag (<bed>-<calver>) is NOT a plain CalVer, so the
@@ -791,6 +778,19 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		for _, gs := range updateGateSteps(gate, d, name, d.ImageTag, isInPlace) {
 			if err := step(gs.name, gs.argv...); err != nil {
 				return fail("%s %s: %w", gs.name, name, err)
+			}
+		}
+		if d.RunRuntime && len(d.Members) > 0 {
+			if err := phase("re-bring-up-members", bringUpMembersFresh); err != nil {
+				return fail("re-bring up members for %s: %w", name, err)
+			}
+			// An in-place root has no post-update check-live pass below (no restartable venue);
+			// the members' own re-check must not be lost with it — the former group arm always
+			// re-checked after the member cycle. Non-in-place roots check live once, below.
+			if isInPlace {
+				if err := checkLiveTree("check-live-rebuild"); err != nil {
+					return fail("check live (fresh rebuild) %s: %w", name, err)
+				}
 			}
 		}
 		// EVERY runtime, non-in-place bed gets a genuine post-rebuild check-live pass — not just
@@ -971,10 +971,6 @@ func printDebugRetentionNotice(w *os.File, name string, d spec.CheckBedReply) {
 	case d.IsLocal:
 		fmt.Fprintf(w, "\n[charly check run] bed %q FAILED — local apply left in place for debugging.\n"+
 			"  destroy: charly remove %s\n", name, name)
-	case d.IsGroup:
-		fmt.Fprintf(w, "\n[charly check run] bed %q FAILED — group members left up for debugging.\n"+
-			"  inspect: %s\n"+
-			"  destroy: charly remove %s (members tear down with the group)\n", name, live, name)
 	case d.IsExternal:
 		fmt.Fprintf(w, "\n[charly check run] bed %q FAILED — external deploy apply left in place for debugging.\n"+
 			"  destroy: charly fleet del %s\n", name, name)

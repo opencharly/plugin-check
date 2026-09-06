@@ -441,8 +441,6 @@ func venueKindOf(d *spec.CheckBedReply) string {
 		return "local"
 	case d.IsExternal:
 		return "external"
-	case d.IsGroup:
-		return "group"
 	}
 	return "pod"
 }

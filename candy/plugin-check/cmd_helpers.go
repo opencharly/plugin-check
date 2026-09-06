@@ -10,9 +10,9 @@ package check
 // filesystem-discovered candy the original core-only re-scan would find, including its
 // SourceDir (spec.CandyModel.SourceDir) — no candyDirsFromScan map-building step needed at all.
 //
-// K1-unblock wave arm 1: vmHostdevCount + the checkLive* family (pod/vm/local/group) + their
+// K1-unblock wave arm 1: vmHostdevCount + the checkLive* family (pod/vm/local) + their
 // dispatcher landed plugin-side too — see live_gather.go (pluginVmHostdevCount,
-// pluginCheckLivePod/VM/Local/Group, pluginCheckRunLive). STILL core-only (feeds the
+// pluginCheckLivePod/VM/Local, pluginCheckRunLive). STILL core-only (feeds the
 // "check-load-plugins" seam, not part of any check-run Mode this package dispatches):
 // resolveCheckRunnerContext (charly/check_cmd.go). deployNodePluginContext relocated to
 // charly/plugin_loader.go (#55 W3 B3, beside its M-mechanism consumer loadDeployPlugins) — still

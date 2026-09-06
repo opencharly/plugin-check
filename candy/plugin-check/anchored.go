@@ -133,7 +133,7 @@ type gateStep struct {
 	argv []string
 }
 
-// updateGateSteps returns the Step-5 GATE steps (non-group arm) by change class:
+// updateGateSteps returns the Step-5 GATE steps by change class:
 //   - full — the canonical `charly update` destroy+recreate (tag-pinned to the
 //     per-run build, exactly as before).
 //   - restart-only, VM — reboot the EXISTING per-deploy domain: `vm stop --force`
