@@ -35,13 +35,17 @@ func TestSpawnSessionSetsidLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
-	if h.Transport != sessionTransportSetsid {
-		t.Fatalf("transport = %q, want setsid", h.Transport)
+	// Read the lifecycle fields through the locked snapshot: the reaper goroutine can
+	// transition Status concurrently (spawns a detached recorder that may exit on its own),
+	// so a direct struct read under -race is a data race, not a test of the service.
+	status, transport, _, pid := h.snapshot()
+	if transport != sessionTransportSetsid {
+		t.Fatalf("transport = %q, want setsid", transport)
 	}
-	if h.Status != sessionStatusActive {
-		t.Fatalf("status = %q, want active", h.Status)
+	if status != sessionStatusActive {
+		t.Fatalf("status = %q, want active", status)
 	}
-	if h.PID <= 0 {
+	if pid <= 0 {
 		t.Fatalf("pid not recorded")
 	}
 	if _, err := os.Stat(h.Pidfile); err != nil {

@@ -36,6 +36,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -75,6 +76,11 @@ type sessionSpawnOpts struct {
 // source of truth: the record written at spawn is what the orphan sweep and the teardown
 // finalize read, whether from this process, a later invocation, or a crashed one.
 type sessionHandle struct {
+	// mu guards the lifecycle fields below (Status/StoppedAt/Transport/PID/Unit) plus the
+	// persisted write: spawnSession, the reaper goroutine (spawnSetsidProcess) and stopSession
+	// can all touch the same handle concurrently — the -race suite proved a shared-struct race
+	// (reaper Status write vs stopSession read/write vs writeSessionHandle marshal).
+	mu        sync.Mutex
 	SessionID string            `json:"session"`
 	StateDir  string            `json:"state_dir"`
 	Transport sessionTransport  `json:"transport"`
@@ -240,9 +246,7 @@ func spawnSetsidProcess(ctx context.Context, h *sessionHandle, opts sessionSpawn
 	// (the handle flips to stopped when it exits on its own).
 	go func() {
 		_ = cmd.Wait()
-		h.Status = sessionStatusStopped
-		h.StoppedAt = time.Now().UTC().Format(time.RFC3339)
-		_ = writeSessionHandle(h)
+		h.markStopped()
 	}()
 	return nil
 }
@@ -295,6 +299,15 @@ func SessionHandleFromDisk(stateDir string) (*sessionHandle, error) {
 }
 
 func writeSessionHandle(h *sessionHandle) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.persistLocked()
+}
+
+// persistLocked writes the handle JSON while the caller holds h.mu (a consistent snapshot:
+// the marshal reads every lifecycle field, so it must observe them under the same lock a
+// concurrent transition holds).
+func (h *sessionHandle) persistLocked() error {
 	b, err := json.MarshalIndent(h, "", "  ")
 	if err != nil {
 		return err
@@ -302,12 +315,38 @@ func writeSessionHandle(h *sessionHandle) error {
 	return os.WriteFile(handlePath(h.StateDir), b, 0o600)
 }
 
+// isStopped reports whether the handle is in the stopped state (locked read).
+func (h *sessionHandle) isStopped() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.Status == sessionStatusStopped
+}
+
+// snapshot copies the mutable lifecycle fields under one lock: a read path
+// (SessionLiveness, tests) observes a consistent handle state instead of racing
+// the concurrent reaper/stop transitions.
+func (h *sessionHandle) snapshot() (status string, transport sessionTransport, unit string, pid int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.Status, h.Transport, h.Unit, h.PID
+}
+
+// markStopped transitions the handle to stopped and persists it (locked; idempotent —
+// concurrent reaper + stop transitions both write the same state under one lock).
+func (h *sessionHandle) markStopped() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.Status = sessionStatusStopped
+	h.StoppedAt = time.Now().UTC().Format(time.RFC3339)
+	_ = h.persistLocked()
+}
+
 // stopSession finalizes ONE session: unit stop (bounded, rc=5 tolerated) or the
 // SIGTERM→SIGKILL process-group ladder (proc.ProcessShutdownGrace). Idempotent: a stopped
 // handle is a no-op. Best-effort by design — the finalize and the sweep must not fail the
 // bed.
 func stopSession(ctx context.Context, h *sessionHandle) {
-	if h == nil || h.Status == sessionStatusStopped {
+	if h == nil || h.isStopped() {
 		return
 	}
 	switch h.Transport {
@@ -318,9 +357,7 @@ func stopSession(ctx context.Context, h *sessionHandle) {
 	default:
 		return
 	}
-	h.Status = sessionStatusStopped
-	h.StoppedAt = time.Now().UTC().Format(time.RFC3339)
-	_ = writeSessionHandle(h)
+	h.markStopped()
 }
 
 // stopSystemdUnit stops one transient unit under the same bounded-timeout discipline the
@@ -383,14 +420,18 @@ func processAlive(pid int) bool {
 // is-active probe (exit 0) for a systemd handle, kill(pid, 0) for a setsid handle. A
 // stopped handle is not alive by construction.
 func SessionLiveness(ctx context.Context, h *sessionHandle) bool {
-	if h == nil || h.Status == sessionStatusStopped {
+	if h == nil {
 		return false
 	}
-	switch h.Transport {
+	status, transport, unit, pid := h.snapshot()
+	if status == sessionStatusStopped {
+		return false
+	}
+	switch transport {
 	case sessionTransportSystemd:
-		return exec.CommandContext(ctx, "systemctl", "--user", "is-active", h.Unit).Run() == nil
+		return exec.CommandContext(ctx, "systemctl", "--user", "is-active", unit).Run() == nil
 	case sessionTransportSetsid:
-		return processAlive(h.PID)
+		return processAlive(pid)
 	}
 	return false
 }

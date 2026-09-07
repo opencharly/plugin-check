@@ -7,7 +7,7 @@ import (
 )
 
 func missingGoldenErr(base string) error {
-	return errors.New(fmt.Sprintf("vm %q: snapshot \"golden\" does not exist", base))
+	return fmt.Errorf("vm %q: snapshot \"golden\" does not exist", base)
 }
 
 // TestBuildVmWithProvisionRetry_RetriesOnceAfterAutoProvision exercises the

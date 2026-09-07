@@ -61,7 +61,7 @@ func TestAutoProvisionBaseGolden_RefusesNonDisposable(t *testing.T) {
 // subcommand SUMMARY and the missing-golden detail is recovered from the log file.
 func TestAutoProvisionBaseGolden_ScansStepLog(t *testing.T) {
 	log := t.TempDir() + "/vm-build.log"
-	os.WriteFile(log, []byte("error: vm \"check-snap-probe\": snapshot \"golden\" does not exist"), 0o644)
+	_ = os.WriteFile(log, []byte("error: vm \"check-snap-probe\": snapshot \"golden\" does not exist"), 0o644)
 	err := errors.New("vm-build exited 1: charly subcommand exited 1; log: " + log)
 	base, retry, perr := autoProvisionBaseGolden(err, map[string]bool{}, nil)
 	if perr != nil {
