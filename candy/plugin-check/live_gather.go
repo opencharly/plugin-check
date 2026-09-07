@@ -467,6 +467,14 @@ func pluginCheckLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedP
 		return kit.CheckRunReply{}, err
 	}
 
+	// The deployed auto-forward allocations (guest port → host port) the vm entity's
+	// port_forwards were resolved to at vm-create — the source of the VM venue's
+	// HOST_PORT:<guest> runtime vars and the mcp_provide URL host-port rewrite. Nil on
+	// a missing overlay (the check degrades to the pre-forwarded-var behaviour). Keyed
+	// by the DOMAIN identity ("vm:"+domainID — the vm-create write key), matching
+	// ResolveVmSshPort's own LookupKey.
+	forwards := vmForwardedPortAllocations(ex, ctx, domainID)
+
 	host := "127.0.0.1"
 	var executor deploykit.DeployExecutor = &kit.SSHExecutor{Host: kit.VmSshAlias(domainID), ConnectTimeout: 10}
 	if strings.Contains(req.Name, ".") {
@@ -494,6 +502,7 @@ func pluginCheckLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedP
 		"VM_HOSTDEV_COUNT": strconv.Itoa(pluginVmHostdevCount(sp)),
 		"DEPLOY_NAME":      kit.SanitizeDeployName("vm:" + vmName),
 	}
+	mergeVmForwardedHostPortVars(env, forwards)
 	resolver := newPluginRuntimeCheckVarResolver(env)
 
 	if nestedLeaf != nil && nodeTraits(nestedLeaf).Venue == "container" {
@@ -542,8 +551,10 @@ func pluginCheckLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedP
 		// (no podman-inspectable OCI label on a VM) so the out-of-process mcp: check verb can
 		// resolve the endpoint — spec #CheckEnv.mcp_provide, seeded from the vm template's
 		// raw body (mirrors the host-side deployment-metadata read in
-		// charly/provider_checkenv.go's snapshotCheckEnv).
-		MCPProvide: pluginResolveVmMcpProvide(rp, vmName),
+		// charly/provider_checkenv.go's snapshotCheckEnv). Loopback URLs whose port has a
+		// persisted auto-forward are rewritten to the allocated host port (the host-reachable
+		// address — the auto host port is never the guest port).
+		MCPProvide: hostRoutableMcpProvide(rp, vmName, forwards),
 	}, kit.RunnerConfig{
 		Exec:           executor,
 		Mode:           kit.ModeLive,
