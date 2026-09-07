@@ -1,8 +1,11 @@
 package check
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/opencharly/sdk/kit"
@@ -92,7 +95,7 @@ func TestPluginSnapshotCheckEnv_ReflectsSwapVenue(t *testing.T) {
 		t.Fatalf("runner.Verbs() = %T, want *pluginVerbResolver", runner.Verbs())
 	}
 
-	if before := pluginSnapshotCheckEnv(pvr.kr); before.Box != groupRoot {
+	if before := pluginSnapshotCheckEnv(pvr.kr, pvr.mcpProvide); before.Box != groupRoot {
 		t.Fatalf("pre-swap pluginSnapshotCheckEnv(pvr.kr).Box = %q, want the group root %q", before.Box, groupRoot)
 	}
 
@@ -102,8 +105,73 @@ func TestPluginSnapshotCheckEnv_ReflectsSwapVenue(t *testing.T) {
 	}
 	defer restore()
 
-	after := pluginSnapshotCheckEnv(pvr.kr)
+	after := pluginSnapshotCheckEnv(pvr.kr, pvr.mcpProvide)
 	if after.Box != "chrome" {
 		t.Errorf("post-swap pluginSnapshotCheckEnv(pvr.kr).Box = %q, want the swapped member %q — RunVerb's wire envelope must track SwapVenue, not the group root frozen at construction", after.Box, "chrome")
+	}
+}
+
+// TestPluginSnapshotCheckEnv_CarriesVmMcpProvide is the P4 substrate-neutral mcp_provide gate
+// (plan §3.10): a kind:vm entity declares its MCP servers (spec #Vm.mcp_provide → the check env's
+// #CheckEnv.mcp_provide), and there is no podman-inspectable OCI label on a VM — so the check env
+// pluginSnapshotCheckEnv marshals into every out-of-process verb dispatch (the RunVerb wire
+// envelope) must carry the deployment's mcp_provide declarations itself for the mcp: check verb's
+// substrate-neutral endpoint resolution. The live-VM gathers seed the constructor env from the vm
+// template's raw body (pluginResolveVmMcpProvide); newPluginCheckRunner captures it onto the
+// resolver so the FRESH per-call snapshot is the value that carries it. The container-venue case
+// proves the gate: a container resolves mcp_provide from its ai.opencharly.mcp_provide image
+// label, so the environment is never populated there.
+func TestPluginSnapshotCheckEnv_CarriesVmMcpProvide(t *testing.T) {
+	want := []spec.CandyMCPProvide{
+		{Name: "charly", URL: "http://127.0.0.1:18765/mcp", Transport: "http"},
+	}
+
+	// VM venue: the live-VM gather seeds env.MCPProvide from the resolved vm template; the
+	// runner's executor is the plain SSH hop every non-dotted VM target uses.
+	vmRunner := newPluginCheckRunner(nil, context.Background(), spec.CheckEnv{
+		Mode:       "live",
+		Box:        "cachyos-vm",
+		Venue:      "cachyos-vm",
+		VenueKind:  "vm",
+		MCPProvide: want,
+	}, kit.RunnerConfig{
+		Exec: &kit.SSHExecutor{Host: "charly-cachyos-vm", ConnectTimeout: 10},
+		Mode: kit.ModeLive,
+	})
+	pvr, ok := vmRunner.Verbs().(*pluginVerbResolver)
+	if !ok {
+		t.Fatalf("vm runner Verbs() = %T, want *pluginVerbResolver", vmRunner.Verbs())
+	}
+
+	got := pluginSnapshotCheckEnv(pvr.kr, pvr.mcpProvide)
+	if !slices.Equal(got.MCPProvide, want) {
+		t.Errorf("pluginSnapshotCheckEnv(pvr.kr, pvr.mcpProvide).MCPProvide = %#v, want %#v — the VM venue's mcp_provide declarations must ride the env RunVerb marshals (no OCI label on a VM)", got.MCPProvide, want)
+	}
+	// The WIRE form is what the out-of-process mcp: verb decodes — assert it carries the field.
+	envJSON, jerr := json.Marshal(got)
+	if jerr != nil {
+		t.Fatalf("marshal env: %v", jerr)
+	}
+	if !bytes.Contains(envJSON, []byte("mcp_provide")) || !bytes.Contains(envJSON, []byte("18765/mcp")) {
+		t.Errorf("marshaled env JSON %s lacks the mcp_provide declaration the mcp: verb resolves on a VM venue", envJSON)
+	}
+
+	// Container venue (negative case): a NestedExecutor over podman exec derives Kind
+	// "container" — that venue resolves mcp_provide from its OCI image label, so the env
+	// stays unpopulated even when a constructor supplied the slice.
+	containerRunner := newPluginCheckRunner(nil, context.Background(), spec.CheckEnv{
+		Mode:       "live",
+		Box:        "pod",
+		MCPProvide: want,
+	}, kit.RunnerConfig{
+		Exec: &kit.NestedExecutor{Jump: kit.NestedJump{Kind: kit.JumpPodmanExec}},
+		Mode: kit.ModeLive,
+	})
+	cpvr, ok := containerRunner.Verbs().(*pluginVerbResolver)
+	if !ok {
+		t.Fatalf("container runner Verbs() = %T, want *pluginVerbResolver", containerRunner.Verbs())
+	}
+	if gotContainer := pluginSnapshotCheckEnv(cpvr.kr, cpvr.mcpProvide); len(gotContainer.MCPProvide) != 0 {
+		t.Errorf("container venue pluginSnapshotCheckEnv(...).MCPProvide = %#v, want empty — the OCI label path owns mcp_provide for containers, the env must not carry it", gotContainer.MCPProvide)
 	}
 }

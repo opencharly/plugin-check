@@ -37,7 +37,11 @@ import (
 // of its own). Deriving the descriptor fresh from r.kr.Exec() on every RunVerb call fixes both
 // that default-venue gap AND the SwapVenue-tracking gap in one generic mechanism.
 func newPluginCheckRunner(ex *sdk.Executor, ctx context.Context, env spec.CheckEnv, cfg kit.RunnerConfig) *kit.Runner {
-	pvr := &pluginVerbResolver{ex: ex, ctx: ctx, env: env}
+	// env.MCPProvide is the deployment's mcp_provide declarations (the live-VM gathers seed it
+	// from the resolved vm template) — captured onto the resolver so RunVerb's FRESH snapshot
+	// (pluginSnapshotCheckEnv, built from runner state on every call) carries it too, not just
+	// the defensive construction-time fallback env.
+	pvr := &pluginVerbResolver{ex: ex, ctx: ctx, env: env, mcpProvide: env.MCPProvide}
 	cfg.Verbs = pvr
 	cfg.Grammar = pluginPlanGrammar{}
 	if cfg.ProbeTimeout == 0 {
