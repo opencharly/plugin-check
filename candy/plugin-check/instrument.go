@@ -540,7 +540,7 @@ func readProviderRow(stateDir string) map[string]any {
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	st, err := f.Stat()
 	if err != nil || st.Size() > 1<<20 {
 		return nil

@@ -30,53 +30,53 @@ func TestMergeVmForwardedHostPortVars(t *testing.T) {
 // ports, non-loopback URLs and malformed URLs are untouched.
 func TestRewriteLoopbackPort(t *testing.T) {
 	cases := []struct {
-		name    string
-		raw     string
+		name     string
+		raw      string
 		forwards map[string]int
-		want    string
-		wantOK  bool
+		want     string
+		wantOK   bool
 	}{
 		{
-			name: "auto-forwarded guest port rewrites to the allocated host port",
-			raw:  "http://127.0.0.1:18765/mcp",
+			name:     "auto-forwarded guest port rewrites to the allocated host port",
+			raw:      "http://127.0.0.1:18765/mcp",
 			forwards: map[string]int{"18765": 41307},
-			want:   "http://127.0.0.1:41307/mcp",
-			wantOK: true,
+			want:     "http://127.0.0.1:41307/mcp",
+			wantOK:   true,
 		},
 		{
-			name: "localhost host rewrites too",
-			raw:  "http://localhost:18765/mcp",
+			name:     "localhost host rewrites too",
+			raw:      "http://localhost:18765/mcp",
 			forwards: map[string]int{"18765": 41307},
-			want:   "http://localhost:41307/mcp",
-			wantOK: true,
+			want:     "http://localhost:41307/mcp",
+			wantOK:   true,
 		},
 		{
-			name: "unmapped port left untouched",
-			raw:  "http://127.0.0.1:9999/mcp",
+			name:     "unmapped port left untouched",
+			raw:      "http://127.0.0.1:9999/mcp",
 			forwards: map[string]int{"18765": 41307},
-			want:   "",
-			wantOK: false,
+			want:     "",
+			wantOK:   false,
 		},
 		{
-			name: "non-loopback host left untouched",
-			raw:  "http://vm.example:18765/mcp",
+			name:     "non-loopback host left untouched",
+			raw:      "http://vm.example:18765/mcp",
 			forwards: map[string]int{"18765": 41307},
-			want:   "",
-			wantOK: false,
+			want:     "",
+			wantOK:   false,
 		},
 		{
-			name: "portless URL left untouched",
-			raw:  "http://127.0.0.1/mcp",
+			name:     "portless URL left untouched",
+			raw:      "http://127.0.0.1/mcp",
 			forwards: map[string]int{"18765": 41307},
-			want:   "",
-			wantOK: false,
+			want:     "",
+			wantOK:   false,
 		},
 		{
-			name: "malformed URL left untouched",
-			raw:  "::not-a-url",
+			name:     "malformed URL left untouched",
+			raw:      "::not-a-url",
 			forwards: map[string]int{},
-			want:   "",
-			wantOK: false,
+			want:     "",
+			wantOK:   false,
 		},
 	}
 	for _, tc := range cases {

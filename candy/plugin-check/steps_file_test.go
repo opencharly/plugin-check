@@ -30,7 +30,7 @@ func TestWrapStepsFileSet(t *testing.T) {
 	if len(got.Candy)+len(got.Box) != 0 {
 		t.Fatal("injected set must carry no candy/box sections")
 	}
-	if len(got.Deploy) != 1 || got.Deploy[0].Origin != "steps-file" || got.Deploy[0].Plan[0].Op.ID != "injected-1" {
+	if len(got.Deploy) != 1 || got.Deploy[0].Origin != "steps-file" || got.Deploy[0].Plan[0].ID != "injected-1" {
 		t.Fatalf("steps-file set wrong: %+v", got.Deploy)
 	}
 
