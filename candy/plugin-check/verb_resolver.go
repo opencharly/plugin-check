@@ -77,12 +77,30 @@ type pluginVerbResolver struct {
 	ctx context.Context
 	env spec.CheckEnv
 	kr  *kit.Runner
+	// mcpProvide carries the deployment's mcp_provide declarations for VM venues (P4,
+	// substrate-neutral mcp: verb resolution): a kind:vm entity declares its MCP servers
+	// (spec.CheckEnv.MCPProvide / #Vm.mcp_provide), and there is no podman-inspectable OCI
+	// label on a VM for the out-of-process mcp: verb to read — so the check env this
+	// resolver marshals into every verb dispatch must carry the declaration itself.
+	// Captured from the constructor env (newPluginCheckRunner seeds it from env.MCPProvide,
+	// which the live-VM gathers populate from the resolved vm template), mirroring the
+	// deployment-metadata read charly/provider_checkenv.go's snapshotCheckEnv performs
+	// host-side.
+	mcpProvide []spec.CandyMCPProvide
 }
 
 // pluginSnapshotCheckEnv builds a spec.CheckEnv from kr's CURRENT live state — the plugin-side
 // mirror of charly/provider_checkenv.go's snapshotCheckEnv (that function's own doc comment
 // explains each field's derivation; kept in exact field-for-field lockstep here, R3).
-func pluginSnapshotCheckEnv(kr *kit.Runner) spec.CheckEnv {
+//
+// mcpProvide is the deployment's mcp_provide declarations (captured at runner construction
+// from the resolved vm template) — the plugin-side stand-in for the carrier-side deployment
+// metadata charly's snapshotCheckEnv reads. P4 threading: a VM/host venue has no
+// podman-inspectable OCI label (the ai.opencharly.mcp_provide label exists only on container
+// images), so the check env the plugin marshals into every out-of-process verb dispatch must
+// carry the declaration itself for the substrate-neutral mcp: verb resolution; a container
+// venue resolves it from its image label and never needs it on the env.
+func pluginSnapshotCheckEnv(kr *kit.Runner, mcpProvide []spec.CandyMCPProvide) spec.CheckEnv {
 	ce := spec.CheckEnv{
 		Box:           kr.VmTargetName(),
 		Instance:      kr.Instance(),
@@ -96,6 +114,9 @@ func pluginSnapshotCheckEnv(kr *kit.Runner) spec.CheckEnv {
 	if de, ok := kr.Exec().(spec.DeployExecutor); ok {
 		ce.Venue = de.Venue()
 		ce.VenueKind = de.Kind()
+	}
+	if ce.VenueKind != "container" {
+		ce.MCPProvide = mcpProvide
 	}
 	return ce
 }
@@ -125,7 +146,7 @@ func (r *pluginVerbResolver) RunVerb(ctx context.Context, op *spec.Op) (spec.Che
 	}
 	env := r.env
 	if r.kr != nil {
-		env = pluginSnapshotCheckEnv(r.kr)
+		env = pluginSnapshotCheckEnv(r.kr, r.mcpProvide)
 	}
 	envJSON, err := json.Marshal(env)
 	if err != nil {

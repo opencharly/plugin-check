@@ -211,6 +211,9 @@ func pluginCheckRunFeatureLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec
 		Instance:  req.Instance,
 		Venue:     domainID,
 		VenueKind: "vm",
+		// P4 substrate-neutral mcp_provide: the VM's declared MCP servers ride the check env
+		// (no podman-inspectable OCI label on a VM) — same seeding as pluginCheckLiveVM.
+		MCPProvide: pluginResolveVmMcpProvide(rp, vmName),
 	}, kit.RunnerConfig{
 		Exec:                 executor,
 		Mode:                 kit.ModeLive,

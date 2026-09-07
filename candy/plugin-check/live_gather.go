@@ -331,6 +331,27 @@ func pluginResolveVmSpec(rp *spec.ResolvedProject, vmName string) *vmshared.VmSp
 	return &vm
 }
 
+// pluginResolveVmMcpProvide returns the VM template's mcp_provide declarations (P4,
+// substrate-neutral mcp: verb resolution) off the envelope's RAW template body — the same
+// source pluginResolveVmSpec decodes. The resolved vm envelope this package consumes
+// (vmshared.VmSpec = spec.ResolvedVm) mirrors #Vm's fields explicitly and does NOT carry
+// mcp_provide (spec #ResolvedVm drifted from #Vm when P4 added the field — a spec-side
+// mirror gap, no plugin-check blocker: the raw body is the authored deployment metadata,
+// the exact source charly/provider_checkenv.go's host-side snapshotCheckEnv reads), so the
+// raw decode into spec.Vm (which carries MCPProvide, same pattern as checkproject.go's
+// include-plan vm decode) is the canonical read.
+func pluginResolveVmMcpProvide(rp *spec.ResolvedProject, vmName string) []spec.CandyMCPProvide {
+	raw, ok := templateBody(rp, "vm", vmName)
+	if !ok {
+		return nil
+	}
+	var vm spec.Vm
+	if err := json.Unmarshal(raw, &vm); err != nil {
+		return nil
+	}
+	return vm.MCPProvide
+}
+
 // pluginVmHostdevCount returns how many <hostdev> passthrough devices the VM spec declares — the
 // port of charly/check_cmd.go's vmHostdevCount (pure field reads, nil-safe throughout).
 func pluginVmHostdevCount(sp *vmshared.VmSpec) int {
@@ -470,6 +491,12 @@ func pluginCheckLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedP
 		Instance:  req.Instance,
 		Venue:     domainID,
 		VenueKind: "vm",
+		// P4 substrate-neutral mcp_provide: the VM's declared MCP servers ride the check env
+		// (no podman-inspectable OCI label on a VM) so the out-of-process mcp: check verb can
+		// resolve the endpoint — spec #CheckEnv.mcp_provide, seeded from the vm template's
+		// raw body (mirrors the host-side deployment-metadata read in
+		// charly/provider_checkenv.go's snapshotCheckEnv).
+		MCPProvide: pluginResolveVmMcpProvide(rp, vmName),
 	}, kit.RunnerConfig{
 		Exec:           executor,
 		Mode:           kit.ModeLive,
