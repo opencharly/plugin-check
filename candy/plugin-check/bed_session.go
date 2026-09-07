@@ -45,7 +45,7 @@ import (
 
 	"github.com/opencharly/sdk"
 	"github.com/opencharly/sdk/loaderkit"
-	"github.com/opencharly/spec/fleet"
+	"github.com/opencharly/spec/deploy"
 	"github.com/opencharly/spec/hostenv"
 	"github.com/opencharly/spec/lock"
 	"github.com/opencharly/spec/proc"
@@ -163,7 +163,7 @@ func arbiterInvoke(ctx context.Context, ex *sdk.Executor, in spec.ArbiterInvokeI
 // the same shapes). is_group is left Go-zero since the group-kind cutover (spec #105): a bed
 // claimant is always a primary substrate node now — the former targetless group shape cannot
 // exist, and the wire field itself is a spec#105 residual kept for plugin-preempt.
-func arbiterAcquire(ctx context.Context, ex *sdk.Executor, claimant string, node spec.FleetNode, transient bool) (active bool, err error) {
+func arbiterAcquire(ctx context.Context, ex *sdk.Executor, claimant string, node spec.DeployNode, transient bool) (active bool, err error) {
 	if os.Getenv(envPreemptLeaseHeld) != "" {
 		return false, nil
 	}
@@ -181,9 +181,9 @@ func arbiterAcquire(ctx context.Context, ex *sdk.Executor, claimant string, node
 		Action:          action,
 		Claimant:        claimant,
 		Tokens:          tokens,
-		ClaimAddr:       fleet.HolderAddrFor(claimant, node),
+		ClaimAddr:       deploy.HolderAddrFor(claimant, node),
 		Transient:       transient,
-		IsPodMember:     fleet.IsContainerVenue(&node),
+		IsPodMember:     deploy.IsContainerVenue(&node),
 		SecurityDevices: secDevices,
 	})
 	if ierr != nil {
@@ -237,7 +237,7 @@ func bedGpuPrereqCheck(ctx context.Context, ex *sdk.Executor, tokens []string) (
 // (none → DefaultCheckLevel). VM/local beds carry no box image, so they always run at the default
 // rung. Ported from charly/check_bed_run.go — uf.ProjectConfig() is a plain spec.UnifiedFile
 // method, no core-only coupling.
-func bedCheckLevel(uf *spec.UnifiedFile, node spec.FleetNode) string {
+func bedCheckLevel(uf *spec.UnifiedFile, node spec.DeployNode) string {
 	if node.Image == "" {
 		return spec.DefaultCheckLevel
 	}
@@ -251,14 +251,14 @@ func bedCheckLevel(uf *spec.UnifiedFile, node spec.FleetNode) string {
 // bedMemberDescriptors projects a bed root's deploy-level (alongside) members into the descriptor
 // the plugin drives its per-member image-build loop from, in AUTHORED tree order (the ordered
 // member tree replaces the former sorted map keys). Ported from charly/host_build_check_bed.go,
-// using fleet.IsVmVenue instead of the former core-private isVmMember (same Descent-stamped read).
+// using deploy.IsVmVenue instead of the former core-private isVmMember (same Descent-stamped read).
 func bedMemberDescriptors(members []*spec.Member) []spec.CheckBedMember {
 	var out []spec.CheckBedMember
 	for _, m := range members {
 		if m.Node == nil {
 			continue
 		}
-		out = append(out, spec.CheckBedMember{Key: m.Name, IsVM: fleet.IsVmVenue(m.Node), Image: m.Node.Image, From: m.Node.From, FromSnapshot: m.Node.FromSnapshot})
+		out = append(out, spec.CheckBedMember{Key: m.Name, IsVM: deploy.IsVmVenue(m.Node), Image: m.Node.Image, From: m.Node.From, FromSnapshot: m.Node.FromSnapshot})
 	}
 	return out
 }
@@ -275,13 +275,13 @@ func bedRunImageTag(bed, calver string) string {
 
 // bedLocalChildKeys is the HOST-ROOTED (kind:local) subset of a node's in-substrate members, in
 // authored tree order (the ordered member tree replaces the former sorted map keys) — the set a
-// VM root deploys host-side. Ported from charly/host_build_check_bed.go, using fleet.HostRooted
+// VM root deploys host-side. Ported from charly/host_build_check_bed.go, using deploy.HostRooted
 // instead of the former core-private nodeTraits(child).HostRooted read (same Descent-stamped
 // predicate, already promoted #55 U4).
 func bedLocalChildKeys(members []*spec.Member) []string {
 	var out []string
 	for _, m := range members {
-		if m.Node != nil && fleet.HostRooted(m.Node) {
+		if m.Node != nil && deploy.HostRooted(m.Node) {
 			out = append(out, m.Name)
 		}
 	}
@@ -430,9 +430,9 @@ func bedSetup(ctx context.Context, ex *sdk.Executor, bed, dir string) (spec.Chec
 	s.leaseClaimant = bed
 	s.leaseActive = active
 
-	isVM := fleet.IsVmVenue(&node)
-	isLocal := fleet.HostRooted(&node)
-	isExternal := fleet.ExternalInPlaceVenue(&node)
+	isVM := deploy.IsVmVenue(&node)
+	isLocal := deploy.HostRooted(&node)
+	isExternal := deploy.ExternalInPlaceVenue(&node)
 
 	// VM beds need the libvirt user-session daemon (probes + the backend resolver). Best-effort.
 	// (The former group arm is gone with the group kind — spec #105; a bed root is always a
@@ -458,7 +458,7 @@ func bedSetup(ctx context.Context, ex *sdk.Executor, bed, dir string) (spec.Chec
 		ImageTag:       imageTag,
 		LocalRef:       node.From,
 		VMDomains:      domains,
-		CheckLiveRefs:  fleet.BedCheckLiveRefs(bed, &node),
+		CheckLiveRefs:  deploy.BedCheckLiveRefs(bed, &node),
 		ChildKeys:      memberNames(node.InSubstrateMembers()),
 		LocalChildKeys: bedLocalChildKeys(node.InSubstrateMembers()),
 		Members:        bedMemberDescriptors(node.DeployLevelMembers()),

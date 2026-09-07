@@ -63,7 +63,7 @@ func (v *CheckVenue) IsContainer() bool { return v != nil && v.Kind == "containe
 // resolveCheckVenue maps an `charly check` verb's <name> argument to an execution venue, off the
 // resolved-project envelope's Deploy tree (rp.Deploy) instead of a direct LoadUnified/
 // merged-tree-read call — the ONLY change from the core original, which read the SAME merged
-// fleet tree via the host loader in-process.
+// deploy tree via the host loader in-process.
 func resolveCheckVenue(ex *sdk.Executor, ctx context.Context, dir, name, instance string) (*CheckVenue, error) {
 	if name == "." {
 		return &CheckVenue{Exec: kit.ShellExecutor{}, Kind: "host", Descriptor: spec.VenueDescriptor{Kind: "shell"}}, nil
@@ -118,14 +118,14 @@ func resolveCheckVenue(ex *sdk.Executor, ctx context.Context, dir, name, instanc
 	}, nil
 }
 
-// derefDeployTree converts the envelope's map[string]*spec.FleetNode into the value-map shape
+// derefDeployTree converts the envelope's map[string]*spec.DeployNode into the value-map shape
 // the tree-walk helpers below (ported unchanged from charly/check_cmd.go + check_venue.go) share
 // with every other resolved-project consumer in this package.
-func derefDeployTree(m map[string]*spec.FleetNode) map[string]spec.FleetNode {
+func derefDeployTree(m map[string]*spec.DeployNode) map[string]spec.DeployNode {
 	if len(m) == 0 {
 		return nil
 	}
-	out := make(map[string]spec.FleetNode, len(m))
+	out := make(map[string]spec.DeployNode, len(m))
 	for k, v := range m {
 		if v != nil {
 			out[k] = *v
@@ -137,9 +137,9 @@ func derefDeployTree(m map[string]*spec.FleetNode) map[string]spec.FleetNode {
 // nodeTraits returns the node's stamped deploy-descent descriptor. Every node reachable off the
 // resolved-project envelope is loader-stamped (stampFleetDescents runs host-side before the
 // envelope is filled), so — unlike the core original — this plugin-side version never needs the
-// registry-backed synthetic-node fallback: this package never constructs a FleetNode outside the
+// registry-backed synthetic-node fallback: this package never constructs a DeployNode outside the
 // envelope.
-func nodeTraits(node *spec.FleetNode) *spec.DescentDescriptor {
+func nodeTraits(node *spec.DeployNode) *spec.DescentDescriptor {
 	if node != nil && node.Descent != nil {
 		return node.Descent
 	}
@@ -148,20 +148,20 @@ func nodeTraits(node *spec.FleetNode) *spec.DescentDescriptor {
 
 // resolveLeafVenue walks a (possibly dotted) name to its LEAF node and reports the LEAF's own
 // venue trait.
-func resolveLeafVenue(tree map[string]spec.FleetNode, name string) (node spec.FleetNode, venue string, ok bool) {
+func resolveLeafVenue(tree map[string]spec.DeployNode, name string) (node spec.DeployNode, venue string, ok bool) {
 	if len(tree) == 0 || !strings.Contains(name, ".") {
-		return spec.FleetNode{}, "", false
+		return spec.DeployNode{}, "", false
 	}
 	n, found := resolveDeployNodeByPath(tree, name)
 	if !found || n == nil {
-		return spec.FleetNode{}, "", false
+		return spec.DeployNode{}, "", false
 	}
 	return *n, nodeTraits(n).Venue, true
 }
 
 // checkVmTarget reports whether `name` resolves to a VM venue and, if so, the per-deploy domain
 // identity to SSH into.
-func checkVmTarget(tree map[string]spec.FleetNode, name string) (domainID string, ok bool) {
+func checkVmTarget(tree map[string]spec.DeployNode, name string) (domainID string, ok bool) {
 	if idx := strings.Index(name, "."); idx > 0 {
 		if _, venue, ok := resolveLeafVenue(tree, name); ok && venue == "ssh" {
 			return vmshared.VmDomainIdentity(name), true
@@ -181,9 +181,9 @@ func checkVmTarget(tree map[string]spec.FleetNode, name string) (domainID string
 // checkLocalTarget reports whether `name` (or its dotted LEAF, or its dotted root segment) is a
 // HOST-VENUE deployment, returning its node so the caller can build the host/ssh executor via
 // deploykit.RootExecutorForDeployNode.
-func checkLocalTarget(tree map[string]spec.FleetNode, name string) (spec.FleetNode, bool) {
+func checkLocalTarget(tree map[string]spec.DeployNode, name string) (spec.DeployNode, bool) {
 	if len(tree) == 0 {
-		return spec.FleetNode{}, false
+		return spec.DeployNode{}, false
 	}
 	if leaf, venue, ok := resolveLeafVenue(tree, name); ok {
 		if venue == "shell" || venue == "parent" || venue == "none" {
@@ -199,13 +199,13 @@ func checkLocalTarget(tree map[string]spec.FleetNode, name string) (spec.FleetNo
 			return entry, true
 		}
 	}
-	return spec.FleetNode{}, false
+	return spec.DeployNode{}, false
 }
 
-// resolveDeployNodeByPath resolves a (possibly DOTTED) deploy name to its FleetNode, descending
+// resolveDeployNodeByPath resolves a (possibly DOTTED) deploy name to its DeployNode, descending
 // the ordered member tree's IN-SUBSTRATE members for each dotted segment (the successor of the
 // former Children map walk). Ported from charly/check_cmd.go (pure, no core-only dependency).
-func resolveDeployNodeByPath(tree map[string]spec.FleetNode, name string) (*spec.FleetNode, bool) {
+func resolveDeployNodeByPath(tree map[string]spec.DeployNode, name string) (*spec.DeployNode, bool) {
 	name, _ = vmshared.SplitVmAddress(name)
 	parts := strings.Split(name, ".")
 	root, ok := tree[parts[0]]

@@ -44,7 +44,7 @@ import (
 // pluginCheckRunFeatureLive so the dispatch is testable — before the fix, the
 // feature-live path was container-only (deploykit.ResolveContainer directly) and
 // a VM target failed with "container ... is not running".
-func featureLiveArm(tree map[string]spec.FleetNode, name string) string {
+func featureLiveArm(tree map[string]spec.DeployNode, name string) string {
 	if _, isVM := checkVmTarget(tree, name); isVM {
 		return "vm"
 	}
@@ -71,7 +71,7 @@ func pluginCheckRunFeatureLive(ex *sdk.Executor, ctx context.Context, req spec.C
 // deploy-scope ADE acceptance against the running container req.Name, wiring the host-side
 // agent grader (agent.go's resolveAgentSpec) unless req.NoAgent. The port of the former core
 // hostFeatureLive, mirroring live_gather.go's pluginCheckLivePod's pod-venue construction.
-func pluginCheckRunFeatureLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, tree map[string]spec.FleetNode, dir string, req spec.CheckRunRequest) (kit.CheckRunReply, error) {
+func pluginCheckRunFeatureLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, tree map[string]spec.DeployNode, dir string, req spec.CheckRunRequest) (kit.CheckRunReply, error) {
 	engine, containerName, err := deploykit.ResolveContainer(req.Name, req.Instance)
 	if err != nil {
 		return kit.CheckRunReply{}, err
@@ -85,11 +85,11 @@ func pluginCheckRunFeatureLivePod(ex *sdk.Executor, ctx context.Context, rp *spe
 	if meta == nil || meta.Description == nil || meta.Description.IsEmpty() {
 		return kit.CheckRunReply{NoSteps: true}, nil
 	}
-	var deployOverlay *spec.FleetNode
-	if dc, derr := loaderkit.LoadHostFleetConfigViaExecutor(ctx, ex); derr == nil && dc != nil {
-		if entry, ok := dc.Fleet[spec.DeployKey(req.Name, req.Instance)]; ok {
+	var deployOverlay *spec.DeployNode
+	if dc, derr := loaderkit.LoadHostDeployConfigViaExecutor(ctx, ex); derr == nil && dc != nil {
+		if entry, ok := dc.Deploy[spec.DeployKey(req.Name, req.Instance)]; ok {
 			deployOverlay = &entry
-		} else if entry, ok := dc.Fleet[req.Name]; ok {
+		} else if entry, ok := dc.Deploy[req.Name]; ok {
 			deployOverlay = &entry
 		}
 	}
@@ -144,7 +144,7 @@ func pluginCheckRunFeatureLivePod(ex *sdk.Executor, ctx context.Context, rp *spe
 // req.NoAgent. Mirrors live_gather.go's pluginCheckLiveVM's SSH-venue construction — the
 // feature-live path was container-only (the core original never classified vm/local/group
 // here either); this closes that gap so ADE can grade a VM deployment's plan.
-func pluginCheckRunFeatureLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, tree map[string]spec.FleetNode, dir string, req spec.CheckRunRequest) (kit.CheckRunReply, error) {
+func pluginCheckRunFeatureLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, tree map[string]spec.DeployNode, dir string, req spec.CheckRunRequest) (kit.CheckRunReply, error) {
 	vmName, domainID, nestedLeaf := pluginResolveVmTarget(tree, req.Name)
 	sp := pluginResolveVmSpec(rp, vmName)
 

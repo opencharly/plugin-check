@@ -27,8 +27,8 @@ func testSubstrateTraits(word string) *spec.DeployTraits {
 
 // stampTestDescents stamps Descent on every root + its nested Children/Members via
 // kit.StampDescent, the SAME generic mechanism the production loader uses.
-func stampTestDescents(roots map[string]spec.FleetNode) map[string]spec.FleetNode {
-	out := make(map[string]spec.FleetNode, len(roots))
+func stampTestDescents(roots map[string]spec.DeployNode) map[string]spec.DeployNode {
+	out := make(map[string]spec.DeployNode, len(roots))
 	for k, v := range roots {
 		n := v
 		kit.StampDescent(&n, testSubstrateTraits)
@@ -92,7 +92,7 @@ func TestPluginRunCheckLive_EmptyInputReturnsEarly(t *testing.T) {
 // TestResolveScoringChain_Local: a flat score/bed target that resolves to a `target: local` node
 // must run on the host venue, NOT a fabricated charly-<pod> container.
 func TestPluginResolveScoringChain_Local(t *testing.T) {
-	roots := stampTestDescents(map[string]spec.FleetNode{
+	roots := stampTestDescents(map[string]spec.DeployNode{
 		"localbed": {Target: "local"},
 		"podbed":   {Target: "pod"},
 	})
@@ -120,17 +120,17 @@ func TestPluginResolveScoringChain_Local(t *testing.T) {
 // (the chain is built, not dialed). The ResolveDeployChain half of the original test stays in
 // charly/node_fleet_venue_test.go (that sdk-portable function never moved).
 func TestPluginResolveDottedAgentProvisionedVenue(t *testing.T) {
-	roots := stampTestDescents(map[string]spec.FleetNode{
+	roots := stampTestDescents(map[string]spec.DeployNode{
 		"nested-check-vm": {
 			Target:           "vm",
 			From:             "nested-check-vm",
 			AgentProvisioned: true,
 			Member: []spec.Member{
-				{Name: "inner-app-pod", Position: spec.PositionInSubstrate, Node: &spec.FleetNode{
+				{Name: "inner-app-pod", Position: spec.PositionInSubstrate, Node: &spec.DeployNode{
 					Target:           "pod",
 					AgentProvisioned: true,
 					Member: []spec.Member{
-						{Name: "nested-redis-pod", Position: spec.PositionInSubstrate, Node: &spec.FleetNode{
+						{Name: "nested-redis-pod", Position: spec.PositionInSubstrate, Node: &spec.DeployNode{
 							Target:           "pod",
 							AgentProvisioned: true,
 						}},
@@ -154,9 +154,9 @@ func TestPluginResolveDottedAgentProvisionedVenue(t *testing.T) {
 // charly/node_fleet_venue_test.go's TestResolveBareAgentProvisionedVenue: a bare
 // agent-provisioned venue (the common iterate-bench case, e.g. `os`) resolves via
 // pluginResolveScoringChain's bare-name fallback to the `charly-<name>` container the agent
-// deploys — without any top-level fleet entry (agent-provisioned members are not folded).
+// deploys — without any top-level deploy entry (agent-provisioned members are not folded).
 func TestPluginResolveBareAgentProvisionedVenue(t *testing.T) {
-	roots := stampTestDescents(map[string]spec.FleetNode{}) // os is NOT a top-level entry (not folded)
+	roots := stampTestDescents(map[string]spec.DeployNode{}) // os is NOT a top-level entry (not folded)
 	sc, err := pluginResolveScoringChain(roots, "os")
 	if err != nil {
 		t.Fatalf("pluginResolveScoringChain(os): %v", err)

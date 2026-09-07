@@ -32,7 +32,7 @@ import (
 // IN-SUBSTRATE positions, the successor of the former Children map — returning the leaf node (or
 // nil if any segment is absent). Ported from charly/check_cmd.go; the position-derived lookup
 // (MemberByName + InSubstrate) replaces the former dual-map index.
-func resolveNestedNode(roots map[string]spec.FleetNode, path string) *spec.FleetNode {
+func resolveNestedNode(roots map[string]spec.DeployNode, path string) *spec.DeployNode {
 	parts := strings.Split(path, ".")
 	if len(parts) == 0 {
 		return nil
