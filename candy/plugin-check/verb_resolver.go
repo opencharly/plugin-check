@@ -118,6 +118,14 @@ func pluginSnapshotCheckEnv(kr *kit.Runner, mcpProvide []spec.CandyMCPProvide) s
 	if ce.VenueKind != "container" {
 		ce.MCPProvide = mcpProvide
 	}
+	// The check-run candy source-dir map (RunnerConfig.CandyDirs, folded from the
+	// project's candy source scan) crosses the wire so the host-side committed-APK
+	// anchor (charly's resolveCheckApk → checkhost.ResolveCommittedApk) can resolve
+	// an in-venue step's relative `apk:` path against the AUTHORING candy's source
+	// tree. Without it an in-venue step of a baked live plan (e.g.
+	// check-android-emulator-pod's adb-install-apidemos) reported "0 candies
+	// scanned" even though this runner already folded the map into its config.
+	ce.CandyDirs = kr.CandyDirs()
 	return ce
 }
 
