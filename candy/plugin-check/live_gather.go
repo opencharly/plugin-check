@@ -220,8 +220,55 @@ func pluginCheckLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.Resolved
 		HostVars:       hostVars,
 		TargetResolver: pluginVenueResolver(ex, ctx, dir, req.Instance),
 	})
+	// Cutover C tasks 5-7: when the bed carries stages or `parallel: true`, the
+	// whole-bed set (root + hoisted member steps, venue-stamped) is partitioned by
+	// venue into per-member INDEPENDENT Runners (A4) and driven through the staged
+	// walk (kit.RunPlanStaged). Otherwise today's single-runner sequential walk.
+	if hasStageSteps(set) || bedParallel(&treeNode, deployOverlay) {
+		if members := buildMemberRuns(ctx, ex, dir, req.Name, req, set, runner, podMemberRunner(ex, ctx, dir, req, rp, hostVars)); len(members) > 1 {
+			results := runLiveStaged(ctx, members, bedParallel(&treeNode, deployOverlay), false)
+			return kit.CheckRunReply{Steps: results, Header: header}, nil
+		}
+	}
 	results := kit.RunPlan(ctx, runner, set, false)
 	return kit.CheckRunReply{Steps: results, Header: header}, nil
+}
+
+// podMemberRunner builds an INDEPENDENT kit.Runner for one member venue of a pod bed:
+// the member's own container chain + own runtime env, so concurrent member steps never
+// share a Runner (A4). Mirrors the root runner construction above, parameterized by the
+// venue's executor. A venue whose container does not resolve (unstarted member, or a
+// non-pod member venue such as a VM/local sibling whose check runs on the ROOT run)
+// yields nil — the member run is skipped, never silently mis-routed (best-effort,
+// matching the root runner's own resolve semantics).
+func podMemberRunner(ex *sdk.Executor, ctx context.Context, dir string, req spec.CheckRunRequest, rp *spec.ResolvedProject, hostVars map[string]string) stagedCheckRunner {
+	return func(venue string) kit.PlanContext {
+		v, err := resolveCheckVenue(ex, ctx, dir, venue, req.Instance)
+		if err != nil || v == nil || v.Exec == nil || !v.IsContainer() {
+			// A member venue that is not a running container has no independent runner
+			// in the pod arm; the ROOT run covers it via its own venue resolution.
+			return nil
+		}
+		res := liveDeployVarResolver(ex, ctx, venue, req.Instance, v)
+		env, hasRuntime := pluginResolverEnv(res)
+		return newPluginCheckRunner(ex, ctx, spec.CheckEnv{
+			Mode:      "live",
+			Box:       venue,
+			Instance:  req.Instance,
+			VenueKind: v.Kind,
+		}, kit.RunnerConfig{
+			Exec:           v.Exec,
+			Mode:           kit.ModeLive,
+			Env:            env,
+			HasRuntime:     hasRuntime,
+			Box:            venue,
+			Instance:       req.Instance,
+			VerifyOnly:     true,
+			CandyDirs:      candyDirsFromEnvelope(rp),
+			HostVars:       hostVars,
+			TargetResolver: pluginVenueResolver(ex, ctx, dir, req.Instance),
+		})
+	}
 }
 
 // stoppedHolderRoot reports whether the bed ROOT is a DECLARED preemptible holder — the bed's
