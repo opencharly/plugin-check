@@ -15,17 +15,17 @@ func TestUpdateGateFor(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		noRebuild bool
-		node      *spec.FleetNode
+		node      *spec.DeployNode
 		want      string
 	}{
-		{"authored absent defaults to full", false, &spec.FleetNode{}, updateGateFull},
+		{"authored absent defaults to full", false, &spec.DeployNode{}, updateGateFull},
 		{"nil node defaults to full", false, nil, updateGateFull},
-		{"explicit full", false, &spec.FleetNode{UpdateGate: updateGateFull}, updateGateFull},
-		{"restart-only", false, &spec.FleetNode{UpdateGate: updateGateRestartOnly}, updateGateRestartOnly},
-		{"skip", false, &spec.FleetNode{UpdateGate: updateGateSkip}, updateGateSkip},
-		{"--no-rebuild forces skip over full", true, &spec.FleetNode{UpdateGate: updateGateFull}, updateGateSkip},
-		{"--no-rebuild forces skip over restart-only", true, &spec.FleetNode{UpdateGate: updateGateRestartOnly}, updateGateSkip},
-		{"unknown authored value falls back to full", false, &spec.FleetNode{UpdateGate: "rebuild"}, updateGateFull},
+		{"explicit full", false, &spec.DeployNode{UpdateGate: updateGateFull}, updateGateFull},
+		{"restart-only", false, &spec.DeployNode{UpdateGate: updateGateRestartOnly}, updateGateRestartOnly},
+		{"skip", false, &spec.DeployNode{UpdateGate: updateGateSkip}, updateGateSkip},
+		{"--no-rebuild forces skip over full", true, &spec.DeployNode{UpdateGate: updateGateFull}, updateGateSkip},
+		{"--no-rebuild forces skip over restart-only", true, &spec.DeployNode{UpdateGate: updateGateRestartOnly}, updateGateSkip},
+		{"unknown authored value falls back to full", false, &spec.DeployNode{UpdateGate: "rebuild"}, updateGateFull},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := updateGateFor(bedRunOpts{NoRebuild: tc.noRebuild}, tc.node)

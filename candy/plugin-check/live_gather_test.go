@@ -28,12 +28,12 @@ func TestPluginResolveVmTarget_LeafVmUnderNonVmParent(t *testing.T) {
 	// package never builds one). So a hand-built test tree must stamp .Descent itself, mirroring
 	// what the host's stampFleetDescents pass would produce for the given Target.
 	sshDescent := &spec.DescentDescriptor{Venue: "ssh"}
-	tree := map[string]spec.FleetNode{
+	tree := map[string]spec.DeployNode{
 		"web-pod": {Target: "pod", Descent: &spec.DescentDescriptor{Venue: "container"}, Member: []spec.Member{
-			{Name: "web-pod-vm", Position: spec.PositionInSubstrate, Node: &spec.FleetNode{Target: "vm", From: "eval-vm", Descent: sshDescent}},
+			{Name: "web-pod-vm", Position: spec.PositionInSubstrate, Node: &spec.DeployNode{Target: "vm", From: "eval-vm", Descent: sshDescent}},
 		}},
 		"k3s-vm": {Target: "vm", From: "k3s-vm-entity", Descent: sshDescent, Member: []spec.Member{
-			{Name: "inner-app", Position: spec.PositionInSubstrate, Node: &spec.FleetNode{Target: "local", Descent: &spec.DescentDescriptor{Venue: "host"}}},
+			{Name: "inner-app", Position: spec.PositionInSubstrate, Node: &spec.DeployNode{Target: "local", Descent: &spec.DescentDescriptor{Venue: "host"}}},
 		}},
 	}
 
@@ -145,7 +145,7 @@ func TestPluginGuestNestedCheckCmd(t *testing.T) {
 // the fix (featureLiveArm does not exist).
 func TestPluginCheckRunFeatureLive_VmDispatch(t *testing.T) {
 	sshDescent := &spec.DescentDescriptor{Venue: "ssh"}
-	tree := map[string]spec.FleetNode{
+	tree := map[string]spec.DeployNode{
 		"check-omarchy-pr-vm":     {Target: "vm", From: "omarchy-vm", Descent: sshDescent},
 		"check-omarchy-suite-pod": {Target: "pod", Descent: &spec.DescentDescriptor{Venue: "container"}},
 	}
@@ -186,7 +186,7 @@ func TestPluginVmHostdevCount(t *testing.T) {
 // the bed case (vmName would name the clone-base BED, not the template).
 func TestPluginResolveVmTarget_DeployHop(t *testing.T) {
 	sshDescent := &spec.DescentDescriptor{Venue: "ssh"}
-	convTree := map[string]spec.FleetNode{
+	convTree := map[string]spec.DeployNode{
 		// The check bed (the live target) — from: names the clone-base BED.
 		"check-instrument-cachyos-vm": {Target: "check", From: "check-vm-clone-base", Descent: sshDescent},
 		// The clone-base BED — itself a deploy whose from: names the terminal template.
@@ -202,8 +202,8 @@ func TestPluginResolveVmTarget_DeployHop(t *testing.T) {
 
 	t.Run("bed-from-template-passes-through", func(t *testing.T) {
 		// The old spelling: a bed whose from: names the template directly — the tree lookup
-		// misses (a template is not in the Fleet tree), so no hop; the template IS the target.
-		plain := map[string]spec.FleetNode{
+		// misses (a template is not in the Deploy tree), so no hop; the template IS the target.
+		plain := map[string]spec.DeployNode{
 			"check-plain-bed": {Target: "check", From: "cachyos-vm", Descent: sshDescent},
 		}
 		vmName, _, _ := pluginResolveVmTarget(plain, "check-plain-bed")
@@ -234,11 +234,11 @@ func TestPluginResolveVmTarget_DeployHop(t *testing.T) {
 // failure, never a silent skip.
 func TestStoppedHolderRoot(t *testing.T) {
 	holderDecl := &spec.PreemptibleConfig{Holds: []string{"test-lock"}}
-	convertedRoot := &spec.FleetNode{Target: "pod", Preemptible: holderDecl} // the unrolled preempt bed ROOT
-	overlayOnly := &spec.FleetNode{Target: "pod"}                            // declaration lives only in the seeded overlay
-	seededOverlay := &spec.FleetNode{Preemptible: holderDecl}
-	normalOverlay := &spec.FleetNode{Target: "pod"}                                          // a normal bed's overlay: no arbitration role
-	claimantRoot := &spec.FleetNode{Target: "pod", RequiresExclusive: []string{"test-lock"}} // a claimant root RUNS
+	convertedRoot := &spec.DeployNode{Target: "pod", Preemptible: holderDecl} // the unrolled preempt bed ROOT
+	overlayOnly := &spec.DeployNode{Target: "pod"}                            // declaration lives only in the seeded overlay
+	seededOverlay := &spec.DeployNode{Preemptible: holderDecl}
+	normalOverlay := &spec.DeployNode{Target: "pod"}                                          // a normal bed's overlay: no arbitration role
+	claimantRoot := &spec.DeployNode{Target: "pod", RequiresExclusive: []string{"test-lock"}} // a claimant root RUNS
 
 	t.Run("preempt-shaped: converted tree root declares the holder", func(t *testing.T) {
 		if !stoppedHolderRoot(convertedRoot, normalOverlay) {
@@ -251,7 +251,7 @@ func TestStoppedHolderRoot(t *testing.T) {
 		}
 	})
 	t.Run("normal bed: root running, no declaration — unchanged behavior", func(t *testing.T) {
-		if stoppedHolderRoot(&spec.FleetNode{Target: "pod"}, normalOverlay) {
+		if stoppedHolderRoot(&spec.DeployNode{Target: "pod"}, normalOverlay) {
 			t.Fatal("stoppedHolderRoot = true, want false — a bed with no holder declaration keeps the hard running-root gate (a stopped root is a broken bed, never skipped)")
 		}
 	})
@@ -266,7 +266,7 @@ func TestStoppedHolderRoot(t *testing.T) {
 		}
 	})
 	t.Run("an empty Holds list is not a declaration", func(t *testing.T) {
-		if stoppedHolderRoot(&spec.FleetNode{Preemptible: &spec.PreemptibleConfig{}}, nil) {
+		if stoppedHolderRoot(&spec.DeployNode{Preemptible: &spec.PreemptibleConfig{}}, nil) {
 			t.Fatal("stoppedHolderRoot = true, want false — Preemptible with no holds declares nothing")
 		}
 	})

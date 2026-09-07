@@ -109,7 +109,7 @@ const (
 // an unknown authored value ALSO falls back to full rather than silently
 // skipping the acceptance gate). Anchored mode is handled at the call site
 // (revert IS the freshness mechanism — Step 5 is structurally suppressed).
-func updateGateFor(opts bedRunOpts, bedNode *spec.FleetNode) string {
+func updateGateFor(opts bedRunOpts, bedNode *spec.DeployNode) string {
 	if opts.NoRebuild {
 		return updateGateSkip
 	}

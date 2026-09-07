@@ -110,18 +110,18 @@ func resolvedProject(ex *sdk.Executor, ctx context.Context, dir string) (*spec.R
 }
 
 // podDisposable resolves a per-host pod deploy overlay entry's disposability by reading the
-// per-host overlay PLUGIN-SIDE via the cycle-free loaderkit.LoadHostFleetConfigViaExecutor read
+// per-host overlay PLUGIN-SIDE via the cycle-free loaderkit.LoadHostDeployConfigViaExecutor read
 // (the SAME path candy/plugin-fleet uses — #55 coneC-dsh, the pod-disposable host seam is DELETED).
 // A missing/unreadable overlay means the sandbox has no entry: not disposable, not an error (the
 // harness then skips its fresh-per-run restart) — the same graceful degradation the former host leg
 // made. The ONE check-project fact the resolved-project envelope cannot carry (Mode Purity keeps
 // the per-host overlay out of the build-mode projection).
 func podDisposable(ex *sdk.Executor, ctx context.Context, name string) (bool, error) {
-	cfg, err := loaderkit.LoadHostFleetConfigViaExecutor(ctx, ex)
+	cfg, err := loaderkit.LoadHostDeployConfigViaExecutor(ctx, ex)
 	if err != nil || cfg == nil {
 		return false, nil
 	}
-	if entry, ok := cfg.Fleet[name]; ok {
+	if entry, ok := cfg.Deploy[name]; ok {
 		return entry.IsDisposable(), nil
 	}
 	return false, nil

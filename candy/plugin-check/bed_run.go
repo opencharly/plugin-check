@@ -106,7 +106,7 @@ func withRunTag(args []string, tag string) []string {
 	return append(args, "--tag", tag)
 }
 
-// bedAdd builds a `charly fleet add` argv for a BED deploy. Every deploy a bed makes goes through
+// bedAdd builds a `charly deploy add` argv for a BED deploy. Every deploy a bed makes goes through
 // it, so the bed-only flags are declared once instead of at six call sites (R3).
 //
 // --dev-local-pkg is the deploy-side twin of the flag every bed image build already passes. Without
@@ -116,13 +116,13 @@ func withRunTag(args []string, tag string) []string {
 // A bed exists to prove the in-development package builds and installs, so on a bed that condition
 // must be loud.
 func bedAdd(args ...string) []string {
-	return append([]string{"fleet", "add"}, append(args, "--dev-local-pkg")...)
+	return append([]string{"deploy", "add"}, append(args, "--dev-local-pkg")...)
 }
 
 // configStartArgs builds the `charly config`/`charly start` argv for a pod bed's config+start
 // steps. An add_candy: overlay bed's FRESH artifact to verify is the overlay `deploy-add` just
-// built + persisted (resolved via the persisted resolved_image (FleetNode.ResolvedImage),
-// correctly discriminated as a pod entry — the fleetDiscForEntity resolved_image fix) — NOT the base image's own --tag build
+// built + persisted (resolved via the persisted resolved_image (DeployNode.ResolvedImage),
+// correctly discriminated as a pod entry — the deployDiscForEntity resolved_image fix) — NOT the base image's own --tag build
 // ref. Passing --tag here would force config/start to deploy <base-image>:<imageTag> (an
 // existing, but WRONG, un-overlaid reference), silently dropping every add_candy candy from the
 // running container. A non-overlay bed (hasAddCandy=false) keeps --tag unchanged (no regression):
@@ -203,10 +203,10 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		return res, &CheckSkippedError{Msg: fmt.Sprintf("charly check run %s: skipped (%s)", name, res.SkipReason)}
 	}
 
-	// bedNode is the bed-root FleetNode decoded once from d.NodeJSON — the members-up/-down
+	// bedNode is the bed-root DeployNode decoded once from d.NodeJSON — the members-up/-down
 	// call sites below pass it directly to sdk/deploykit.BringUpMembers/TearDownMembers (#55 W3
 	// A4), no HostBuild seam and no core-side session lookup needed anymore.
-	var bedNode spec.FleetNode
+	var bedNode spec.DeployNode
 	_ = json.Unmarshal(d.NodeJSON, &bedNode)
 
 	// The bed's snapshot: policy keep_venue: true forces --keep: a batch loop keeps
@@ -255,7 +255,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// Pre-run cleanup: clear any lingering target + sibling members left over from a previous
 	// interrupted run, BEFORE anything seeds or reads this run's own overlay state. Hoisted out of
 	// the Step-3 build/add/config/start switch below into its own block (#21 RCA — the K-wave
-	// terminus RCA's preempt-live-pod defect): `remove --purge`/`fleet del` fan out to
+	// terminus RCA's preempt-live-pod defect): `remove --purge`/`deploy del` fan out to
 	// deploykit.CleanDeployEntry per member, which DELETES the per-host overlay entry outright: with
 	// this cleanup running AFTER persistBedDeployOverridePluginSide (as it did before this fix), it
 	// silently destroyed the arbitration fields (Preemptible/RequiresExclusive/RequiresShared) the
@@ -275,7 +275,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		}
 	default:
 		if d.IsExternal {
-			bestEffort("fleet", "del", name)
+			bestEffort("deploy", "del", name)
 		} else {
 			bestEffort("remove", name, "--purge")
 		}
@@ -284,7 +284,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 
 	// Seed the per-host overlay with the bed ROOT's + each MEMBER's project-declared deploy-shaped
 	// overrides PLUGIN-SIDE (#55 coneC-dsh β1 — the former host-side persistBedDeployOverrides wrapper
-	// shed from charly core). The host seam threads the bed-root FleetNode (with nested peer Members)
+	// shed from charly core). The host seam threads the bed-root DeployNode (with nested peer Members)
 	// as d.NodeJSON; persistBedDeployOverridePluginSide calls deploykit.PersistBedDeployOverrides with
 	// plugin-side marshalNode + reader. MUST run AFTER the pre-run cleanup above and BEFORE anything
 	// else reads the overlay (build/config/start): the pre-run cleanup deletes overlay entries via
@@ -427,15 +427,15 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 			return nil
 		}
 		// NESTED CHILDREN FIRST — the reverse of the deploy order above, which walks d.ChildKeys
-		// pre-order issuing `fleet add <root>.<child>`. Teardown mirrors that exact collection with
-		// `fleet del`, so the two halves cannot drift: a child the bed knows how to deploy is a
+		// pre-order issuing `deploy add <root>.<child>`. Teardown mirrors that exact collection with
+		// `deploy del`, so the two halves cannot drift: a child the bed knows how to deploy is a
 		// child it knows how to remove.
 		//
 		// This is an ADDITION, not a change to the root verb. The pod branch below keeps
 		// `remove --purge`, which is the ONLY path that reaches purgeDeployArtifacts — named
-		// volumes, gocryptfs volumes and the synthesized <name>-overlay images. `fleet del` cannot
+		// volumes, gocryptfs volumes and the synthesized <name>-overlay images. `deploy del` cannot
 		// purge: both purge call sites in candy/plugin-pod/remove_orchestration.go are gated on the
-		// flag and candy/plugin-fleet never sets it, so swapping the root verb to `fleet del` would
+		// flag and candy/plugin-fleet never sets it, so swapping the root verb to `deploy del` would
 		// have left three artifact classes behind on EVERY pod bed teardown.
 		//
 		// Without this loop a nested child simply survives the bed: `charly remove` is a container
@@ -444,7 +444,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// own cleanup". No new tree walk is introduced here; d.ChildKeys is already host-resolved.
 		for i := len(d.ChildKeys) - 1; i >= 0; i-- {
 			childKey := d.ChildKeys[i]
-			if err := step("cleanup-"+childKey, "fleet", "del", name+"."+childKey, "--assume-yes"); err != nil {
+			if err := step("cleanup-"+childKey, "deploy", "del", name+"."+childKey, "--assume-yes"); err != nil {
 				// Warn, never fail: the root teardown below must still run, and a child that is
 				// already gone (torn down mid-plan by the bed's own steps) is the common case.
 				fmt.Fprintf(os.Stderr, "warning: tearing down nested child %s.%s: %v\n", name, childKey, err)
@@ -456,7 +456,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		case d.IsVM:
 			targetErr = step("cleanup", "vm", "destroy", d.VMTemplate, "--domain", d.BedDomain, "--if-exists")
 		case d.IsExternal:
-			targetErr = step("cleanup", "fleet", "del", name)
+			targetErr = step("cleanup", "deploy", "del", name)
 		default:
 			targetErr = step("cleanup", "remove", name, "--purge")
 		}
@@ -527,8 +527,8 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	}
 
 	// isInPlace unifies local + in-place-external: they apply candies in place during
-	// `charly fleet add` (no container/VM lifecycle — no `charly config`/`charly
-	// start`, teardown via `charly fleet del`).
+	// `charly deploy add` (no container/VM lifecycle — no `charly config`/`charly
+	// start`, teardown via `charly deploy del`).
 	isInPlace := d.IsLocal || d.IsExternal
 
 	// Steps 1+2: image build + check box (pod beds only; VM substrate is a
@@ -582,14 +582,14 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		}
 		deployed = true // VM domain exists — keep it on any later failure
 		// Anchored mode reuses the venue: the domain is already deployed from the
-		// fresh lane, so skip waitReady + deploy-add (the fleet plugin's prepare-
+		// fresh lane, so skip waitReady + deploy-add (the deploy plugin's prepare-
 		// venue would try to `vm create` the existing domain and fail). The
 		// snapshot-revert-and-start step below resets the kept domain's disk and
 		// boots it; waitReady runs after it, before the checks.
 		if opts.Anchor == "" {
 			waitReady()
 			if err := step("deploy-add", bedAdd(name, d.VMTemplate)...); err != nil {
-				return fail("fleet add %s: %w", name, err)
+				return fail("deploy add %s: %w", name, err)
 			}
 			// Deploy the VM's nested HOST-ROOTED (kind:local) children only (d.LocalChildKeys, the
 			// host-resolved deployNestedLocalChildren subset). A VM's nested CONTAINER children are
@@ -619,7 +619,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// run now happens in the hoisted pre-run-cleanup block above, before persist.
 		addArgs = withRunTag(addArgs, d.ImageTag)
 		if err := step("deploy-add", addArgs...); err != nil {
-			return fail("fleet add %s: %w", name, err)
+			return fail("deploy add %s: %w", name, err)
 		}
 		deployed = true // target registered — keep it on any later failure
 		// kind:local + external apply candies in place during deploy add; pod beds
@@ -935,7 +935,7 @@ func checkStepCommandSummary(argv []string) string {
 	words := []string{"charly", argv[0]}
 	if len(argv) > 1 {
 		switch argv[0] {
-		case "check", "box", "fleet", "vm":
+		case "check", "box", "deploy", "vm":
 			words = append(words, argv[1])
 		}
 	}
@@ -973,7 +973,7 @@ func printDebugRetentionNotice(w *os.File, name string, d spec.CheckBedReply) {
 			"  destroy: charly remove %s\n", name, name)
 	case d.IsExternal:
 		fmt.Fprintf(w, "\n[charly check run] bed %q FAILED — external deploy apply left in place for debugging.\n"+
-			"  destroy: charly fleet del %s\n", name, name)
+			"  destroy: charly deploy del %s\n", name, name)
 	default: // pod
 		fmt.Fprintf(w, "\n[charly check run] bed %q FAILED — pod left running for debugging.\n"+
 			"  inspect: %s | podman exec charly-%s sh\n"+
@@ -1023,7 +1023,7 @@ func writeBedSummary(dir string, res *bedRunResult) {
 	}
 }
 
-// vmDomainIdentity normalizes a deploy/fleet name into its per-deploy VM DOMAIN
+// vmDomainIdentity normalizes a deploy/deploy name into its per-deploy VM DOMAIN
 // IDENTITY (the plugin-local alias for vmshared.VmDomainIdentity), used by the
 // iterate VM-sandbox dispatch (`charly vm ssh <identity>`).
 func vmDomainIdentity(deployName string) string {

@@ -105,9 +105,9 @@ func pluginVenueResolver(ex *sdk.Executor, ctx context.Context, dir, instance st
 
 // pluginCheckLivePod gathers the pod (running-container) live check — the port of
 // charly/check_cmd.go's checkLivePod.
-func pluginCheckLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, tree map[string]spec.FleetNode, dir string, req spec.CheckRunRequest) (kit.CheckRunReply, error) {
+func pluginCheckLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, tree map[string]spec.DeployNode, dir string, req spec.CheckRunRequest) (kit.CheckRunReply, error) {
 	var localPlan, projectPlan []spec.Step
-	var deployOverlay *spec.FleetNode
+	var deployOverlay *spec.DeployNode
 	treeNode := tree[req.Name]
 	if node := resolveNestedNode(tree, req.Name); node != nil {
 		projectPlan = node.Plan
@@ -116,11 +116,11 @@ func pluginCheckLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.Resolved
 	}
 	// (Loaded BEFORE the container resolve — moved up from below it — so the
 	// deliberately-stopped-root discriminator reads the same overlay the plan merge consumes.)
-	if dc, derr := loaderkit.LoadHostFleetConfigViaExecutor(ctx, ex); derr == nil && dc != nil {
-		if entry, ok := dc.Fleet[spec.DeployKey(req.Name, req.Instance)]; ok {
+	if dc, derr := loaderkit.LoadHostDeployConfigViaExecutor(ctx, ex); derr == nil && dc != nil {
+		if entry, ok := dc.Deploy[spec.DeployKey(req.Name, req.Instance)]; ok {
 			localPlan = entry.Plan
 			deployOverlay = &entry
-		} else if entry, ok := dc.Fleet[req.Name]; ok {
+		} else if entry, ok := dc.Deploy[req.Name]; ok {
 			localPlan = entry.Plan
 			deployOverlay = &entry
 		}
@@ -232,8 +232,8 @@ func pluginCheckLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.Resolved
 // arbitration fields so the member's own `charly start` drives the arbiter). Either is an
 // honest declaration; a root with NO holder declaration that stops is a crashed bed, and its
 // live-gather stays a hard failure.
-func stoppedHolderRoot(treeNode, overlay *spec.FleetNode) bool {
-	declares := func(n *spec.FleetNode) bool {
+func stoppedHolderRoot(treeNode, overlay *spec.DeployNode) bool {
+	declares := func(n *spec.DeployNode) bool {
 		return n != nil && n.Preemptible != nil && len(n.Preemptible.Holds) > 0
 	}
 	return declares(treeNode) || declares(overlay)
@@ -276,7 +276,7 @@ func podLiveGatherBakedSet(meta *spec.BoxMetadata, declaredStopped bool) *kit.La
 // optional nested-leaf node (for a dotted "parent.child" path), and the per-deploy domain
 // identity — the port of charly/check_cmd.go's CheckLiveCmd.resolveVmTarget, off the envelope
 // tree instead of *UnifiedFile.
-func pluginResolveVmTarget(tree map[string]spec.FleetNode, name string) (vmName, domainID string, nestedLeaf *spec.FleetNode) {
+func pluginResolveVmTarget(tree map[string]spec.DeployNode, name string) (vmName, domainID string, nestedLeaf *spec.DeployNode) {
 	vmName = name
 	domainKey := name
 	if entry, ok := tree[name]; ok && nodeTraits(&entry).Venue == "ssh" && entry.From != "" {
@@ -343,7 +343,7 @@ func pluginVmHostdevCount(sp *vmshared.VmSpec) int {
 // pluginLoadVmCheckPlans aggregates the VM deployment's check plan from the project tree, the
 // per-machine deploy overlay, and add_candy deploy-scope steps — the port of
 // charly/check_cmd.go's CheckLiveCmd.loadVmCheckPlans.
-func pluginLoadVmCheckPlans(ctx context.Context, ex *sdk.Executor, rp *spec.ResolvedProject, tree map[string]spec.FleetNode, name, vmName string, nestedLeaf *spec.FleetNode, user string, port int) (plan []spec.Step, outUser string, outPort int, err error) {
+func pluginLoadVmCheckPlans(ctx context.Context, ex *sdk.Executor, rp *spec.ResolvedProject, tree map[string]spec.DeployNode, name, vmName string, nestedLeaf *spec.DeployNode, user string, port int) (plan []spec.Step, outUser string, outPort int, err error) {
 	outUser, outPort = user, port
 	var projectPlan, localPlan []spec.Step
 	var addCandies []string
@@ -360,8 +360,8 @@ func pluginLoadVmCheckPlans(ctx context.Context, ex *sdk.Executor, rp *spec.Reso
 			addCandies = entry.AddCandy
 		}
 	}
-	if dc, derr := loaderkit.LoadHostFleetConfigViaExecutor(ctx, ex); derr == nil && dc != nil {
-		entry, ok, ferr := deploykit.FindVmDeployNode(dc.Fleet, name, vmName)
+	if dc, derr := loaderkit.LoadHostDeployConfigViaExecutor(ctx, ex); derr == nil && dc != nil {
+		entry, ok, ferr := deploykit.FindVmDeployNode(dc.Deploy, name, vmName)
 		if ferr != nil {
 			return nil, "", 0, fmt.Errorf("resolving local vm deploy state for %q: %w", name, ferr)
 		}
@@ -384,7 +384,7 @@ func pluginLoadVmCheckPlans(ctx context.Context, ex *sdk.Executor, rp *spec.Reso
 
 // pluginCheckLiveVM gathers the VM live check over SSH — the port of charly/check_cmd.go's
 // checkLiveVM (nested-in-VM pod delegation, readiness gate, plan run).
-func pluginCheckLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, tree map[string]spec.FleetNode, dir string, req spec.CheckRunRequest) (kit.CheckRunReply, error) {
+func pluginCheckLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, tree map[string]spec.DeployNode, dir string, req spec.CheckRunRequest) (kit.CheckRunReply, error) {
 	vmName, domainID, nestedLeaf := pluginResolveVmTarget(tree, req.Name)
 	sp := pluginResolveVmSpec(rp, vmName)
 
@@ -489,9 +489,9 @@ func pluginCheckLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedP
 
 // pluginCheckLiveLocal gathers a `target: local` deployment's deploy-scope check on its host
 // venue — the port of charly/check_cmd.go's checkLiveLocal.
-func pluginCheckLiveLocal(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, tree map[string]spec.FleetNode, dir string, req spec.CheckRunRequest) (kit.CheckRunReply, error) {
+func pluginCheckLiveLocal(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, tree map[string]spec.DeployNode, dir string, req spec.CheckRunRequest) (kit.CheckRunReply, error) {
 	dotted := strings.Contains(req.Name, ".")
-	var node, rootNode *spec.FleetNode
+	var node, rootNode *spec.DeployNode
 	if dotted {
 		node = resolveNestedNode(tree, req.Name)
 		root, _, _ := strings.Cut(req.Name, ".")
@@ -537,7 +537,7 @@ func pluginCheckLiveLocal(ex *sdk.Executor, ctx context.Context, rp *spec.Resolv
 // pluginRunLocalDeployScopePlan collects a local deployment's deploy-scope plan (the kind:local
 // template's plan + the deploy node's plan + the per-host overlay) and runs it — the port of
 // charly/check_cmd.go's runLocalDeployScopePlan.
-func pluginRunLocalDeployScopePlan(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, dir string, node *spec.FleetNode, image, instance string, vars map[string]string, exec deploykit.DeployExecutor, stepsOverride []spec.Step) (results []kit.StepResult, hadPlan bool, err error) {
+func pluginRunLocalDeployScopePlan(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, dir string, node *spec.DeployNode, image, instance string, vars map[string]string, exec deploykit.DeployExecutor, stepsOverride []spec.Step) (results []kit.StepResult, hadPlan bool, err error) {
 	var plan []spec.Step
 	if node != nil && strings.TrimSpace(node.From) != "" {
 		if raw, ok := templateBody(rp, "local", strings.TrimSpace(node.From)); ok {
@@ -550,10 +550,10 @@ func pluginRunLocalDeployScopePlan(ex *sdk.Executor, ctx context.Context, rp *sp
 	if node != nil {
 		plan = append(plan, node.Plan...)
 	}
-	if dc, derr := loaderkit.LoadHostFleetConfigViaExecutor(ctx, ex); derr == nil && dc != nil {
-		if entry, ok := dc.Fleet[spec.DeployKey(image, instance)]; ok {
+	if dc, derr := loaderkit.LoadHostDeployConfigViaExecutor(ctx, ex); derr == nil && dc != nil {
+		if entry, ok := dc.Deploy[spec.DeployKey(image, instance)]; ok {
 			plan = append(plan, entry.Plan...)
-		} else if entry, ok := dc.Fleet[image]; ok {
+		} else if entry, ok := dc.Deploy[image]; ok {
 			plan = append(plan, entry.Plan...)
 		}
 	}

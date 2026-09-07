@@ -5,7 +5,7 @@
 // the provider registry, placement-invisible) — then `stop` at bracket END and collects
 // the evidence rows.
 //
-// The instrument entry is read generically from the bed-root FleetNode JSON (like the
+// The instrument entry is read generically from the bed-root DeployNode JSON (like the
 // deleted record wrap did — a spec regen of the Go shape cannot break this seam): either
 // the authored `<word>: <input>` sugar or the parse-desugared plugin/plugin_input pair,
 // whichever the loader produced. The capture verb is a SESSION method on its own plugin
@@ -67,7 +67,7 @@ type pipelineWord struct {
 type instrumentEntry struct {
 	ID       string         // authored id (synthesized when absent)
 	ScopedID string         // <venue>.<id> — the session identity + evidence key
-	Venue    string         // the fleet-tree venue: <bed> or <bed>.<member>
+	Venue    string         // the deploy-tree venue: <bed> or <bed>.<member>
 	Phases   []string       // resolved brackets (default ["live"])
 	Verb     string         // the capture verb word (any plugin word, never a runner enum)
 	Input    map[string]any // the capture verb's input map (method session is added at dispatch)
@@ -81,7 +81,7 @@ var instrumentModifierKeys = map[string]bool{
 	"context": true, "plugin": true, "plugin_input": true,
 }
 
-// resolveInstruments parses the instrument: entries of the bed-root FleetNode JSON (the
+// resolveInstruments parses the instrument: entries of the bed-root DeployNode JSON (the
 // root substrate node + every member/child node) into venue-scoped entries. Deterministic:
 // root entries first, then member nodes in sorted key order.
 func resolveInstruments(nodeJSON []byte, bed string) ([]instrumentEntry, error) {
@@ -110,7 +110,7 @@ func resolveInstruments(nodeJSON []byte, bed string) ([]instrumentEntry, error) 
 	if err := add(bed, rootNode["instrument"]); err != nil {
 		return nil, err
 	}
-	// Member venues: every entry of the serialized FleetNode's ordered member tree
+	// Member venues: every entry of the serialized DeployNode's ordered member tree
 	// (spec.Deploy.Member, wire shape [{name, position, node}]) — BOTH positions carry member
 	// instruments: deploy-level (the former peer map, brought up alongside) and in-substrate
 	// (the former nested map, deployed into the parent's venue). The tree preserves the authored

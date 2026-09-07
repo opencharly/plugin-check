@@ -93,10 +93,10 @@ func verifyChecksRunPlan(ex *sdk.Executor, ctx context.Context, venueExec spec.D
 	// runLocalDeployScopePlan — see the header). DeployKey(box, instance) with the bare-image
 	// fallback, the SAME precedence the core read used.
 	plan := in.Plan
-	if dc, derr := loaderkit.LoadHostFleetConfigViaExecutor(ctx, ex); derr == nil && dc != nil {
-		if entry, ok := dc.Fleet[spec.DeployKey(in.Box, in.Instance)]; ok {
+	if dc, derr := loaderkit.LoadHostDeployConfigViaExecutor(ctx, ex); derr == nil && dc != nil {
+		if entry, ok := dc.Deploy[spec.DeployKey(in.Box, in.Instance)]; ok {
 			plan = append(plan, entry.Plan...)
-		} else if entry, ok := dc.Fleet[in.Box]; ok {
+		} else if entry, ok := dc.Deploy[in.Box]; ok {
 			plan = append(plan, entry.Plan...)
 		}
 	}
