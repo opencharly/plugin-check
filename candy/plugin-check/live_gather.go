@@ -106,18 +106,16 @@ func pluginVenueResolver(ex *sdk.Executor, ctx context.Context, dir, instance st
 // pluginCheckLivePod gathers the pod (running-container) live check — the port of
 // charly/check_cmd.go's checkLivePod.
 func pluginCheckLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, tree map[string]spec.FleetNode, dir string, req spec.CheckRunRequest) (kit.CheckRunReply, error) {
-	engine, containerName, err := deploykit.ResolveContainer(req.Name, req.Instance)
-	if err != nil {
-		return kit.CheckRunReply{}, err
-	}
-
 	var localPlan, projectPlan []spec.Step
 	var deployOverlay *spec.FleetNode
+	treeNode := tree[req.Name]
 	if node := resolveNestedNode(tree, req.Name); node != nil {
 		projectPlan = node.Plan
-	} else if entry, ok := tree[req.Name]; ok {
-		projectPlan = entry.Plan
+	} else {
+		projectPlan = treeNode.Plan
 	}
+	// (Loaded BEFORE the container resolve — moved up from below it — so the
+	// deliberately-stopped-root discriminator reads the same overlay the plan merge consumes.)
 	if dc, derr := loaderkit.LoadHostFleetConfigViaExecutor(ctx, ex); derr == nil && dc != nil {
 		if entry, ok := dc.Fleet[spec.DeployKey(req.Name, req.Instance)]; ok {
 			localPlan = entry.Plan
@@ -129,8 +127,35 @@ func pluginCheckLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.Resolved
 	}
 	overlayPlan := append(append([]spec.Step(nil), projectPlan...), localPlan...)
 
+	engine, containerName, err := deploykit.ResolveContainer(req.Name, req.Instance)
+	declaredStopped := false
+	if err != nil {
+		// THE DELIBERATELY-STOPPED ROOT (the preempt semantics, post-unroll): the migrate unroll
+		// promotes the first member to the BED ROOT — for the preempt beds that root IS the
+		// preemptible holder, gracefully stopped by the claimant member's own `charly start`
+		// DURING bring-up. The old-world group root had NO container, so check-live's
+		// running-root requirement below never fired on it; the unroll made it fire on every
+		// converted preempt bed. A DECLARED holder root (Preemptible.Holds, authored on the
+		// converted tree node and seeded into the per-host overlay) whose container still
+		// EXISTS is stopped BY DESIGN — the stopped state is the bed's assertion target, not a
+		// broken bed: re-resolve WITHOUT the running gate and gather the declared state. Every
+		// other resolve failure — a crashed undeclared root, a missing container — stays a hard
+		// error, never a silent skip.
+		if !stoppedHolderRoot(&treeNode, deployOverlay) {
+			return kit.CheckRunReply{}, err
+		}
+		engine, containerName, err = resolveContainerDeclared(req.Name, req.Instance)
+		if err != nil {
+			return kit.CheckRunReply{}, err
+		}
+		declaredStopped = true
+	}
+
 	// The baked plan comes from the image this container is RUNNING (live_image.go) — never from a
 	// re-resolution of the box's short name, which elects some other local build of the same box.
+	// (The inspect-based read answers for the deliberately-stopped holder root too — container
+	// inspect works on exited containers — so the declared-state gather keeps the REAL image
+	// identity for the distros + header.)
 	meta, err := liveDeployMetadata(engine, containerName)
 	if err != nil {
 		return kit.CheckRunReply{}, err
@@ -140,14 +165,24 @@ func pluginCheckLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.Resolved
 		// deployment's own acceptance spec, so it runs against empty metadata.
 		meta = &spec.BoxMetadata{}
 	}
+	header := fmt.Sprintf("Image: %s (container: %s)", meta.Box, containerName)
+	if declaredStopped {
+		header = fmt.Sprintf("Image: %s (container: %s, stopped — declared preemptible holder: the preemption target state)", meta.Box, containerName)
+	}
 	// Whole-run recording wrap seam: --steps-file injected steps run INSTEAD of
 	// the baked plan (an isolated live invocation with only the record start/stop
 	// steps, so the recording session brackets the phases). Everything else (no
 	// --steps-file) is the standard baked + overlay merge.
-	set := kit.MergeDeployDescriptions(meta.Description, overlayPlan, req.Name)
+	// A DELIBERATELY-STOPPED holder root is NOT in its running acceptance state: the baked set
+	// is the box's RUNNING acceptance (live_image.go's contract), so the declared-state gather
+	// merges the AUTHORED plans only (tree node + per-host overlay). In the preempt shape the
+	// root authors none — the honest NoSteps outcome; the bed's preemption assertions run on
+	// the member gathers.
+	baked := podLiveGatherBakedSet(meta, declaredStopped)
+	set := kit.MergeDeployDescriptions(baked, overlayPlan, req.Name)
 	set = wrapStepsFileSet(set, req.Plan, "pod:"+req.Name)
 	if set == nil || set.IsEmpty() {
-		return kit.CheckRunReply{NoSteps: true}, nil
+		return kit.CheckRunReply{NoSteps: true, Header: header}, nil
 	}
 	resolver, _ := kit.ResolveCheckVarsRuntime(meta, deployOverlay, engine, req.Name, containerName, req.Instance)
 	resolver = stampCharlyBin(resolver)
@@ -186,7 +221,55 @@ func pluginCheckLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.Resolved
 		TargetResolver: pluginVenueResolver(ex, ctx, dir, req.Instance),
 	})
 	results := kit.RunPlan(ctx, runner, set, false)
-	return kit.CheckRunReply{Steps: results, Header: fmt.Sprintf("Image: %s (container: %s)", meta.Box, containerName)}, nil
+	return kit.CheckRunReply{Steps: results, Header: header}, nil
+}
+
+// stoppedHolderRoot reports whether the bed ROOT is a DECLARED preemptible holder — the bed's
+// own authored statement that this root may be gracefully stopped by a requires_exclusive
+// claimant (the preempt semantics). Both surfaces carry the declaration: the converted tree
+// node (the unroll promotes the holder member to the bed root, keeping its authored
+// preemptible: block) and the per-host overlay entry (persistBedDeployOverrides seeds member
+// arbitration fields so the member's own `charly start` drives the arbiter). Either is an
+// honest declaration; a root with NO holder declaration that stops is a crashed bed, and its
+// live-gather stays a hard failure.
+func stoppedHolderRoot(treeNode, overlay *spec.FleetNode) bool {
+	declares := func(n *spec.FleetNode) bool {
+		return n != nil && n.Preemptible != nil && len(n.Preemptible.Holds) > 0
+	}
+	return declares(treeNode) || declares(overlay)
+}
+
+// resolveContainerDeclared is the deliberately-stopped-root twin of deploykit.ResolveContainer:
+// the SAME engine + container-name synthesis, gated on kit.ContainerExists (RUNNING OR STOPPED)
+// instead of the running gate. A declared holder root's stopped container still exists — its
+// image identity stays readable via container inspect (liveDeployMetadata) — while a container
+// that does not exist at all stays a hard error. Mirrors sdk/deploykit/container_resolve.go
+// line-for-line except for that one gate (R3: one synthesis, one gate difference, both visible
+// side by side).
+func resolveContainerDeclared(box, instance string) (engine, name string, err error) {
+	rt, err := kit.ResolveRuntime()
+	if err != nil {
+		return "", "", err
+	}
+	boxName := kit.ResolveBoxName(box)
+	runEngine := deploykit.ResolveBoxEngineForDeploy(boxName, instance, rt.RunEngine)
+	engine = kit.EngineBinary(runEngine)
+	name = kit.ContainerNameInstance(boxName, instance)
+	if !kit.ContainerExists(engine, name) {
+		return "", "", fmt.Errorf("container %s does not exist", name)
+	}
+	return engine, name, nil
+}
+
+// podLiveGatherBakedSet returns the baked LabelDescriptionSet the pod live-gather merges: the
+// image's baked running-acceptance set for a RUNNING root; nil for a DELIBERATELY-STOPPED
+// holder root — the stopped state IS the bed's assertion target, and the baked set is the
+// box's RUNNING acceptance (live_image.go's contract), which a stopped root cannot answer.
+func podLiveGatherBakedSet(meta *spec.BoxMetadata, declaredStopped bool) *kit.LabelDescriptionSet {
+	if declaredStopped {
+		return nil
+	}
+	return meta.Description
 }
 
 // pluginResolveVmTarget resolves the VM check request (name) to its kind:vm entity name, an

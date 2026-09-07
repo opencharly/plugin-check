@@ -1,8 +1,10 @@
 package check
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/opencharly/sdk/kit"
 	"github.com/opencharly/sdk/vmshared"
 	"github.com/opencharly/spec/spec"
 )
@@ -209,4 +211,125 @@ func TestPluginResolveVmTarget_DeployHop(t *testing.T) {
 			t.Fatalf("vmName = %q, want %q (the from: template, no hop)", vmName, "cachyos-vm")
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// The deliberately-stopped ROOT (the preempt semantics, post-unroll) — the
+// live-gather root-state handling. The migrate unroll promotes the first member
+// to the BED ROOT; for the preempt beds that root IS the preemptible holder the
+// bed's own claimant stops DURING bring-up, so the pod live-gather's former
+// hard running-root gate (deploykit.ResolveContainer) failed every converted
+// preempt bed BEFORE any step could run. The contract below pins the three
+// decisions of the fix: WHO qualifies (a DECLARED holder, never a crashed
+// undeclared root), HOW the stopped root resolves (existence, not running), and
+// WHAT the declared-state gather merges (the authored plans — never the baked
+// running-acceptance set).
+
+// TestStoppedHolderRoot pins the discriminator for both fixture shapes the
+// ruling names: a PREEMPT-shaped bed (the root is the declared holder — via the
+// converted tree node OR the per-host overlay entry persistBedDeployOverrides
+// seeds) gathers its declared state, while a NORMAL bed (root running, no
+// holder declaration) is unchanged — and every non-holder stop (a crashed
+// undeclared root, a claimant root, a missing declaration) stays a hard
+// failure, never a silent skip.
+func TestStoppedHolderRoot(t *testing.T) {
+	holderDecl := &spec.PreemptibleConfig{Holds: []string{"test-lock"}}
+	convertedRoot := &spec.FleetNode{Target: "pod", Preemptible: holderDecl} // the unrolled preempt bed ROOT
+	overlayOnly := &spec.FleetNode{Target: "pod"}                            // declaration lives only in the seeded overlay
+	seededOverlay := &spec.FleetNode{Preemptible: holderDecl}
+	normalOverlay := &spec.FleetNode{Target: "pod"}                                          // a normal bed's overlay: no arbitration role
+	claimantRoot := &spec.FleetNode{Target: "pod", RequiresExclusive: []string{"test-lock"}} // a claimant root RUNS
+
+	t.Run("preempt-shaped: converted tree root declares the holder", func(t *testing.T) {
+		if !stoppedHolderRoot(convertedRoot, normalOverlay) {
+			t.Fatal("stoppedHolderRoot = false, want true — the converted preempt bed ROOT authors preemptible.holds; its deliberate stop is the assertion target, not a broken bed")
+		}
+	})
+	t.Run("preempt-shaped: seeded overlay declares the holder", func(t *testing.T) {
+		if !stoppedHolderRoot(overlayOnly, seededOverlay) {
+			t.Fatal("stoppedHolderRoot = false, want true — persistBedDeployOverrides seeds the member holder role into the per-host overlay; that declaration qualifies alone")
+		}
+	})
+	t.Run("normal bed: root running, no declaration — unchanged behavior", func(t *testing.T) {
+		if stoppedHolderRoot(&spec.FleetNode{Target: "pod"}, normalOverlay) {
+			t.Fatal("stoppedHolderRoot = true, want false — a bed with no holder declaration keeps the hard running-root gate (a stopped root is a broken bed, never skipped)")
+		}
+	})
+	t.Run("nil surfaces — crashed undeclared root stays a hard failure", func(t *testing.T) {
+		if stoppedHolderRoot(nil, nil) {
+			t.Fatal("stoppedHolderRoot = true, want false — absent declarations never qualify")
+		}
+	})
+	t.Run("claimant root is not a holder — it stops OTHERS and keeps running", func(t *testing.T) {
+		if stoppedHolderRoot(claimantRoot, nil) {
+			t.Fatal("stoppedHolderRoot = true, want false — requires_exclusive is the CLAIMANT axis; only Preemptible.Holds declares a stoppable holder")
+		}
+	})
+	t.Run("an empty Holds list is not a declaration", func(t *testing.T) {
+		if stoppedHolderRoot(&spec.FleetNode{Preemptible: &spec.PreemptibleConfig{}}, nil) {
+			t.Fatal("stoppedHolderRoot = true, want false — Preemptible with no holds declares nothing")
+		}
+	})
+}
+
+// TestResolveContainerDeclared pins the stopped-root resolve: the SAME
+// engine + container-name synthesis as deploykit.ResolveContainer, gated on
+// EXISTENCE (RUNNING OR STOPPED) instead of the running gate — a deliberately
+// stopped holder's container still exists and its image identity stays readable
+// via inspect, while a container that does not exist at all stays a hard error.
+// The running probe must NEVER be consulted on this path (that is the whole
+// fix), so the test fails the test if it fires.
+func TestResolveContainerDeclared(t *testing.T) {
+	origRuntime, origExists, origRunning := kit.ResolveRuntime, kit.ContainerExists, kit.ContainerRunning
+	t.Cleanup(func() {
+		kit.ResolveRuntime, kit.ContainerExists, kit.ContainerRunning = origRuntime, origExists, origRunning
+	})
+
+	kit.ResolveRuntime = func() (*kit.ResolvedRuntime, error) { return &kit.ResolvedRuntime{RunEngine: "podman"}, nil }
+	existsCalls := map[string]int{}
+	kit.ContainerExists = func(engine, name string) bool { existsCalls[name]++; return name == "charly-holder-bed" }
+	runningCalls := 0
+	kit.ContainerRunning = func(engine, name string) bool { runningCalls++; return false }
+
+	t.Run("stopped-but-existing holder resolves WITHOUT the running gate", func(t *testing.T) {
+		engine, name, err := resolveContainerDeclared("holder-bed", "")
+		if err != nil {
+			t.Fatalf("resolveContainerDeclared(holder-bed) = %v, want nil (the container EXISTS — stopped is the declared state)", err)
+		}
+		if engine != "podman" || name != "charly-holder-bed" {
+			t.Fatalf("resolveContainerDeclared = %s/%s, want podman/charly-holder-bed (the SAME synthesis as deploykit.ResolveContainer)", engine, name)
+		}
+		if runningCalls != 0 {
+			t.Fatalf("kit.ContainerRunning fired %d time(s) on the declared-resolve path — the fix must gate on EXISTENCE only", runningCalls)
+		}
+		if existsCalls["charly-holder-bed"] == 0 {
+			t.Fatal("kit.ContainerExists never consulted — the existence gate is missing")
+		}
+	})
+	t.Run("a container that does not exist stays a hard error", func(t *testing.T) {
+		_, _, err := resolveContainerDeclared("ghost-bed", "")
+		if err == nil || !strings.Contains(err.Error(), "does not exist") {
+			t.Fatalf("resolveContainerDeclared(ghost-bed) = %v, want a does-not-exist error (a missing container is never a declared state)", err)
+		}
+	})
+}
+
+// TestPodLiveGatherBakedSet pins WHAT the declared-state gather merges: a
+// RUNNING root gathers the image's baked running-acceptance set (unchanged);
+// a DELIBERATELY-STOPPED holder root merges nil in its place — the baked set is
+// the box's RUNNING acceptance (live_image.go's contract), which a stopped
+// root cannot answer, so the gather owes only the authored plans. In the
+// preempt shape the root authors none: the honest NoSteps outcome.
+func TestPodLiveGatherBakedSet(t *testing.T) {
+	baked := &kit.LabelDescriptionSet{Deploy: []kit.LabeledDescription{{Origin: "baked:holder-bed"}}}
+	meta := &spec.BoxMetadata{Description: baked}
+	if got := podLiveGatherBakedSet(meta, false); got != baked {
+		t.Fatal("podLiveGatherBakedSet(running) != the baked set — the RUNNING path must be byte-identical to the old merge")
+	}
+	if got := podLiveGatherBakedSet(meta, true); got != nil {
+		t.Fatalf("podLiveGatherBakedSet(stopped) = %+v, want nil — a deliberately-stopped holder root is not in its running acceptance state; the baked plan must not run against it", got)
+	}
+	if got := podLiveGatherBakedSet(nil, true); got != nil {
+		t.Fatal("podLiveGatherBakedSet(nil, stopped) = non-nil, want nil (nil-safe)")
+	}
 }
