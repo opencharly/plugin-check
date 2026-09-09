@@ -8,12 +8,13 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/opencharly/sdk/checkkit"
 	"github.com/opencharly/sdk/kit"
 	"github.com/opencharly/spec/spec"
 )
 
 // TestNewPluginCheckRunner_VerbResolverTracksLiveExec is the regression test for the
-// check-k3s-vm SIGSEGV (K1-unblock wave, blocking bug found via a live bed run): pluginVerbResolver
+// check-k3s-vm SIGSEGV (K1-unblock wave, blocking bug found via a live bed run): kitVerbs
 // used to thread a VenueDescriptor computed ONCE at newPluginCheckRunner-construction time (or
 // nil, for every venue kind this package didn't bother computing one for — VM/local/group). A
 // `command:` (or any detached CheckVerbProvider) step on a venue whose default executor never
@@ -36,15 +37,15 @@ func TestNewPluginCheckRunner_VerbResolverTracksLiveExec(t *testing.T) {
 		Mode: kit.ModeLive,
 	})
 
-	pvr, ok := runner.Verbs().(*pluginVerbResolver)
+	pvr, ok := runner.Verbs().(*kitVerbs)
 	if !ok {
-		t.Fatalf("runner.Verbs() = %T, want *pluginVerbResolver", runner.Verbs())
+		t.Fatalf("runner.Verbs() = %T, want *kitVerbs", runner.Verbs())
 	}
 	if pvr.kr == nil {
-		t.Fatal("pluginVerbResolver.kr is nil — RunVerb can never derive a live VenueDescriptor (the exact regression: falls back to the caller's nil ambient executor)")
+		t.Fatal("kitVerbs.kr is nil — RunVerb can never derive a live VenueDescriptor (the exact regression: falls back to the caller's nil ambient executor)")
 	}
 	if pvr.kr != runner {
-		t.Error("pluginVerbResolver.kr does not point at the SAME *kit.Runner newPluginCheckRunner returned — a copy would desync from any later SwapVenue mutation")
+		t.Error("kitVerbs.kr does not point at the SAME *kit.Runner newPluginCheckRunner returned — a copy would desync from any later SwapVenue mutation")
 	}
 	if pvr.kr.Exec() != kit.Executor(wantExec) {
 		t.Errorf("pvr.kr.Exec() = %#v, want the SAME executor passed via RunnerConfig.Exec (%#v)", pvr.kr.Exec(), wantExec)
@@ -62,13 +63,13 @@ func TestNewPluginCheckRunner_VerbResolverTracksLiveExec(t *testing.T) {
 // TestPluginSnapshotCheckEnv_ReflectsSwapVenue is the regression test for the #55 W3
 // check-cross-pod-cdp bed RCA: a GROUP bed's runner starts with Box=<group-root-name> (a pure
 // group has no container of its own) and SwapVenue retargets Box to the OWNING MEMBER for every
-// step (a group root can carry no direct plan steps). The former pluginVerbResolver.env was a
+// step (a group root can carry no direct plan steps). The former kitVerbs.env was a
 // STATIC field frozen at construction time — the wire envelope RunVerb sends to
 // charly/plugin_dispatch_reverse.go's InvokeProvider handler (which decodes it to construct the
 // detached CheckContext serving cc.ResolveEndpoint et al.) kept reporting the group's own bare
 // name even after SwapVenue moved the runner to a real member — "container
 // charly-check-cross-pod-cdp is not running" for a bed whose actual cdp subject is the chrome
-// member. This proves pluginSnapshotCheckEnv(pvr.kr) — the value RunVerb now marshals on every
+// member. This proves checkkit.SnapshotCheckEnv(pvr.kr) — the value RunVerb now marshals on every
 // call — tracks a mid-plan SwapVenue rather than the frozen construction-time snapshot, sibling to
 // TestNewPluginCheckRunner_VerbResolverTracksLiveExec's identical proof for the Exec() half of the
 // same staleness class.
@@ -90,13 +91,13 @@ func TestPluginSnapshotCheckEnv_ReflectsSwapVenue(t *testing.T) {
 		Box:            groupRoot,
 		TargetResolver: resolver,
 	})
-	pvr, ok := runner.Verbs().(*pluginVerbResolver)
+	pvr, ok := runner.Verbs().(*kitVerbs)
 	if !ok {
-		t.Fatalf("runner.Verbs() = %T, want *pluginVerbResolver", runner.Verbs())
+		t.Fatalf("runner.Verbs() = %T, want *kitVerbs", runner.Verbs())
 	}
 
-	if before := pluginSnapshotCheckEnv(pvr.kr, pvr.mcpProvide); before.Box != groupRoot {
-		t.Fatalf("pre-swap pluginSnapshotCheckEnv(pvr.kr).Box = %q, want the group root %q", before.Box, groupRoot)
+	if before := checkkit.SnapshotCheckEnv(pvr.kr); before.Box != groupRoot {
+		t.Fatalf("pre-swap checkkit.SnapshotCheckEnv(pvr.kr).Box = %q, want the group root %q", before.Box, groupRoot)
 	}
 
 	restore, failReason := runner.SwapVenue(&spec.Op{Venue: "chrome"})
@@ -105,16 +106,16 @@ func TestPluginSnapshotCheckEnv_ReflectsSwapVenue(t *testing.T) {
 	}
 	defer restore()
 
-	after := pluginSnapshotCheckEnv(pvr.kr, pvr.mcpProvide)
+	after := checkkit.SnapshotCheckEnv(pvr.kr)
 	if after.Box != "chrome" {
-		t.Errorf("post-swap pluginSnapshotCheckEnv(pvr.kr).Box = %q, want the swapped member %q — RunVerb's wire envelope must track SwapVenue, not the group root frozen at construction", after.Box, "chrome")
+		t.Errorf("post-swap checkkit.SnapshotCheckEnv(pvr.kr).Box = %q, want the swapped member %q — RunVerb's wire envelope must track SwapVenue, not the group root frozen at construction", after.Box, "chrome")
 	}
 }
 
 // TestPluginSnapshotCheckEnv_CarriesVmMcpProvide is the P4 substrate-neutral mcp_provide gate
 // (plan §3.10): a kind:vm entity declares its MCP servers (spec #Vm.mcp_provide → the check env's
 // #CheckEnv.mcp_provide), and there is no podman-inspectable OCI label on a VM — so the check env
-// pluginSnapshotCheckEnv marshals into every out-of-process verb dispatch (the RunVerb wire
+// checkkit.SnapshotCheckEnv marshals into every out-of-process verb dispatch (the RunVerb wire
 // envelope) must carry the deployment's mcp_provide declarations itself for the mcp: check verb's
 // substrate-neutral endpoint resolution. The live-VM gathers seed the constructor env from the vm
 // template's raw body (pluginResolveVmMcpProvide); newPluginCheckRunner captures it onto the
@@ -138,14 +139,14 @@ func TestPluginSnapshotCheckEnv_CarriesVmMcpProvide(t *testing.T) {
 		Exec: &kit.SSHExecutor{Host: "charly-cachyos-vm", ConnectTimeout: 10},
 		Mode: kit.ModeLive,
 	})
-	pvr, ok := vmRunner.Verbs().(*pluginVerbResolver)
+	pvr, ok := vmRunner.Verbs().(*kitVerbs)
 	if !ok {
-		t.Fatalf("vm runner Verbs() = %T, want *pluginVerbResolver", vmRunner.Verbs())
+		t.Fatalf("vm runner Verbs() = %T, want *kitVerbs", vmRunner.Verbs())
 	}
 
-	got := pluginSnapshotCheckEnv(pvr.kr, pvr.mcpProvide)
+	got := checkkit.SnapshotCheckEnv(pvr.kr)
 	if !slices.Equal(got.MCPProvide, want) {
-		t.Errorf("pluginSnapshotCheckEnv(pvr.kr, pvr.mcpProvide).MCPProvide = %#v, want %#v — the VM venue's mcp_provide declarations must ride the env RunVerb marshals (no OCI label on a VM)", got.MCPProvide, want)
+		t.Errorf("checkkit.SnapshotCheckEnv(pvr.kr).MCPProvide = %#v, want %#v — the VM venue's mcp_provide declarations must ride the env RunVerb marshals (no OCI label on a VM)", got.MCPProvide, want)
 	}
 	// The WIRE form is what the out-of-process mcp: verb decodes — assert it carries the field.
 	envJSON, jerr := json.Marshal(got)
@@ -167,11 +168,11 @@ func TestPluginSnapshotCheckEnv_CarriesVmMcpProvide(t *testing.T) {
 		Exec: &kit.NestedExecutor{Jump: kit.NestedJump{Kind: kit.JumpPodmanExec}},
 		Mode: kit.ModeLive,
 	})
-	cpvr, ok := containerRunner.Verbs().(*pluginVerbResolver)
+	cpvr, ok := containerRunner.Verbs().(*kitVerbs)
 	if !ok {
-		t.Fatalf("container runner Verbs() = %T, want *pluginVerbResolver", containerRunner.Verbs())
+		t.Fatalf("container runner Verbs() = %T, want *kitVerbs", containerRunner.Verbs())
 	}
-	if gotContainer := pluginSnapshotCheckEnv(cpvr.kr, cpvr.mcpProvide); len(gotContainer.MCPProvide) != 0 {
-		t.Errorf("container venue pluginSnapshotCheckEnv(...).MCPProvide = %#v, want empty — the OCI label path owns mcp_provide for containers, the env must not carry it", gotContainer.MCPProvide)
+	if gotContainer := checkkit.SnapshotCheckEnv(cpvr.kr); len(gotContainer.MCPProvide) != 0 {
+		t.Errorf("container venue checkkit.SnapshotCheckEnv(...).MCPProvide = %#v, want empty — the OCI label path owns mcp_provide for containers, the env must not carry it", gotContainer.MCPProvide)
 	}
 }
