@@ -126,6 +126,11 @@ func pluginCheckLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.Resolved
 		}
 	}
 	overlayPlan := append(append([]spec.Step(nil), projectPlan...), localPlan...)
+	// include: steps splice at collect time (the include primitive's contract) — same
+	// expansion the VM arm applies; a residual include: step would no-op as a skip.
+	if expanded, eErr := expandPlanIncludes(rp, overlayPlan); eErr == nil {
+		overlayPlan = expanded
+	}
 
 	engine, containerName, err := deploykit.ResolveContainer(req.Name, req.Instance)
 	declaredStopped := false
@@ -400,6 +405,14 @@ func pluginLoadVmCheckPlans(ctx context.Context, ex *sdk.Executor, rp *spec.Reso
 	}
 	plan = append(append([]spec.Step(nil), projectPlan...), localPlan...)
 	plan = append(plan, candyAddSteps(rp, addCandies)...)
+	// include: steps splice at collect time (the include primitive's contract) — the
+	// check-project projection expands them, and the live gather must too, or a residual
+	// include: step reaches the walk and no-ops as a skip ("include expanded at collect
+	// time") with its referenced steps never executing. Best-effort like the projection:
+	// an unresolvable include keeps the raw plan (the residual step then skips as before).
+	if expanded, eErr := expandPlanIncludes(rp, plan); eErr == nil {
+		plan = expanded
+	}
 	return plan, outUser, outPort, nil
 }
 
@@ -594,6 +607,11 @@ func pluginRunLocalDeployScopePlan(ex *sdk.Executor, ctx context.Context, rp *sp
 		} else if entry, ok := dc.Deploy[image]; ok {
 			plan = append(plan, entry.Plan...)
 		}
+	}
+	// include: steps splice at collect time (the include primitive's contract) — same
+	// expansion the VM/pod arms apply; a residual include: step would no-op as a skip.
+	if expanded, eErr := expandPlanIncludes(rp, plan); eErr == nil {
+		plan = expanded
 	}
 
 	user := os.Getenv("USER")
