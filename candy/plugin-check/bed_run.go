@@ -203,6 +203,13 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		return res, &CheckSkippedError{Msg: fmt.Sprintf("charly check run %s: skipped (%s)", name, res.SkipReason)}
 	}
 
+	// The evidence dir plan steps write into (the media stage's source) — created up
+	// front so artifact-writing verbs (record/spice/transcode) never fail on a missing
+	// parent (they write the host artifact path verbatim, no MkdirAll of their own).
+	if err := os.MkdirAll(filepath.Join(d.LogDir, "evidence"), 0o755); err != nil {
+		return nil, fmt.Errorf("creating evidence dir %s: %w", filepath.Join(d.LogDir, "evidence"), err)
+	}
+
 	// bedNode is the bed-root DeployNode decoded once from d.NodeJSON — the members-up/-down
 	// call sites below pass it directly to sdk/deploykit.BringUpMembers/TearDownMembers (#55 W3
 	// A4), no HostBuild seam and no core-side session lookup needed anymore.
@@ -648,6 +655,15 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// an acceptance failure is evidence and is never hidden by a timed retry.
 	// stepLabel disambiguates initial vs rebuild.
 	checkLiveTree := func(stepLabel string) error {
+		// The run dir rides the check-live env as CHECK_RUN_DIR so plan steps can
+		// write evidence into the run's evidence/ dir (the media stage's source).
+		// The operator's own --var passthrough is preserved; the run dir is
+		// authoritative (a caller-supplied value would point at the wrong run).
+		vars := opts.Vars
+		if vars == nil {
+			vars = map[string]string{}
+		}
+		vars["CHECK_RUN_DIR"] = d.LogDir
 		for i, ref := range d.CheckLiveRefs {
 			label := stepLabel
 			if i > 0 {
@@ -655,7 +671,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 			}
 			// Per-run --var passthrough rides the check-live cli-reentry argv
 			// (CheckLiveCmd.Vars → CheckRunRequest.Vars → the live runner env).
-			argv := append([]string{"check", "live", ref}, runVarsArgv(opts.Vars)...)
+			argv := append([]string{"check", "live", ref}, runVarsArgv(vars)...)
 			if err := step(label, argv...); err != nil {
 				return err
 			}
