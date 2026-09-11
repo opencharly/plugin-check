@@ -160,6 +160,45 @@ func runTaggedImageRef(image, tag string) string {
 	return image + ":" + tag
 }
 
+// checkRunVars returns the per-run var passthrough for ONE bed run's check-live
+// steps: the operator's --var map (a fresh map when nil — never mutated
+// in the caller), overlaid with the run's authoritative runtime vars:
+// CHECK_RUN_DIR (the run dir, G-1/#42), CALVER (the run calver — the run dir's
+// basename, single-sourced in bedSetup: logDir = filepath.Join(".check", bed,
+// calver)), and BED (the bed's media-stage short name). Authoritative: a
+// caller-supplied value for any of them would point at the WRONG run/calver/
+// name. Empty-string safe: an empty descriptor value yields an empty env value
+// (the ${…} ref then expands to "" — never a crash). Deterministic: all three
+// derive from the run descriptor + entity name, never time or ordering.
+func checkRunVars(optsVars map[string]string, d spec.CheckBedReply, name string) map[string]string {
+	vars := optsVars
+	if vars == nil {
+		vars = map[string]string{}
+	}
+	vars["CHECK_RUN_DIR"] = d.LogDir
+	vars["CALVER"] = d.Calver
+	vars["BED"] = bedShortName(name)
+	return vars
+}
+
+// bedShortName derives a bed's media-stage short name from its check entity
+// name, mirroring how the omarchy acceptance suite names its staged media dirs
+// (accept-<short>-<calver>): strip the leading "check-" prefix, the first
+// (product) segment, and an "accept-" qualifier, so
+// check-omarchy-accept-agents → "agents" and check-omarchy-accept-menu-bar
+// → "menu-bar". Deterministic and total: a name with nothing to strip is its
+// own short name, and the empty entity stays empty (empty-string safe).
+func bedShortName(bed string) string {
+	if bed == "" {
+		return ""
+	}
+	rest := strings.TrimPrefix(bed, "check-")
+	if i := strings.IndexByte(rest, '-'); i >= 0 {
+		rest = rest[i+1:] // drop the first segment (the product: omarchy, k3s, …)
+	}
+	return strings.TrimPrefix(rest, "accept-")
+}
+
 // runCheckBed executes the canonical R10 sequence for one check bed and writes
 // per-step logs + summary.yml to .check/<name>/<calver>/. Returns the result struct
 // (always non-nil once setup succeeds) and the first error encountered.
@@ -655,15 +694,14 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// an acceptance failure is evidence and is never hidden by a timed retry.
 	// stepLabel disambiguates initial vs rebuild.
 	checkLiveTree := func(stepLabel string) error {
-		// The run dir rides the check-live env as CHECK_RUN_DIR so plan steps can
-		// write evidence into the run's evidence/ dir (the media stage's source).
-		// The operator's own --var passthrough is preserved; the run dir is
+		// The run vars ride the check-live env — CHECK_RUN_DIR (the run dir, G-1/#42),
+		// CALVER (the run calver = the run dir's basename), and BED (the media-stage
+		// short name) — so plan steps can write evidence into the run's evidence/ dir
+		// and author their FINAL media path directly (e.g. an artifact string of
+		// "media/${CALVER}/${BED}/${BED}.cast" — no shell derivation, no later move).
+		// The operator's own --var passthrough is preserved; the run-derived vars are
 		// authoritative (a caller-supplied value would point at the wrong run).
-		vars := opts.Vars
-		if vars == nil {
-			vars = map[string]string{}
-		}
-		vars["CHECK_RUN_DIR"] = d.LogDir
+		vars := checkRunVars(opts.Vars, d, name)
 		for i, ref := range d.CheckLiveRefs {
 			label := stepLabel
 			if i > 0 {
