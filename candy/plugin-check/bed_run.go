@@ -381,6 +381,19 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		}
 	}
 
+	// waitRebuildReady bounds the POST-RESTART reconnect (G-3c — bed_readiness.go's RCA). A VM
+	// bed's rebooted guest is waited for under a TOTAL deadline, so a lease-less boot becomes a
+	// named, time-bounded failure instead of the silent 30-minute cap-only stall; the container
+	// arm keeps the shared self-bounding gate (WaitForContainerReady's 90-second no-progress
+	// watchdog early-outs a stalled container — the RCA's stall is VM-only).
+	waitRebuildReady := func() error {
+		if !d.IsVM {
+			waitReady()
+			return nil
+		}
+		return waitVenueReady(ctx, rebuildReadyDeadline, d.BedDomain, vmSshReadyProbe(d.BedDomain))
+	}
+
 	// phase records an IN-PROCESS phase (member bring-up / teardown — ops that do not
 	// shell out to a `charly` subcommand) in the summary with its real duration.
 	phase := func(stepName string, fn func() error) error {
@@ -728,7 +741,12 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 			return fail("snapshot revert %s -> %q: %w — run the FRESH lane first: `charly check run %s` (NO --anchor) builds the golden disk and captures the snapshot on_finalize",
 				d.VMTemplate, opts.Anchor, err, name)
 		}
-		waitReady()
+		// The revert BOOTS the kept domain — a restart of an already-provisioned disk, the
+		// same class as the fresh rebuild's reboot, so the reconnect gets the same TOTAL
+		// deadline (G-3c) instead of the silent cap-only readiness wait.
+		if err := phase("revert-ready", waitRebuildReady); err != nil {
+			return fail("venue readiness after snapshot revert %s: %w", name, err)
+		}
 	}
 
 	// Step 4: deploy/runtime acceptance — gated out at check_level: none|build.
@@ -869,15 +887,19 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// gap went unverified); #55 W3 B2-full's ExternalInPlaceVenue fix corrected that classification
 		// as a side effect, which finally exercised this path and surfaced the missing redeploy.
 		if d.RunRuntime && !isInPlace {
+			// G-3c: the post-rebuild reconnect is BOUNDED — a lease-less guest must fail the
+			// bed with a named, time-bounded error instead of silently burning the readiness
+			// cap and stalling the whole suite (the update-bed deadlock RCA).
+			if err := phase("rebuild-ready", waitRebuildReady); err != nil {
+				return fail("venue readiness (fresh rebuild) %s: %w", name, err)
+			}
 			if d.IsVM {
-				waitReady()
 				for _, childKey := range d.LocalChildKeys {
 					if err := step("redeploy-"+childKey, bedAdd(name+"."+childKey)...); err != nil {
 						return fail("re-deploy nested local child %s.%s (fresh rebuild): %w", name, childKey, err)
 					}
 				}
 			} else {
-				waitReady()
 				for _, childKey := range d.ChildKeys {
 					if err := step("redeploy-"+childKey, bedAdd(name+"."+childKey)...); err != nil {
 						return fail("re-deploy nested child %s.%s (fresh rebuild): %w", name, childKey, err)
