@@ -460,6 +460,21 @@ func TestPacmanPostTransactionHookContainerSystemdIsConditional(t *testing.T) {
 		}
 	})
 
+	t.Run("a DIFFERENT hook's refusal does not exempt the wrapper error", func(t *testing.T) {
+		// The device-manager hook is refused by systemd in the same container build, but the
+		// modules-load hook's OWN banner is absent: the refusal ALONE must not claim a wrapper
+		// error that can belong to the device-manager hook instead. This is the boundary the
+		// review required — several hooks share the one wrapper wording, so the anchor binds to
+		// the hook that names this class.
+		const otherHook = "( 6/10) Reloading device manager configuration...\n" +
+			"System has not been booted with systemd as init system (PID 1). Can't operate.\n" +
+			"error: command failed to execute correctly\n"
+		d := scanStepDiagnostics(step + otherHook)
+		if d.Errors != 1 || d.Allowlisted != 0 || !d.fails(defaultDiagnosticPolicy()) {
+			t.Errorf("a refusal from a DIFFERENT hook must leave the wrapper error fatal; got %+v", d)
+		}
+	})
+
 	t.Run("the refusal does not exempt a REAL pacman failure", func(t *testing.T) {
 		const realFailure = "error: failed to commit transaction (conflicting files)\n"
 		d := scanStepDiagnostics(step + captured + realFailure)
@@ -494,8 +509,14 @@ func TestHookWrapperEntriesResolvePerProof(t *testing.T) {
 	})
 
 	t.Run("only the container-init proof present", func(t *testing.T) {
-		d := scanStepDiagnostics(step + errLine +
-			"System has not been booted with systemd as init system (PID 1). Can't operate.\n")
+		// The container-init proof is the WHOLE chain the entry's RecoveredBy binds to: the
+		// modules-load hook's own banner, systemd's refusal, then the wrapper error (verbatim
+		// from the captured check-githubrunner-pod image-build).
+		const containerChain = "( 6/10) Loading new kernel modules...\n" +
+			"System has not been booted with systemd as init system (PID 1). Can't operate.\n" +
+			"Failed to connect to system scope bus via local transport: Host is down\n" +
+			"error: command failed to execute correctly\n"
+		d := scanStepDiagnostics(step + containerChain)
 		if d.Errors != 0 || d.Allowlisted != 1 {
 			t.Fatalf("the container-init signature must claim the wrapper error; got %+v", d)
 		}

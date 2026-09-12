@@ -504,15 +504,21 @@ var diagnosticAllowlist = []diagnosticAllowance{
 		// satisfies the error-tier conditional requirement; the init refusal IS the proof (see
 		// RecoveredBy).
 		Match: regexp.MustCompile(`^error: (command failed to execute correctly)$`),
-		// The proof is systemd's own container-init refusal, printed by the failing hook two
-		// lines ahead of pacman's wrapper error (verbatim: `System has not been booted with
-		// systemd as init system (PID 1). Can't operate.`). A step log is ONE `charly box
-		// build`, so the signature can only be there because a hook reached the system scope
-		// and was refused — which is what makes this wrapper error an artifact of the
-		// container rather than a swallowed failure. The anchor STOPS at `(PID 1).` — the
-		// sentence that NAMES the cause is asserted, its tail is not — so a line-wrapped or
-		// width-padded rendering of the SAME sentence still proves the class.
-		RecoveredBy: `(?m)^System has not been booted with systemd as init system \(PID 1\)\.`,
+		// The proof BINDS the claim to the hook that names this class, in order. pacman prints
+		// this ONE wrapper wording for EVERY failing post-transaction hook, so "a systemd
+		// refusal is somewhere in the log" is NOT sufficient: another hook can fail in the
+		// same step while the modules-load hook is separately refused, and that other failure
+		// would then be claimed. The anchor therefore requires the whole chain — the
+		// modules-load hook's OWN banner (`( N/M) Loading new kernel modules...`), systemd's
+		// container-init refusal that it triggers, and the wrapper error that follows — so a
+		// refusal printed by a DIFFERENT hook (device-manager, fontconfig, …) leaves the
+		// wrapper error FATAL. Both the banner and the refusal sentences are asserted up to
+		// the point that NAMES the cause; their tails are not, so a line-wrapped or
+		// width-padded rendering of the SAME sentences still proves the class.
+		RecoveredBy: `(?s)\(\s*\d+/\d+\) Loading new kernel modules\.\.\.\n.*?` +
+			`System has not been booted with systemd as init system \(PID 1\)\.[^\n]*\n` +
+			`(?:[^\n]*\n){0,3}` +
+			`error: command failed to execute correctly`,
 		Why: "pacman reports a post-transaction HOOK that exits nonzero as the generic " +
 			"'error: command failed to execute correctly'. Inside a container build the " +
 			"kernel-modules hook calls systemd, and systemd refuses because it is not PID 1 — " +
@@ -523,10 +529,12 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"SAME log ends with the image successfully tagged, so the hook noise is the ONLY " +
 			"finding. Every image that runs pacman without systemd as PID 1 hits this, and there " +
 			"is nothing to fix at either end: the hook is doing what it was packaged to do, in a " +
-			"container it cannot succeed in. CONDITIONAL on the same log carrying systemd's own " +
-			"container refusal, so a wrapper error whose hook failed for any OTHER reason still " +
-			"fails the step — and a genuine failure prints its OWN diagnostic line, which this " +
-			"entry does not claim.",
+			"container it cannot succeed in. CONDITIONAL and BOUND TO THIS HOOK: the claim " +
+			"requires the modules-load hook's OWN '( N/M) Loading new kernel modules...' banner, " +
+			"the systemd refusal it triggers, and the wrapper error that follows them, in that " +
+			"order — so a wrapper error belonging to a DIFFERENT failing hook stays fatal even in " +
+			"a log where the modules-load hook is also refused, and a genuine failure prints its " +
+			"OWN diagnostic line, which this entry does not claim.",
 	},
 	{
 		ID:       "podman-nested-rootfs-not-shared-mount",
