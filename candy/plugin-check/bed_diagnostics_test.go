@@ -502,6 +502,48 @@ func TestHookWrapperEntriesResolvePerProof(t *testing.T) {
 	})
 }
 
+// TestPodmanNestedRootfsNotSharedMountAdvisoryIsConditional covers the podman logrus advisory an
+// IN-CONTAINER (nested) rootless podman prints when the root filesystem it will bind against is
+// not a SHARED mount. The host is not the source — findmnt reports `/` shared there and a
+// host-side podman run prints no such line (both checked 2026-09-12) — while inside a build
+// container the OCI runtime mounts the rootfs MS_PRIVATE, so the nested podman the
+// container-nesting candy runs always prints it and then populates the nested store.
+//
+// The fixture is the verbatim line 1958 of the retained check-githubrunner-pod image-build, inside
+// the STEP 56/99 RUN that prefetches quay.io/libpod/alpine.
+func TestPodmanNestedRootfsNotSharedMountAdvisoryIsConditional(t *testing.T) {
+	// Verbatim line 1958 of the retained image-build log. The escaped quote pair around the
+	// slash is podman's logrus rendering of the mount path the advisory names.
+	const advisory = `time="2026-09-11T21:31:45Z" level=warning msg="\"/\" is not a shared mount, this could cause issues or missing mounts with rootless containers"` + "\n"
+	const step = "[23/23] STEP 56/99: RUN --mount=type=bind,from=container-nesting,source=/,target=/ctx sh -c 'exec \"$SH\"'\n"
+	const tagged = "Successfully tagged ghcr.io/opencharly/githubrunner:check-githubrunner-pod-2026.254.2125\n"
+
+	t.Run("the nested podman advisory is exempt once the image is tagged", func(t *testing.T) {
+		d := scanStepDiagnostics(step + advisory + "Trying to pull quay.io/libpod/alpine:latest...\n" + tagged)
+		if d.Warnings != 0 || d.Allowlisted != 1 {
+			t.Errorf("the container-inherent advisory must be exempt; got %+v", d)
+		}
+		if id := allowIDForLine(d, advisory); id != "podman-nested-rootfs-not-shared-mount" {
+			t.Errorf("want the podman-nested-rootfs-not-shared-mount entry, got %q", id)
+		}
+	})
+
+	t.Run("the advisory in a build that never tags is still a warning", func(t *testing.T) {
+		d := scanStepDiagnostics(step + advisory)
+		if d.Warnings != 1 || d.Allowlisted != 0 {
+			t.Errorf("an untagged build must not discharge the advisory; got %+v", d)
+		}
+	})
+
+	t.Run("other podman logrus warnings are untouched", func(t *testing.T) {
+		const other = `time="2026-09-11T21:31:45Z" level=warning msg="some other podman warning"` + "\n"
+		d := scanStepDiagnostics(step + other + tagged)
+		if d.Warnings != 1 || d.Allowlisted != 0 {
+			t.Errorf("the entry must claim ONLY the shared-mount advisory; got %+v", d)
+		}
+	})
+}
+
 // allowIDForLine returns the allowlist id a scan attributed to the finding whose text equals
 // line, or "" when the line carried no exemption. Naming WHICH entry claimed a line is the
 // whole point of the per-entry conditional form, so the tests assert it rather than the count

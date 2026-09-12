@@ -475,6 +475,33 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"entry does not claim.",
 	},
 	{
+		ID:       "podman-nested-rootfs-not-shared-mount",
+		Severity: severityWarning,
+		// podman (logrus) prints this when the root filesystem it is about to bind a rootless
+		// container against is not a SHARED mount — private roots do not propagate bind mounts.
+		// In a CONTAINER the rootfs IS private by construction: the OCI runtime mounts it
+		// MS_PRIVATE, so the nested podman a build step runs (the container-nesting candy)
+		// always sees this and prints it once per invocation, then goes on to populate the
+		// nested store. The capture group names the mount the advisory is about (`/`); the
+		// image being tagged is the proof the advisory stayed an advisory (see RecoveredBy).
+		Match:       regexp.MustCompile(`^[ \t]*time="[^"]*"[ \t]+level=warning[ \t]+msg="\\"(/)\\" is not a shared mount, this could cause issues or missing mounts with rootless containers"$`),
+		RecoveredBy: `(?m)^Successfully tagged `,
+		Why: "podman warns when the root it will bind a rootless container against is not a " +
+			"SHARED mount. Inside a build container the rootfs is PRIVATE — the OCI runtime " +
+			"mounts it MS_PRIVATE — so the nested rootless podman the container-nesting candy " +
+			"runs cannot see a shared root and reports it once per invocation. Observed live in " +
+			"check-githubrunner-pod's image-build (RCA 2026-09-12) at the STEP 56/99 RUN that " +
+			"prefetches quay.io/libpod/alpine into the nested store: the advisory is followed by " +
+			"the pull completing, by the remaining steps, and by 'Successfully tagged " +
+			"ghcr.io/opencharly/githubrunner:...'. The HOST is not the source: findmnt reports " +
+			"/ shared and a host-side podman run prints no such line, so this is container " +
+			"structure, not host mis-setup — and no mount went missing, which is what the tag " +
+			"proves. Inherent to ANY nested-podman build step; suppressing it would mean setting " +
+			"shared propagation on an isolated container rootfs, which its mount namespace makes " +
+			"meaningless. CONDITIONAL on the same log proving the image was tagged; a build that " +
+			"never tags does not claim the line.",
+	},
+	{
 		ID:       "mkinitcpio-chroot-warnings",
 		Severity: severityWarning,
 		// The pacstrap bootstrap VM's mkinitcpio/grub build emits four warning lines that
