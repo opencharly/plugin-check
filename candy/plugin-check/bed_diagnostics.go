@@ -779,6 +779,11 @@ func diagNotice(d stepDiagnostics) string {
 	if d.Warnings > 0 {
 		parts = append(parts, fmt.Sprintf("warnings=%d", d.Warnings))
 	}
+	if d.Advisories > 0 {
+		// A reported tier must be reported where the reader looks: the per-step console suffix
+		// is part of the contract that an advisory is never silent.
+		parts = append(parts, fmt.Sprintf("advisories=%d", d.Advisories))
+	}
 	if d.Allowlisted > 0 {
 		parts = append(parts, fmt.Sprintf("allowlisted=%d", d.Allowlisted))
 	}
