@@ -439,6 +439,42 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"and the step still fails.",
 	},
 	{
+		ID:       "pacman-post-transaction-hook-container-systemd",
+		Severity: severityError,
+		// pacman runs every installed package's post-transaction hooks and reports a hook that
+		// exits nonzero as this ONE generic wrapper error — the same wording mkinitcpio's
+		// autodetect hook failure produces, which is why this entry and the mkinitcpio one both
+		// match it. The container case has a DIFFERENT hook and a different proof: e.g.
+		// `( 6/10) Loading new kernel modules...` calls systemd, systemd refuses because it is
+		// not PID 1, and the hook's nonzero exit becomes the wrapper error. The capture group
+		// satisfies the error-tier conditional requirement; the init refusal IS the proof (see
+		// RecoveredBy).
+		Match: regexp.MustCompile(`^error: (command failed to execute correctly)$`),
+		// The proof is systemd's own container-init refusal, printed by the failing hook two
+		// lines ahead of pacman's wrapper error (verbatim: `System has not been booted with
+		// systemd as init system (PID 1). Can't operate.`). A step log is ONE `charly box
+		// build`, so the signature can only be there because a hook reached the system scope
+		// and was refused — which is what makes this wrapper error an artifact of the
+		// container rather than a swallowed failure. The anchor STOPS at `(PID 1).` — the
+		// sentence that NAMES the cause is asserted, its tail is not — so a line-wrapped or
+		// width-padded rendering of the SAME sentence still proves the class.
+		RecoveredBy: `(?m)^System has not been booted with systemd as init system \(PID 1\)\.`,
+		Why: "pacman reports a post-transaction HOOK that exits nonzero as the generic " +
+			"'error: command failed to execute correctly'. Inside a container build the " +
+			"kernel-modules hook calls systemd, and systemd refuses because it is not PID 1 — " +
+			"observed live in the check-githubrunner-pod image-build (RCA 2026-09-12): " +
+			"'( 6/10) Loading new kernel modules...', 'System has not been booted with " +
+			"systemd as init system (PID 1). Can't operate.', 'Failed to connect to system " +
+			"scope bus via local transport: Host is down', then the wrapper error — while the " +
+			"SAME log ends with the image successfully tagged, so the hook noise is the ONLY " +
+			"finding. Every image that runs pacman without systemd as PID 1 hits this, and there " +
+			"is nothing to fix at either end: the hook is doing what it was packaged to do, in a " +
+			"container it cannot succeed in. CONDITIONAL on the same log carrying systemd's own " +
+			"container refusal, so a wrapper error whose hook failed for any OTHER reason still " +
+			"fails the step — and a genuine failure prints its OWN diagnostic line, which this " +
+			"entry does not claim.",
+	},
+	{
 		ID:       "mkinitcpio-chroot-warnings",
 		Severity: severityWarning,
 		// The pacstrap bootstrap VM's mkinitcpio/grub build emits four warning lines that
@@ -610,13 +646,42 @@ func classifyDiagnosticLine(line string) (diagnosticSeverity, string, bool) {
 	return "", "", false
 }
 
-// allowanceFor returns the allowlist entry claiming this line, or nil. An entry only claims
-// a line in its own severity tier, so a warning-tier exemption can never silently absolve an
-// error-tier finding that happens to share wording.
+// allowanceFor returns the FIRST allowlist entry whose anchored pattern fires on this line, or
+// nil — the pattern-scoping lookup, in table order and INDEPENDENT of any conditional proof. An
+// entry only matches a line in its own severity tier, so a warning-tier exemption can never
+// silently absolve an error-tier finding that happens to share wording.
+//
+// The GATE does not resolve a claim with this: it calls allowanceClaiming, which additionally
+// requires the matching entry's own proof to hold against the step log.
 func allowanceFor(severity diagnosticSeverity, text string) *diagnosticAllowance {
 	for i := range diagnosticAllowlist {
 		a := &diagnosticAllowlist[i]
 		if a.Severity == severity && a.Match.MatchString(text) {
+			return a
+		}
+	}
+	return nil
+}
+
+// allowanceClaiming returns the entry that CLAIMS this line in THIS log: the first matching
+// entry whose conditional proof holds, or nil.
+//
+// SEVERAL ENTRIES CAN MATCH ONE LINE, and each brings its own proof. pacman reports EVERY
+// failing post-transaction hook as the same generic `error: command failed to execute
+// correctly`, and the hook families are indistinguishable from that wrapper text alone — so the
+// mkinitcpio entry and the container-systemd entry both match it. The walk therefore CONTINUES
+// past a matching entry whose proof is absent from this log instead of letting it shadow a
+// later entry whose proof IS there; with a first-match-wins lookup, a second entry for an
+// existing wrapper wording could never take effect at all. The claim stays CONDITIONAL
+// per-entry either way: a line is discharged only when the CLAIMING entry's own RecoveredBy
+// holds against this log.
+func allowanceClaiming(severity diagnosticSeverity, text, log string) *diagnosticAllowance {
+	for i := range diagnosticAllowlist {
+		a := &diagnosticAllowlist[i]
+		if a.Severity != severity || !a.Match.MatchString(text) {
+			continue
+		}
+		if allowanceRecovered(a, text, log) {
 			return a
 		}
 	}
@@ -641,7 +706,7 @@ func scanStepDiagnostics(log string) stepDiagnostics {
 		}
 		text := strings.TrimSpace(raw)
 		finding := diagnosticFinding{Severity: severity, Pattern: pattern, Line: i + 1, Text: text}
-		if a := allowanceFor(severity, text); a != nil && allowanceRecovered(a, text, log) {
+		if a := allowanceClaiming(severity, text, log); a != nil {
 			finding.AllowID = a.ID
 			d.Allowlisted++
 		} else if severity == severityError {

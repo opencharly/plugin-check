@@ -421,6 +421,100 @@ func TestPacmanHookFailedMkinitcpioIsConditional(t *testing.T) {
 	})
 }
 
+// TestPacmanPostTransactionHookContainerSystemdIsConditional covers the OTHER hook family that
+// pacman reports with the same generic wrapper error: the post-transaction kernel-modules hook
+// of a CONTAINER build, where there is no systemd as PID 1 to answer. The fixture is the
+// verbatim captured sequence from the check-githubrunner-pod image-build (RCA 2026-09-11/12),
+// where the log carried this ONE error line and the image itself built and was tagged.
+//
+// The negative rows are why this is an allowance rather than a blanket pacman exemption: the
+// wrapper error with NO refusal in the log still fails the step, and pacman's own real failure
+// wording is never claimed — not even when the refusal shares the log.
+func TestPacmanPostTransactionHookContainerSystemdIsConditional(t *testing.T) {
+	// Verbatim lines 1842-1846 of the retained image-build log.
+	const captured = "( 6/10) Loading new kernel modules...\n" +
+		"System has not been booted with systemd as init system (PID 1). Can't operate.\n" +
+		"Failed to connect to system scope bus via local transport: Host is down\n" +
+		"error: command failed to execute correctly\n" +
+		"( 7/10) Updating fontconfig configuration...\n"
+	const errLine = "error: command failed to execute correctly\n"
+	const step = "STEP 12/14: RUN pacman -S --needed ...\n"
+
+	t.Run("the captured container hook sequence is exempt", func(t *testing.T) {
+		d := scanStepDiagnostics(step + captured)
+		if d.Errors != 0 || d.Allowlisted != 1 || d.fails(defaultDiagnosticPolicy()) {
+			t.Errorf("the container hook wrapper error must be exempt; got %+v", d)
+		}
+		if id := allowIDForLine(d, errLine); id != "pacman-post-transaction-hook-container-systemd" {
+			t.Errorf("the wrapper error must be claimed by its OWN entry, got %q", id)
+		}
+	})
+
+	t.Run("the wrapper error with no refusal in the log is fatal", func(t *testing.T) {
+		d := scanStepDiagnostics(step + errLine)
+		if d.Errors != 1 || d.Allowlisted != 0 || !d.fails(defaultDiagnosticPolicy()) {
+			t.Errorf("an unexplained hook failure must still fail the step; got %+v", d)
+		}
+	})
+
+	t.Run("the refusal does not exempt a REAL pacman failure", func(t *testing.T) {
+		const realFailure = "error: failed to commit transaction (conflicting files)\n"
+		d := scanStepDiagnostics(step + captured + realFailure)
+		if d.Errors != 1 || d.Allowlisted != 1 || !d.fails(defaultDiagnosticPolicy()) {
+			t.Errorf("a failed transaction must stay fatal; got %+v", d)
+		}
+		if id := allowIDForLine(d, realFailure); id != "" {
+			t.Errorf("pacman's real failure wording must not be claimed, got %q", id)
+		}
+	})
+}
+
+// TestHookWrapperEntriesResolvePerProof pins the resolution rule the two wrapper entries depend
+// on. pacman's `error: command failed to execute correctly` is matched by BOTH
+// pacman-hook-failed-mkinitcpio-recovered and pacman-post-transaction-hook-container-systemd,
+// and which one CLAIMS it is decided by the proof present in the log — never by table order
+// alone. With a first-match-wins lookup, adding the second entry would have been a no-op: the
+// mkinitcpio entry matches first, its recovery is absent in a container build, and the
+// container class would have stayed fatal with the new entry never consulted.
+func TestHookWrapperEntriesResolvePerProof(t *testing.T) {
+	const errLine = "error: command failed to execute correctly\n"
+	const step = "STEP 1/1: RUN pacman -Syu --needed linux\n"
+
+	t.Run("only the mkinitcpio proof present", func(t *testing.T) {
+		d := scanStepDiagnostics(step + errLine + "==> Initcpio image generation successful\n")
+		if d.Errors != 0 || d.Allowlisted != 1 {
+			t.Fatalf("the completed hook must exempt the wrapper error; got %+v", d)
+		}
+		if id := allowIDForLine(d, errLine); id != "pacman-hook-failed-mkinitcpio-recovered" {
+			t.Errorf("want the mkinitcpio entry, got %q", id)
+		}
+	})
+
+	t.Run("only the container-init proof present", func(t *testing.T) {
+		d := scanStepDiagnostics(step + errLine +
+			"System has not been booted with systemd as init system (PID 1). Can't operate.\n")
+		if d.Errors != 0 || d.Allowlisted != 1 {
+			t.Fatalf("the container-init signature must claim the wrapper error; got %+v", d)
+		}
+		if id := allowIDForLine(d, errLine); id != "pacman-post-transaction-hook-container-systemd" {
+			t.Errorf("want the container-systemd entry, got %q", id)
+		}
+	})
+}
+
+// allowIDForLine returns the allowlist id a scan attributed to the finding whose text equals
+// line, or "" when the line carried no exemption. Naming WHICH entry claimed a line is the
+// whole point of the per-entry conditional form, so the tests assert it rather than the count
+// alone.
+func allowIDForLine(d stepDiagnostics, line string) string {
+	for _, f := range d.Findings {
+		if f.Text == strings.TrimSpace(line) {
+			return f.AllowID
+		}
+	}
+	return ""
+}
+
 // TestSystemdUnitFileDaemonReloadAllowanceIsScoped proves the systemd 'unit file
 // changed on disk' notice (printed by RPM scriptlets when a package ships/modifies
 // a unit — nfs-utils/gssproxy etc.) is allowlisted, while a REAL unit-file error
