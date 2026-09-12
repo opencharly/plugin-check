@@ -1057,8 +1057,6 @@ func printDebugRetentionNotice(w *os.File, name string, d spec.CheckBedReply) {
 	}
 }
 
-// writeBedSummary emits a YAML summary alongside the per-step logs. Hand-rolled to
-// keep the file dependency-free and diff-friendly.
 // rollupStepDiagnostics folds the per-step diagnostics into the run-level rollup the summary
 // reports. It exists as ONE helper so a counter that exists at step level cannot silently fail to
 // reach the run level — which is exactly how the advisory tier shipped: counted per step
@@ -1080,6 +1078,8 @@ func rollupStepDiagnostics(steps []stepResult) stepDiagnostics {
 	return run
 }
 
+// writeBedSummary emits a YAML summary alongside the per-step logs. Hand-rolled to
+// keep the file dependency-free and diff-friendly.
 func writeBedSummary(dir string, res *bedRunResult) {
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, "bed: %s\n", res.Bed)
