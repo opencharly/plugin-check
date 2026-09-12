@@ -10,10 +10,15 @@ import (
 
 // The retained-log counterpart of TestPacmanMirrorAbandonedTransactionAllowance. That test
 // pins the entry's SEMANTICS over rows written for it; this one pins the CLASSIFICATION
-// CHANGE over the real bytes of the run that produced the defect, so the before/after claim
-// -- warnings 1 -> 0 with allowlisted 58 -> 59 on the actual image-build step log -- is
-// reproducible from this tree alone (`go test ./...`), not from a driver that was run once
-// and never committed.
+// CHANGE over the real bytes of the run that produced the defect: over THIS excerpt the
+// sentence is the single un-allowlisted finding before the entry (errors 0, warnings 1,
+// allowlisted 7) and is claimed after it (errors 0, warnings 0, allowlisted 8) -- the
+// 1 -> 0 warning change the retained image-build step reported, reproducible from this tree
+// alone (`go test ./...`) rather than from a driver that was run once and never committed.
+// The excerpt is TRIMMED, so the allowlisted totals asserted here (7 -> 8) are the excerpt's,
+// not the whole image-build step log's 58 -> 59: those full-log numbers are the retained
+// summary's provenance (quoted where retainedExcerptPath is described) and are deliberately
+// not asserted over the excerpt.
 
 const (
 	// retainedExcerptPath is a trimmed excerpt of the retained bed log
