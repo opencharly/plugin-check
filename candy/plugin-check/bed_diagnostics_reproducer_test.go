@@ -12,13 +12,14 @@ import (
 // do.
 //
 // The log it scans is the COMPLETE stdout+stderr of the documented invocation of
-// testdata/pacman-mirror-abandoned/reproducer/charly.yml — a self-contained project committed in
-// this tree (its README.md carries the command, the calvers and the log sha256). Nothing about
+// testdata/pacman-mirror-abandoned/reproducer/charly.yml — a self-contained project committed
+// at the repository root, outside the candy/ tree the repo-level discover: scans (the README.md
+// carries the command, the calvers, the log sha256 and the reason for that location). Nothing about
 // the run lives in /tmp, so the sentence is no longer "reproduced once by a driver nobody kept":
 // re-running the command re-derives these bytes, and this test re-derives the classification
 // from them.
 func TestPacmanMirrorAbandonedTransactionOnReproducerLog(t *testing.T) {
-	const logPath = "testdata/pacman-mirror-abandoned/reproducer/build.log"
+	const logPath = "../../testdata/pacman-mirror-abandoned/reproducer/build.log"
 	const id = "pacman-mirror-abandoned-transaction-recovered"
 
 	// The two sentences pacman prints in the committed log — one per server it abandons.

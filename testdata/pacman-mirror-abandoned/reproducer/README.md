@@ -11,10 +11,25 @@ file in this tree, and the log it produces is committed next to it (`build.log`)
 
 ## Invocation
 
-    charly -C candy/plugin-check/testdata/pacman-mirror-abandoned/reproducer box build mirror-repro
+    charly -C testdata/pacman-mirror-abandoned/reproducer box build mirror-repro
 
 (charly from `main` is enough — the reproducer does not need this branch's allowlist entry; the
-entry is what `../bed_diagnostics_reproducer_test.go` uses to classify the committed log.)
+entry is what `candy/plugin-check/bed_diagnostics_reproducer_test.go` uses to classify the
+committed log.)
+
+## Why this project is committed at the repository root, not under `candy/`
+
+The repo root's `charly.yml` declares `discover:` for `candy` (recursive), so that the repo-level
+`charly box validate` actually gates the candies (opencharly/charly#459). Every `charly.yml`
+found under that scanned tree is read as the manifest of a candy named after its DIRECTORY —
+which is exactly right for `candy/plugin-check/charly.yml`, and wrong for a PROJECT manifest.
+With this file at `candy/plugin-check/testdata/pacman-mirror-abandoned/reproducer/charly.yml`,
+the repo's own `candy` CI step fails on this PR with five errors (`box "mirror-repro": candy
+"pacman-mirror-repro" not found`, plus a bodyless candy `reproducer`), even though the same
+file builds the reproducer fine when used standalone. At the repository root's `testdata/` —
+outside every discovered path — the repo gate exits 0 and the project is read as what it is.
+Nothing else changed in the move: the entities, and therefore the candy node composed into a
+bed, are byte-identical.
 
 ## What the three run steps do, and why each is needed
 
@@ -64,18 +79,19 @@ charly 2026.255.2200 (a dev build of `main` plus this branch) on a CachyOS host;
 It is complete rather than trimmed on purpose, and the test enforces it: a later edit that
 replaced it with a hand-picked excerpt would drop the build's completion line
 (`Successfully tagged localhost/mirror-repro:…`) and fail `must carry the run's own lines`
-rather than pass review unnoticed. Two of the retrieval errors and one of the two abandonment
-sentences in it come from a real CachyOS CDN (`cdn77.cachyos.org`) 404ing a superseded build —
-the upstream condition the class was first observed under; the other ten errors and the other
-sentence come from the dead server this reproducer introduces.
+rather than pass review unnoticed. The log's twenty `error: failed retrieving file …` lines split
+evenly: **ten** from a real CachyOS CDN (`cdn77.cachyos.org`) 404ing a superseded build — the
+upstream condition the class was first observed under — and **ten** from the dead server this
+reproducer introduces; pacman prints one abandonment sentence per server it gives up on (lines
+84 and 95 of the log).
 
 ## Composing it into a check bed (the R10 live proof)
 
 The bed run quoted in the proof section of the PR does not run THIS project: it composes this candy
 into the bed under test so the bed's `image-build` step log carries the sentence. The whole recipe:
 
-1. append this directory's `charly.yml` candy node — the `pacman-mirror-repro:` node, from that
-   key to the end of the file — to the bed project's own `charly.yml`;
+1. append this project's `charly.yml` candy node — the `pacman-mirror-repro:` node, which ends
+   where the `mirror-repro:` entity begins — to the bed project's own `charly.yml`;
 
 2. add ONE line to the box under test (distro-cachyos: `box/immich-ml/charly.yml`), after the end
    of its candy list:

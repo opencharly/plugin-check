@@ -293,8 +293,11 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"requested, pacman performed it, and the sentence reports the plan — suppressing it " +
 			"would mean not doing what the plan asked. Observed live: 5 lines in the " +
 			"check-cachyos-immich-ml-pod image-build (calver 2026.255.0830), emitted by the " +
-			"reproducer layer's forced reinstall, and then deterministically in the reproducer's " +
-			"own committed build.",
+			"reproducer layer's forced reinstall, and 5 more in the SAME bed once the committed " +
+			"reproducer was composed into it (calver 2026.255.2102, this entry claiming all " +
+			"five). The verb is the image's repository state, not a property of the reproducer: " +
+			"the committed reproducer's own standalone build takes the `upgrading ...` branch, " +
+			"and both verbs are recovery lines the error-tier mirror entry accepts.",
 	},
 	{
 		ID:       "pacman-mirror-retrieval-recovered",
