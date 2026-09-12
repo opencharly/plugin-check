@@ -1,11 +1,13 @@
 package check
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/opencharly/sdk/loaderkit"
 	"github.com/opencharly/spec/spec"
 )
 
@@ -30,6 +32,49 @@ type CheckLiveCmd struct {
 	StepsFile string   `name:"steps-file" help:"YAML file of plan steps to run INSTEAD of the baked plan (an isolated live invocation with only the injected steps)"`
 }
 
+// parseStepsFile reads a `--steps-file` plan: a YAML list of plan steps in the AUTHORING
+// form. TWO decodes happen here, and both matter — the G-8 live run of 2026-09-12 failed
+// twice because the previous code did neither:
+//
+//  1. The plugin-verb sugar (`adb: screencap`) is desugared through loaderkit — the SAME
+//     rewrite the loader applies to an entity plan. A raw yaml.Unmarshal into []spec.Step
+//     cannot see it: spec.Op has no per-verb fields, no catch-all and no UnmarshalYAML, so
+//     the sugar key is silently DROPPED and the step reaches the engine with no verb at all
+//     ("check has no verb set"), exiting 2 while proving nothing.
+//  2. The document is decoded through JSON, because spec's matcher list implements
+//     UnmarshalJSON (understanding both `{op: contains, value: x}` and the `{contains: x}`
+//     shorthand) but has no UnmarshalYAML — a direct YAML decode loses the shorthand's
+//     operator (observed: `unsupported matcher op ""`).
+//
+// Both are the CONSUMER's job: the loader desugars entity plans, and an authored step list is
+// the same authoring surface, so it must be read the same way.
+func parseStepsFile(path string) ([]spec.Step, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("--steps-file %s: %w", path, err)
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(b, &doc); err != nil {
+		return nil, fmt.Errorf("--steps-file %s: %w", path, err)
+	}
+	if err := loaderkit.DesugarSteps(path, &doc, spec.Threaded{}); err != nil {
+		return nil, fmt.Errorf("--steps-file %s: %w", path, err)
+	}
+	var generic any
+	if err := doc.Decode(&generic); err != nil {
+		return nil, fmt.Errorf("--steps-file %s: %w", path, err)
+	}
+	jb, err := json.Marshal(generic)
+	if err != nil {
+		return nil, fmt.Errorf("--steps-file %s: %w", path, err)
+	}
+	var steps []spec.Step
+	if err := json.Unmarshal(jb, &steps); err != nil {
+		return nil, fmt.Errorf("--steps-file %s: %w", path, err)
+	}
+	return steps, nil
+}
+
 func (c *CheckLiveCmd) Run() error {
 	vars, err := parseRunVars(c.Vars)
 	if err != nil {
@@ -37,12 +82,9 @@ func (c *CheckLiveCmd) Run() error {
 	}
 	var injected []spec.Step
 	if c.StepsFile != "" {
-		b, err := os.ReadFile(c.StepsFile)
+		injected, err = parseStepsFile(c.StepsFile)
 		if err != nil {
-			return fmt.Errorf("--steps-file %s: %w", c.StepsFile, err)
-		}
-		if err := yaml.Unmarshal(b, &injected); err != nil {
-			return fmt.Errorf("--steps-file %s: %w", c.StepsFile, err)
+			return err
 		}
 	}
 	reply, err := hostCheckRun(spec.CheckRunRequest{

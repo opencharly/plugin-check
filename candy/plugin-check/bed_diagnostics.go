@@ -76,6 +76,13 @@ type diagnosticSeverity string
 const (
 	severityWarning diagnosticSeverity = "warning"
 	severityError   diagnosticSeverity = "error"
+	// severityAdvisory is the THIRD, explicitly NON-GATING tier: a performance-degradation
+	// advisory (e.g. the podman store-size nudge) that the emitter itself documents as
+	// fail-soft. It is counted and REPORTED so the degradation stays visible and fixable,
+	// but it never contributes to Warnings/Errors and therefore never fails a step — the
+	// separation between "a failure that MUST hard-fail" and "a warning about a
+	// performance degradation that should be fixed but cannot fail anything silently".
+	severityAdvisory diagnosticSeverity = "advisory"
 )
 
 // diagnosticPattern is one anchored recognizer in the table below. Name travels into
@@ -107,6 +114,9 @@ var diagnosticPatterns = []struct {
 	// The dominant shape: pacman, dnf, rpm, cargo, gcc, git — `error: …` / `ERROR: …`,
 	// optionally behind one marker and/or one emitter token.
 	{diagnosticPattern{"severity-prefix", regexp.MustCompile(`^[ \t]*` + markerPrefix + emitterPrefix + `(?i:error|fatal)[ \t]*:`)}, severityError},
+	// The ADVISORY tier is matched FIRST so an emitter that labels its non-gating nudge
+	// `notice:`/`advisory:` is never swept up by the warning recognizer below.
+	{diagnosticPattern{"advisory-prefix", regexp.MustCompile(`^[ \t]*` + markerPrefix + emitterPrefix + `(?i:notice|advisory)[ \t]*:`)}, severityAdvisory},
 	{diagnosticPattern{"severity-prefix", regexp.MustCompile(`^[ \t]*` + markerPrefix + emitterPrefix + `(?i:warning|warn)[ \t]*:`)}, severityWarning},
 
 	// logrus (podman / buildah / conmon): `time="…" level=error msg="…"`. Anchored on the
@@ -645,6 +655,7 @@ type diagnosticFinding struct {
 // stepDiagnostics is the scan result for ONE step log.
 type stepDiagnostics struct {
 	Warnings    int // non-allowlisted warning-tier lines
+	Advisories  int // advisory-tier lines: performance/informational; reported, NEVER gating
 	Errors      int // non-allowlisted error-tier lines
 	Allowlisted int // lines an allowlist entry claimed (excluded from the two counts above)
 	Findings    []diagnosticFinding
@@ -731,6 +742,8 @@ func scanStepDiagnostics(log string) stepDiagnostics {
 			d.Allowlisted++
 		} else if severity == severityError {
 			d.Errors++
+		} else if severity == severityAdvisory {
+			d.Advisories++
 		} else {
 			d.Warnings++
 		}
@@ -851,6 +864,11 @@ func diagNotice(d stepDiagnostics) string {
 	if d.Warnings > 0 {
 		parts = append(parts, fmt.Sprintf("warnings=%d", d.Warnings))
 	}
+	if d.Advisories > 0 {
+		// A reported tier must be reported where the reader looks: the per-step console suffix
+		// is part of the contract that an advisory is never silent.
+		parts = append(parts, fmt.Sprintf("advisories=%d", d.Advisories))
+	}
 	if d.Allowlisted > 0 {
 		parts = append(parts, fmt.Sprintf("allowlisted=%d", d.Allowlisted))
 	}
@@ -887,6 +905,7 @@ func writeStepDiagnostics(w io.Writer, indent string, d stepDiagnostics) {
 	inner := indent + "  "
 	fmt.Fprintf(w, "%serrors: %d\n", inner, d.Errors)
 	fmt.Fprintf(w, "%swarnings: %d\n", inner, d.Warnings)
+	fmt.Fprintf(w, "%sadvisories: %d\n", inner, d.Advisories)
 	fmt.Fprintf(w, "%sallowlisted: %d\n", inner, d.Allowlisted)
 	if d.CacheSteps > 0 {
 		fmt.Fprintf(w, "%scache_hits: %d\n", inner, d.CacheHits)
@@ -920,9 +939,13 @@ func writeRunDiagnostics(w io.Writer, run stepDiagnostics) {
 	fmt.Fprintln(w, "diagnostics:")
 	fmt.Fprintf(w, "  errors: %d\n", run.Errors)
 	fmt.Fprintf(w, "  warnings: %d\n", run.Warnings)
+	// The advisory tier is REPORTED and explicitly NOT fatal: a performance-degradation
+	// advisory must stay visible without ever failing a step (see severityAdvisory).
+	fmt.Fprintf(w, "  advisories: %d\n", run.Advisories)
 	fmt.Fprintf(w, "  allowlisted: %d\n", run.Allowlisted)
 	fmt.Fprintf(w, "  errors_fatal: %t\n", policy.ErrorsFatal)
 	fmt.Fprintf(w, "  warnings_fatal: %t\n", policy.WarningsFatal)
+	fmt.Fprintf(w, "  advisories_fatal: false\n")
 	if run.CacheSteps > 0 {
 		fmt.Fprintf(w, "  cache_hits: %d\n", run.CacheHits)
 		fmt.Fprintf(w, "  cache_steps: %d\n", run.CacheSteps)
