@@ -519,6 +519,50 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"CONDITIONAL on the same log proving the image was tagged; if the build never " +
 			"tags, this entry does not claim the line and the step still fails.",
 	},
+	{
+		ID:       "pacman-mirror-abandoned-transaction-recovered",
+		Severity: severityWarning,
+		// pacman's own sentence when it stops using ONE mirror for the rest of a transaction:
+		// `warning: too many errors from <host>, skipping for the remainder of this transaction`.
+		// The capture group holds the mirror host — the sentence's only variable token, and the
+		// one no recovery line can name — so it satisfies the conditional-allowance capture
+		// requirement while the recovery stays tied to pacman's own progress (see RecoveredBy).
+		// The class is `\S+`, not a host list: the CDN a given build talks to is upstream's
+		// choice and changes between runs (cdn77.cachyos.org, us.cachyos.org, ...).
+		Match: regexp.MustCompile(`^warning: too many errors from (\S+), skipping for the remainder of this transaction$`),
+		// The recovery is pacman's next STAGE line, `checking keyring...`, which it prints only
+		// after EVERY payload of the transaction has been retrieved — so reaching it is exactly
+		// the proof that abandoning this mirror cost the transaction nothing: the files came
+		// from another one. Measured over the retained bed corpus: `checking keyring...` occurs
+		// once per package transaction in every one of the 56 retained step logs that carry a
+		// `:: Processing package changes...` (one database-only sync carries a spare line), so it
+		// is pacman's normal stage on this platform rather than an artefact of one image. No %s
+		// placeholder: the sentence names a MIRROR, and no recovery line names a mirror, so the
+		// pattern is used as-is (see allowanceRecovered) and the step log is the tie — the same
+		// step-boundary tie the pip and dnf entries use.
+		RecoveredBy: `(?m)^checking keyring\.\.\.$`,
+		Why: "pacman tries mirrors in order, and a package it cannot fetch from one of them " +
+			"does not fail the transaction: after repeated retrieval failures for the packages " +
+			"it is fetching pacman abandons that mirror for the remainder of the transaction " +
+			"and continues on the next, saying so once in this sentence. Observed live in the " +
+			"check-cachyos-immich-ml-pod image-build (calver 2026.255.0001, cold layer cache): " +
+			"seven `error: failed retrieving file … : The requested URL returned error: 404` " +
+			"lines for glibc/gcc/libgfortran/libpulse/libasyncns/libyuv, then this warning, then " +
+			"`checking keyring...` and a transaction that completed — the step exits 0 and the " +
+			"summary reports 0 errors, and yet 1 warning, because the per-file `error:` lines " +
+			"are ALREADY exempt (pacman-mirror-retrieval-recovered, CONDITIONAL on the package " +
+			"installing) while their summary sentence had no entry at all. On a host whose " +
+			"CachyOS CDNs still index a superseded build every cold build emits it, so R10's " +
+			"zero-warning bar was unreachable on such a run. There is nothing for charly to fix " +
+			"at either end: pacman MUST abandon a mirror that 404s and has no quieter way to " +
+			"report it. CONDITIONAL on the same log reaching pacman's keyring check — the stage " +
+			"it enters only once every payload was retrieved — so an abandonment whose " +
+			"transaction never got that far is still counted, and still goes red when the " +
+			"warning tier is promoted. A genuinely failing transaction cannot hide here: pacman " +
+			"exits nonzero and prints its own `error: failed to retrieve some files` / " +
+			"`error: failed to commit transaction …`, both error-tier and fatal, so the step " +
+			"still fails on its own line.",
+	},
 }
 
 // allowanceRecovered reports whether a claimed line really is exempt. An unconditional entry
