@@ -256,6 +256,50 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"rather than about the box.",
 	},
 	{
+		ID:       "pacman-package-reinstalled-already-current",
+		Severity: severityWarning,
+		// The SAME pacman sentence as the entry above, with the OTHER verb pacman can print in
+		// it: when `--needed` is NOT passed, naming a package that is already at the target
+		// version does not skip it, it REINSTALLS it, and the sentence ends `-- reinstalling`.
+		// Two entries rather than one widened alternation, so claiming the reinstall half is its
+		// own visible, separately reviewed line.
+		//
+		// The capture group is the package NAME, not the token pacman prints in the warning: the
+		// warning names `<name>-<pkgver>-<pkgrel>` (`glibc-2.44+r24+g16be1518495f-1`, and with an
+		// EPOCH `rust-1:1.98.0-1.1`), while the recovery line names the NAME alone
+		// (`reinstalling glibc...`). A pkgver may not contain a hyphen and a pkgrel is only
+		// `<int>[.<int>]`, so the two trailing hyphen-separated fields are exactly the
+		// version and the rel, and the greedy class keeps a hyphenated name
+		// (`nvidia-container-toolkit`) whole — the same greedy discipline the error-tier mirror
+		// entry further down documents for package FILENAMES.
+		Match: regexp.MustCompile(`^warning: (.+)-[^-]+-[^-]+ is up to date -- reinstalling$`),
+		// CONDITIONAL on pacman's OWN per-package progress line for that package — the same
+		// proof the error-tier mirror entry ties to. The warning is pacman's PLAN;
+		// `reinstalling <name>...` is pacman EXECUTING it. Without that line the entry claims
+		// nothing, so a transaction that stopped before the reinstall is still counted and still
+		// goes red when the warning tier is promoted.
+		RecoveredBy: `(?m)^reinstalling %s\.\.\.$`,
+		Why: "pacman prints this when a transaction names a package that is ALREADY at the target " +
+			"version and `--needed` was not passed: instead of skipping the package, pacman " +
+			"reinstalls it, and this sentence is pacman's only report of that plan. It is the same " +
+			"sentence the neighbouring entry claims with the `-- skipping` verb, and like the " +
+			"error-tier mirror entry it is CONDITIONAL — on pacman's own `reinstalling <name>...` " +
+			"line for the package the warning names — so the exemption holds only when pacman " +
+			"actually reinstalled it. Where it appears: any plan that asks for an explicit " +
+			"reinstall, and the committed mirror-abandoned reproducer " +
+			"(testdata/pacman-mirror-abandoned/reproducer/), which must ask for one to make pacman " +
+			"fetch payloads into a fresh --cachedir instead of skipping packages the base image " +
+			"already carries. There is nothing for charly to fix at either end: the reinstall was " +
+			"requested, pacman performed it, and the sentence reports the plan — suppressing it " +
+			"would mean not doing what the plan asked. Observed live: 5 lines in the " +
+			"check-cachyos-immich-ml-pod image-build (calver 2026.255.2145), emitted by the " +
+			"committed reproducer composed into that bed — the run this PR pastes as its live " +
+			"proof, where this entry claims all five lines. The verb is the image's repository " +
+			"state, not a property of the reproducer: the committed reproducer's own standalone " +
+			"build takes the `upgrading ...` branch (its build.log is committed beside it), and " +
+			"both verbs are recovery lines the error-tier mirror entry accepts.",
+	},
+	{
 		ID:       "pacman-mirror-retrieval-recovered",
 		Severity: severityError,
 		// An Arch package filename is <name>-<version>-<rel>-<arch>.pkg.tar.<ext>, and the NAME
@@ -528,6 +572,50 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"continues. The build completes and the image is tagged (the recovery). " +
 			"CONDITIONAL on the same log proving the image was tagged; if the build never " +
 			"tags, this entry does not claim the line and the step still fails.",
+	},
+	{
+		ID:       "pacman-mirror-abandoned-transaction-recovered",
+		Severity: severityWarning,
+		// pacman's own sentence when it stops using ONE mirror for the rest of a transaction:
+		// `warning: too many errors from <host>, skipping for the remainder of this transaction`.
+		// The capture group holds the mirror host — the sentence's only variable token, and the
+		// one no recovery line can name — so it satisfies the conditional-allowance capture
+		// requirement while the recovery stays tied to pacman's own progress (see RecoveredBy).
+		// The class is `\S+`, not a host list: the CDN a given build talks to is upstream's
+		// choice and changes between runs (cdn77.cachyos.org, us.cachyos.org, ...).
+		Match: regexp.MustCompile(`^warning: too many errors from (\S+), skipping for the remainder of this transaction$`),
+		// The recovery is pacman's next STAGE line, `checking keyring...`, which it prints only
+		// after EVERY payload of the transaction has been retrieved — so reaching it is exactly
+		// the proof that abandoning this mirror cost the transaction nothing: the files came
+		// from another one. `checking keyring...` is pacman's normal stage on this platform rather
+		// than an artefact of one image, and both committed artifacts carry it right after the
+		// sentence, on transactions that completed: the retained excerpt and the committed
+		// reproducer's build.log (the tests assert the stage in both). No %s
+		// placeholder: the sentence names a MIRROR, and no recovery line names a mirror, so the
+		// pattern is used as-is (see allowanceRecovered) and the step log is the tie — the same
+		// step-boundary tie the pip and dnf entries use.
+		RecoveredBy: `(?m)^checking keyring\.\.\.$`,
+		Why: "pacman tries mirrors in order, and a package it cannot fetch from one of them " +
+			"does not fail the transaction: after repeated retrieval failures for the packages " +
+			"it is fetching pacman abandons that mirror for the remainder of the transaction " +
+			"and continues on the next, saying so once in this sentence. Observed live in the " +
+			"check-cachyos-immich-ml-pod image-build (calver 2026.255.0001, cold layer cache): " +
+			"seven `error: failed retrieving file … : The requested URL returned error: 404` " +
+			"lines for glibc/gcc/libgfortran/libpulse/libasyncns/libyuv, then this warning, then " +
+			"`checking keyring...` and a transaction that completed — the step exits 0 and the " +
+			"summary reports 0 errors, and yet 1 warning, because the per-file `error:` lines " +
+			"are ALREADY exempt (pacman-mirror-retrieval-recovered, CONDITIONAL on the package " +
+			"installing) while their summary sentence had no entry at all. On a host whose " +
+			"CachyOS CDNs still index a superseded build every cold build emits it, so R10's " +
+			"zero-warning bar was unreachable on such a run. There is nothing for charly to fix " +
+			"at either end: pacman MUST abandon a mirror that 404s and has no quieter way to " +
+			"report it. CONDITIONAL on the same log reaching pacman's keyring check — the stage " +
+			"it enters only once every payload was retrieved — so an abandonment whose " +
+			"transaction never got that far is still counted, and still goes red when the " +
+			"warning tier is promoted. A genuinely failing transaction cannot hide here: pacman " +
+			"exits nonzero and prints its own `error: failed to retrieve some files` / " +
+			"`error: failed to commit transaction …`, both error-tier and fatal, so the step " +
+			"still fails on its own line.",
 	},
 }
 

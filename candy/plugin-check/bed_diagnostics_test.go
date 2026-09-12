@@ -734,3 +734,210 @@ func TestSnapshotDowngradeEntryDoesNotOverClaim(t *testing.T) {
 		}
 	}
 }
+
+// TestPacmanMirrorAbandonedTransactionAllowance covers the entry added for pacman's own summary
+// sentence when it gives up on ONE mirror for the remainder of a transaction:
+// `warning: too many errors from <host>, skipping for the remainder of this transaction`.
+//
+// It is the COMPANION of pacman-mirror-retrieval-recovered: that entry claims the per-file
+// `error: failed retrieving file …` lines CONDITIONALLY on the package installing, and this one
+// claims the sentence that summarizes them, CONDITIONALLY on pacman reaching its keyring check.
+// The defect it closes is a summary with no entry at all: a cold-cache cachyos image-build
+// exited 0 with 0 errors and 1 warning, that one warning being this line, so R10's zero-warning
+// bar was unreachable on every run whose mirror served 404s.
+func TestPacmanMirrorAbandonedTransactionAllowance(t *testing.T) {
+	const id = "pacman-mirror-abandoned-transaction-recovered"
+	// The REAL sentence, captured verbatim at image-build.log line 1461 of the cold-cache
+	// check-cachyos-immich-ml-pod run (calver 2026.255.0001), whose summary.yml reported
+	// warnings: 1 with this line as the only un-allowlisted finding.
+	const sentence = "warning: too many errors from cdn77.cachyos.org, skipping for the remainder of this transaction"
+	const step = "STEP 1/12: RUN pacman -Syu --noconfirm --needed\n"
+	const keyring = "checking keyring...\n"
+
+	// The tier is part of the contract: this is pacman's WARNING-tier fallback notice, and an
+	// entry that widened the ERROR tier to claim it would be a different, unreviewed change.
+	t.Run("classifies as a warning and is claimed", func(t *testing.T) {
+		sev, _, ok := classifyDiagnosticLine(sentence)
+		if !ok {
+			t.Fatalf("%q was not recognised as a diagnostic at all", sentence)
+		}
+		if sev != severityWarning {
+			t.Fatalf("the sentence classifies as %q, want %q", sev, severityWarning)
+		}
+		a := allowanceFor(sev, sentence)
+		if a == nil || a.ID != id {
+			t.Fatalf("%q: want the %s allowance, got %v", sentence, id, a)
+		}
+		if a.Severity != severityWarning {
+			t.Errorf("entry severity = %q, want %q", a.Severity, severityWarning)
+		}
+	})
+
+	// The verbatim shape of the captured run: the per-file 404s from one CDN, the sentence,
+	// then the keyring/integrity stages and the upgrades that prove the packages arrived.
+	t.Run("the real cold-build sequence scans clean", func(t *testing.T) {
+		d := scanStepDiagnostics(step +
+			"error: failed retrieving file 'glibc-2.44+r24+g16be1518495f-1-x86_64_v3.pkg.tar.zst' from cdn77.cachyos.org : The requested URL returned error: 404\n" +
+			"error: failed retrieving file 'gcc-16.2.1+r23+gd564253eb6c8-1-x86_64_v3.pkg.tar.zst' from cdn77.cachyos.org : The requested URL returned error: 404\n" +
+			"error: failed retrieving file 'libgfortran-16.2.1+r23+gd564253eb6c8-1-x86_64_v3.pkg.tar.zst' from cdn77.cachyos.org : The requested URL returned error: 404\n" +
+			sentence + "\n" + keyring +
+			"checking package integrity...\n" +
+			"upgrading glibc...\n" + "upgrading gcc...\n" + "upgrading libgfortran...\n")
+		if d.Errors != 0 || d.Warnings != 0 || d.Allowlisted != 4 {
+			t.Errorf("the captured sequence must scan clean: errors=%d warnings=%d allowlisted=%d "+
+				"(want 0/0/4); got %+v", d.Errors, d.Warnings, d.Allowlisted, d)
+		}
+	})
+
+	// The conditional half: without pacman's keyring stage the sentence is NOT claimed — and
+	// when the warning tier is promoted that unrecovered abandonment goes red.
+	t.Run("no recovery is not exempted", func(t *testing.T) {
+		d := scanStepDiagnostics(step + sentence + "\n")
+		if d.Warnings != 1 || d.Allowlisted != 0 {
+			t.Errorf("without pacman's keyring stage the sentence must not be claimed; got %+v", d)
+		}
+		promoted := diagnosticPolicy{ErrorsFatal: true, WarningsFatal: true}
+		if !d.fails(promoted) {
+			t.Errorf("an unrecovered abandonment must go red under the promoted warning tier; got %+v", d)
+		}
+	})
+
+	// The sentence cannot hide a failure: a transaction that never retrieved its files exits
+	// nonzero and prints its OWN error line, which is error-tier and fatal whatever this entry
+	// claims about the fallback notice above it.
+	t.Run("a genuinely failed transaction is still fatal", func(t *testing.T) {
+		d := scanStepDiagnostics(step + sentence + "\n" +
+			"error: failed to commit transaction (failed to retrieve some files)\n")
+		if d.Errors != 1 || !d.fails(defaultDiagnosticPolicy()) {
+			t.Errorf("a transaction that cannot retrieve its files must still fail the step; got %+v", d)
+		}
+	})
+
+	// The entry must stay NARROW: it claims the EXACT sentence and nothing near it. Every row
+	// below carries the keyring recovery, so a claim could only come from the pattern — never
+	// from an absent proof.
+	for _, line := range []string{
+		"warning: too many errors from cdn77.cachyos.org, skipping for the remainder of this transaction and then exploding",
+		"warning: too many errors from cdn77.cachyos.org, skipping for the rest of this transaction",
+		"warning: too many errors from",
+		"warning: failed to retrieve some files",
+		"error: too many errors from cdn77.cachyos.org, skipping for the remainder of this transaction",
+	} {
+		t.Run("near miss: "+line, func(t *testing.T) {
+			d := scanStepDiagnostics(step + line + "\n" + keyring)
+			for _, f := range d.Findings {
+				if f.AllowID == id {
+					t.Errorf("the entry over-claimed %q", line)
+				}
+			}
+			if d.Allowlisted != 0 {
+				t.Errorf("%q must not be claimed by any entry; got %+v", line, d)
+			}
+		})
+	}
+}
+
+// TestPacmanReinstalledAlreadyCurrentAllowanceIsConditional covers the sibling of
+// pacman-needed-package-already-current: the SAME pacman sentence with the verb pacman prints
+// when `--needed` was NOT passed, so the package is REINSTALLED rather than skipped. Only that
+// verb separates the two, which is why they are two entries instead of one widened alternation —
+// and why the boundary between them is asserted here rather than left to review.
+//
+// The entry is CONDITIONAL on pacman's own `reinstalling <name>...` line, so the negative half is
+// the point: a `-- reinstalling` warning with no matching reinstall line stays counted.
+func TestPacmanReinstalledAlreadyCurrentAllowanceIsConditional(t *testing.T) {
+	const id = "pacman-package-reinstalled-already-current"
+	const step = "STEP 1/12: RUN pacman -S --noconfirm --cachedir /tmp/repro-cache glibc gcc\n"
+
+	// The lines a real transaction prints, verbatim: the warning names <name>-<pkgver>-<pkgrel>
+	// (an EPOCH renders as <name>-<epoch>:<ver>-<rel>), the progress line names the package
+	// alone. Each row exercises a shape the capture must survive.
+	pkgs := []struct{ warning, recovery string }{
+		{"warning: glibc-2.44+r24+g16be1518495f-1 is up to date -- reinstalling", "reinstalling glibc..."},
+		{"warning: libgfortran-16.2.1+r23+gd564253eb6c8-1 is up to date -- reinstalling", "reinstalling libgfortran..."},
+		{"warning: rust-1:1.98.0-1.1 is up to date -- reinstalling", "reinstalling rust..."},
+		{"warning: nvidia-container-toolkit-1.17.8-1 is up to date -- reinstalling", "reinstalling nvidia-container-toolkit..."},
+	}
+
+	t.Run("classifies as a warning and is claimed", func(t *testing.T) {
+		sev, _, ok := classifyDiagnosticLine(pkgs[0].warning)
+		if !ok {
+			t.Fatalf("%q was not recognised as a diagnostic at all", pkgs[0].warning)
+		}
+		if sev != severityWarning {
+			t.Fatalf("the sentence classifies as %q, want %q", sev, severityWarning)
+		}
+		a := allowanceFor(sev, pkgs[0].warning)
+		if a == nil || a.ID != id {
+			t.Fatalf("%q: want the %s allowance, got %v", pkgs[0].warning, id, a)
+		}
+	})
+
+	// The captured sequence: every warned package followed by pacman's own reinstall line, so
+	// the step scans clean — and every claimed line is claimed by THIS entry, not by a
+	// neighbour that happens to match the same sentence.
+	t.Run("the real sequence scans clean", func(t *testing.T) {
+		var log strings.Builder
+		log.WriteString(step)
+		for _, p := range pkgs {
+			log.WriteString(p.warning + "\n")
+		}
+		log.WriteString("checking keyring...\n")
+		for _, p := range pkgs {
+			log.WriteString(p.recovery + "\n")
+		}
+		d := scanStepDiagnostics(log.String())
+		if d.Errors != 0 || d.Warnings != 0 || d.Allowlisted != len(pkgs) {
+			t.Errorf("want 0 errors / 0 warnings / %d allowlisted; got %+v", len(pkgs), d)
+		}
+		for _, f := range d.Findings {
+			if f.AllowID != "" && f.AllowID != id {
+				t.Errorf("line claimed by %q, want %q: %q", f.AllowID, id, f.Text)
+			}
+		}
+	})
+
+	// The conditional half: the warning alone is pacman's plan, not pacman acting, so with no
+	// reinstall line the entry claims nothing and the line stays a warning.
+	t.Run("no reinstall line is not exempted", func(t *testing.T) {
+		d := scanStepDiagnostics(step + pkgs[0].warning + "\nchecking keyring...\n")
+		if d.Warnings != 1 || d.Allowlisted != 0 {
+			t.Errorf("without pacman's reinstall line the warning must not be claimed; got %+v", d)
+		}
+		promoted := diagnosticPolicy{ErrorsFatal: true, WarningsFatal: true}
+		if !d.fails(promoted) {
+			t.Errorf("an unrecovered reinstall warning must go red under the promoted tier; got %+v", d)
+		}
+	})
+
+	// The subject tie: another package's reinstall line must NOT discharge this package's
+	// warning, which is the property the capture group exists for.
+	t.Run("another package's reinstall line does not discharge it", func(t *testing.T) {
+		d := scanStepDiagnostics(step + pkgs[0].warning + "\nreinstalling gcc...\n")
+		if d.Warnings != 1 || d.Allowlisted != 0 {
+			t.Errorf("a different package's reinstall line must not claim this warning; got %+v", d)
+		}
+	})
+
+	// The entry must stay NARROW. Every row below carries a reinstall line, so a claim could
+	// only come from the pattern — never from an absent proof.
+	for _, line := range []string{
+		// The sibling VERB belongs to the sibling entry, not to this one.
+		"warning: glibc-2.44+r24+g16be1518495f-1 is up to date -- skipping",
+		// No <name>-<ver>-<rel> token: two hyphen-separated trailing fields are required.
+		"warning: glibc is up to date -- reinstalling",
+		// The sentence must END there.
+		"warning: glibc-2.44+r24+g16be1518495f-1 is up to date -- reinstalling and then exploding",
+		// A warning-tier entry can never absolve an error-tier finding.
+		"error: glibc-2.44+r24+g16be1518495f-1 is up to date -- reinstalling",
+	} {
+		t.Run("near miss: "+line, func(t *testing.T) {
+			d := scanStepDiagnostics(step + line + "\nreinstalling glibc...\n")
+			for _, f := range d.Findings {
+				if f.AllowID == id {
+					t.Errorf("the entry over-claimed %q", line)
+				}
+			}
+		})
+	}
+}

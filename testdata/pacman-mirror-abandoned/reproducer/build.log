@@ -1,0 +1,165 @@
+WARNING: charly is a dev/worktree build (not installed at /usr/bin or /usr/local/bin); NOT loading the installed package's plugins from /usr/lib/charly/plugins (they may be built against a different charly version). Set CHARLY_PLUGIN_DIR to load plugins from a custom location.
+
+--- Building cachyos ---
+STEP 1/14: FROM docker.io/cachyos/cachyos-v3@sha256:2f87e702822dc3bc1c527215ace3f7b1b20c5d9d4171bb78e012557be477d487
+STEP 2/14: RUN { [ -L /usr/local ] && mkdir -p "$(readlink /usr/local)"; mkdir -p /usr/local/bin; } &&     ARCH=$(uname -m) &&     case "$ARCH" in x86_64) ARCH=amd64;; aarch64) ARCH=arm64;; esac &&     TASK_URL="https://github.com/go-task/task/releases/latest/download/task_linux_${ARCH}.tar.gz" &&     (curl -fsSL "$TASK_URL" || wget -qO- "$TASK_URL") | tar -xzf - -C /usr/local/bin task
+--> 306728d127f5
+STEP 3/14: RUN if ! getent passwd 1000 >/dev/null 2>&1; then       LOGIN_SHELL=/bin/sh; [ -x /bin/bash ] && LOGIN_SHELL=/bin/bash;       if command -v useradd >/dev/null 2>&1; then         (getent group 1000 >/dev/null 2>&1 || groupadd -g 1000 user) &&         useradd -m -u 1000 -g 1000 -s "$LOGIN_SHELL" user;       else         (getent group 1000 >/dev/null 2>&1 || addgroup -g 1000 user) &&         adduser -D -h /home/user -u 1000 -G user -s "$LOGIN_SHELL" user;       fi;     fi
+--> 78ea820560ee
+STEP 4/14: WORKDIR /home/user
+--> 2faa02e88741
+STEP 5/14: USER 1000
+--> 9c1ce9bbb952
+STEP 6/14: LABEL ai.opencharly.version="2026.255.2200"
+--> eb0cb55952d2
+STEP 7/14: LABEL ai.opencharly.box="cachyos"
+--> c1ad8923faf6
+STEP 8/14: LABEL ai.opencharly.uid="1000"
+--> 1c0ef30554d7
+STEP 9/14: LABEL ai.opencharly.gid="1000"
+--> 8c7d6f8a9849
+STEP 10/14: LABEL ai.opencharly.user="user"
+--> b78bebf26a2d
+STEP 11/14: LABEL ai.opencharly.home="/home/user"
+--> 3fc6ff8ba1e9
+STEP 12/14: LABEL ai.opencharly.platform.format='["pac"]'
+--> b4279ed2d2c8
+STEP 13/14: LABEL ai.opencharly.status="working"
+--> ea0fe60bd3c1
+STEP 14/14: LABEL ai.opencharly.check_level="noagent"
+COMMIT cachyos:2026.255.1825
+--> e34bc01973e1
+Successfully tagged localhost/cachyos:2026.255.1825
+e34bc01973e18b559807dbda5cb20895da8ea0d3388097b3824fe83e27f8af33
+
+--- Building mirror-repro ---
+[1/2] STEP 1/2: FROM scratch AS pacman-mirror-repro
+[2/2] STEP 1/20: FROM cachyos:2026.255.1825
+[1/2] STEP 2/2: COPY ./ /
+[2/2] STEP 2/20: USER root
+--> 55244efa00f5
+[2/2] STEP 3/20: ARG TARGETARCH
+--> 584930aa185c
+--> cb1c481ceadc
+[2/2] STEP 4/20: ENV ARCH=${TARGETARCH}
+--> 6621600861dc
+[2/2] STEP 5/20: RUN --mount=type=bind,from=pacman-mirror-repro,source=/,target=/ctx --mount=type=cache,id=charly-tmp-npm-cache-uid1000,dst=/tmp/npm-cache,uid=1000,gid=1000 sh -c 'SH=/bin/sh; [ -x /bin/bash ] && SH=/bin/bash; exec "$SH"' sh <<'OVCMD' (BUILD_ARCH=$(uname -m)...)
+--> abcfc21c6935
+[2/2] STEP 6/20: RUN --mount=type=bind,from=pacman-mirror-repro,source=/,target=/ctx --mount=type=cache,id=charly-tmp-npm-cache-uid1000,dst=/tmp/npm-cache,uid=1000,gid=1000 sh -c 'SH=/bin/sh; [ -x /bin/bash ] && SH=/bin/bash; exec "$SH"' sh <<'OVCMD' (BUILD_ARCH=$(uname -m)...)
+:: Synchronizing package databases...
+ cachyos-v3 downloading...
+ cachyos-core-v3 downloading...
+ cachyos-extra-v3 downloading...
+ cachyos downloading...
+ core downloading...
+ extra downloading...
+ multilib downloading...
+--> d8e49f23ab64
+[2/2] STEP 7/20: RUN --mount=type=bind,from=pacman-mirror-repro,source=/,target=/ctx --mount=type=cache,id=charly-tmp-npm-cache-uid1000,dst=/tmp/npm-cache,uid=1000,gid=1000 sh -c 'SH=/bin/sh; [ -x /bin/bash ] && SH=/bin/bash; exec "$SH"' sh <<'OVCMD' (BUILD_ARCH=$(uname -m)...)
+resolving dependencies...
+looking for conflicting packages...
+
+Package (10)            Old Version                  New Version                 Net Change  Download Size
+
+cachyos-v3/libasan      16.1.1+r346+g4e03491b401d-5  16.2.1+r23+gd564253eb6c8-1    0.00 MiB       0.57 MiB
+cachyos-v3/libhwasan    16.1.1+r346+g4e03491b401d-5  16.2.1+r23+gd564253eb6c8-1    0.00 MiB       0.31 MiB
+cachyos-v3/liblsan      16.1.1+r346+g4e03491b401d-5  16.2.1+r23+gd564253eb6c8-1    0.00 MiB       0.26 MiB
+cachyos-v3/libtsan      16.1.1+r346+g4e03491b401d-5  16.2.1+r23+gd564253eb6c8-1    0.00 MiB       0.52 MiB
+cachyos-v3/libubsan     16.1.1+r346+g4e03491b401d-5  16.2.1+r23+gd564253eb6c8-1    0.00 MiB       0.23 MiB
+cachyos-v3/gcc          16.1.1+r346+g4e03491b401d-5  16.2.1+r23+gd564253eb6c8-1    0.19 MiB      64.15 MiB
+cachyos-v3/glibc        2.43+r37+gfdf10644d6ee-2     2.44+r24+g16be1518495f-1      0.36 MiB      10.59 MiB
+cachyos-v3/libgcc       16.1.1+r346+g4e03491b401d-5  16.2.1+r23+gd564253eb6c8-1    0.00 MiB       0.09 MiB
+cachyos-v3/libgfortran  16.1.1+r346+g4e03491b401d-5  16.2.1+r23+gd564253eb6c8-1   -0.04 MiB       1.27 MiB
+cachyos-v3/libstdc++    16.1.1+r346+g4e03491b401d-5  16.2.1+r23+gd564253eb6c8-1    0.00 MiB       0.95 MiB
+
+Total Download Size:    78.95 MiB
+Total Installed Size:  300.27 MiB
+Net Upgrade Size:        0.53 MiB
+
+:: Proceed with installation? [Y/n] 
+:: Retrieving packages...
+error: failed retrieving file 'gcc-16.2.1+r23+gd564253eb6c8-1-x86_64_v3.pkg.tar.zst' from 127.0.0.1:1 : Failed to connect to 127.0.0.1:1 after 0 ms: Could not connect to server
+error: failed retrieving file 'glibc-2.44+r24+g16be1518495f-1-x86_64_v3.pkg.tar.zst' from 127.0.0.1:1 : Failed to connect to 127.0.0.1:1 after 0 ms: Could not connect to server
+error: failed retrieving file 'libgfortran-16.2.1+r23+gd564253eb6c8-1-x86_64_v3.pkg.tar.zst' from 127.0.0.1:1 : Failed to connect to 127.0.0.1:1 after 0 ms: Could not connect to server
+warning: too many errors from 127.0.0.1:1, skipping for the remainder of this transaction
+error: failed retrieving file 'libstdc++-16.2.1+r23+gd564253eb6c8-1-x86_64_v3.pkg.tar.zst' from 127.0.0.1:1 : Failed to connect to 127.0.0.1:1 after 0 ms: Could not connect to server
+error: failed retrieving file 'libasan-16.2.1+r23+gd564253eb6c8-1-x86_64_v3.pkg.tar.zst' from 127.0.0.1:1 : Failed to connect to 127.0.0.1:1 after 0 ms: Could not connect to server
+error: failed retrieving file 'libtsan-16.2.1+r23+gd564253eb6c8-1-x86_64_v3.pkg.tar.zst' from 127.0.0.1:1 : Failed to connect to 127.0.0.1:1 after 0 ms: Could not connect to server
+error: failed retrieving file 'libhwasan-16.2.1+r23+gd564253eb6c8-1-x86_64_v3.pkg.tar.zst' from 127.0.0.1:1 : Failed to connect to 127.0.0.1:1 after 0 ms: Could not connect to server
+error: failed retrieving file 'liblsan-16.2.1+r23+gd564253eb6c8-1-x86_64_v3.pkg.tar.zst' from 127.0.0.1:1 : Failed to connect to 127.0.0.1:1 after 0 ms: Could not connect to server
+error: failed retrieving file 'libubsan-16.2.1+r23+gd564253eb6c8-1-x86_64_v3.pkg.tar.zst' from 127.0.0.1:1 : Failed to connect to 127.0.0.1:1 after 0 ms: Could not connect to server
+error: failed retrieving file 'libgcc-16.2.1+r23+gd564253eb6c8-1-x86_64_v3.pkg.tar.zst' from 127.0.0.1:1 : Failed to connect to 127.0.0.1:1 after 0 ms: Could not connect to server
+error: failed retrieving file 'libstdc++-16.2.1+r23+gd564253eb6c8-1-x86_64_v3.pkg.tar.zst' from cdn77.cachyos.org : The requested URL returned error: 404
+error: failed retrieving file 'libgcc-16.2.1+r23+gd564253eb6c8-1-x86_64_v3.pkg.tar.zst' from cdn77.cachyos.org : The requested URL returned error: 404
+error: failed retrieving file 'libhwasan-16.2.1+r23+gd564253eb6c8-1-x86_64_v3.pkg.tar.zst' from cdn77.cachyos.org : The requested URL returned error: 404
+warning: too many errors from cdn77.cachyos.org, skipping for the remainder of this transaction
+error: failed retrieving file 'glibc-2.44+r24+g16be1518495f-1-x86_64_v3.pkg.tar.zst' from cdn77.cachyos.org : The requested URL returned error: 404
+error: failed retrieving file 'libgfortran-16.2.1+r23+gd564253eb6c8-1-x86_64_v3.pkg.tar.zst' from cdn77.cachyos.org : The requested URL returned error: 404
+error: failed retrieving file 'libasan-16.2.1+r23+gd564253eb6c8-1-x86_64_v3.pkg.tar.zst' from cdn77.cachyos.org : The requested URL returned error: 404
+error: failed retrieving file 'libtsan-16.2.1+r23+gd564253eb6c8-1-x86_64_v3.pkg.tar.zst' from cdn77.cachyos.org : The requested URL returned error: 404
+error: failed retrieving file 'libubsan-16.2.1+r23+gd564253eb6c8-1-x86_64_v3.pkg.tar.zst' from cdn77.cachyos.org : The requested URL returned error: 404
+error: failed retrieving file 'liblsan-16.2.1+r23+gd564253eb6c8-1-x86_64_v3.pkg.tar.zst' from cdn77.cachyos.org : The requested URL returned error: 404
+error: failed retrieving file 'gcc-16.2.1+r23+gd564253eb6c8-1-x86_64_v3.pkg.tar.zst' from cdn77.cachyos.org : The requested URL returned error: 404
+ gcc-16.2.1+r23+gd564253eb6c8-1-x86_64_v3 downloading...
+ glibc-2.44+r24+g16be1518495f-1-x86_64_v3 downloading...
+ libgfortran-16.2.1+r23+gd564253eb6c8-1-x86_64_v3 downloading...
+ libstdc++-16.2.1+r23+gd564253eb6c8-1-x86_64_v3 downloading...
+ libasan-16.2.1+r23+gd564253eb6c8-1-x86_64_v3 downloading...
+ libtsan-16.2.1+r23+gd564253eb6c8-1-x86_64_v3 downloading...
+ libhwasan-16.2.1+r23+gd564253eb6c8-1-x86_64_v3 downloading...
+ liblsan-16.2.1+r23+gd564253eb6c8-1-x86_64_v3 downloading...
+ libubsan-16.2.1+r23+gd564253eb6c8-1-x86_64_v3 downloading...
+ libgcc-16.2.1+r23+gd564253eb6c8-1-x86_64_v3 downloading...
+checking keyring...
+checking package integrity...
+loading package files...
+checking for file conflicts...
+:: Processing package changes...
+upgrading glibc...
+upgrading libgcc...
+upgrading libstdc++...
+upgrading libasan...
+upgrading libhwasan...
+upgrading liblsan...
+upgrading libtsan...
+upgrading libubsan...
+upgrading gcc...
+upgrading libgfortran...
+:: Running post-transaction hooks...
+(1/5) Generating the configured locale...
+Generating locales...
+Generation complete.
+(2/5) Configuring dynamic linker run-time bindings...
+(3/5) Creating iconv module configuration cache...
+(4/5) Arming ConditionNeedsUpdate...
+(5/5) Updating the info directory file...
+--> 357223024b25
+[2/2] STEP 8/20: USER 1000
+--> 609d03741eb5
+[2/2] STEP 9/20: LABEL ai.opencharly.version="2026.255.2200"
+--> c760218eebe6
+[2/2] STEP 10/20: LABEL ai.opencharly.box="mirror-repro"
+--> 290af61f871d
+[2/2] STEP 11/20: LABEL ai.opencharly.uid="1000"
+--> 392552ed084b
+[2/2] STEP 12/20: LABEL ai.opencharly.gid="1000"
+--> 09be2d5a66e1
+[2/2] STEP 13/20: LABEL ai.opencharly.user="user"
+--> f44852187b43
+[2/2] STEP 14/20: LABEL ai.opencharly.home="/home/user"
+--> fb8fad01659f
+[2/2] STEP 15/20: LABEL ai.opencharly.platform.format='["pac"]'
+--> a3b565f99586
+[2/2] STEP 16/20: LABEL ai.opencharly.description='{"candy":[{"origin":"candy:pacman-mirror-repro","description":"Deterministic reproducer for the pacman mirror-abandonment class. It reaches pacman'\''s own sentence \"warning: too many errors from \u003chost\u003e, skipping for the remainder of this transaction\" by putting a server that refuses every connection FIRST in each mirrorlist and then reinstalling packages the base image already carries into a fresh --cachedir, so pacman must fetch real payloads, fails three times against the dead server, abandons it for the rest of the transaction, and completes from the next mirror. The transaction exits 0.","plan":[{"run":"disable pacman'\''s scriptlet network sandbox (the CachyOS base-image precondition)","plugin":"command","id":"mirror-repro-sandbox-disabled","plugin_input":{"command":"set -eu\ngrep -q '\''^DisableSandboxNetwork'\'' /etc/pacman.conf || sed -i '\''/^\\[options\\]/a DisableSandboxNetwork'\'' /etc/pacman.conf\n"},"intent_do":"act"},{"run":"sync every database while every configured mirror is still reachable","plugin":"command","id":"mirror-repro-sync","plugin_input":{"command":"set -eu\npacman -Sy --noconfirm\n"},"intent_do":"act"},{"run":"put an unreachable server first and reinstall current packages from a fresh cachedir","plugin":"command","id":"mirror-repro-abandon","plugin_input":{"command":"set -eu\nfor f in /etc/pacman.d/*mirrorlist; do\n    [ -f \"$f\" ] || continue\n    printf '\''Server = http://127.0.0.1:1/$repo/os/$arch\\n'\'' | cat - \"$f\" \u003e \"$f.tmp\"\n    mv \"$f.tmp\" \"$f\"\ndone\nrm -rf /tmp/mirror-repro-cache\nmkdir -p /tmp/mirror-repro-cache\npacman -S --noconfirm --cachedir /tmp/mirror-repro-cache glibc gcc libgfortran libgcc libstdc++\n"},"intent_do":"act"},{"check":"pacman is present (the reproducer steps above need it)","plugin":"command","id":"mirror-repro-pacman-present","context":["build"],"plugin_input":{"command":"pacman --version"},"intent_do":"assert","exit_status":0}]}]}'
+--> bdc9854d8af4
+[2/2] STEP 17/20: LABEL ai.opencharly.status="testing"
+--> ac01a45fe1e9
+[2/2] STEP 18/20: LABEL ai.opencharly.check_level="noagent"
+--> 27ef657ff6f5
+[2/2] STEP 19/20: LABEL ai.opencharly.info='pacman-mirror-repro: Deterministic reproducer for the pacman mirror-abandonment class. It reaches pacman'\''s own sentence "warning: too many errors from <host>, skipping for the remainder of this transaction" by putting a server that refuses every connection FIRST in each mirrorlist and then reinstalling packages the base image already carries into a fresh --cachedir, so pacman must fetch real payloads, fails three times against the dead server, abandons it for the rest of the transaction, and completes from the next mirror. The transaction exits 0.'
+--> 3d1ce2276d62
+[2/2] STEP 20/20: LABEL ai.opencharly.candy_version='{"pacman-mirror-repro":"2026.255.2200"}'
+[2/2] COMMIT mirror-repro:2026.255.1825
+--> 8b576eaece33
+Successfully tagged localhost/mirror-repro:2026.255.1825
+8b576eaece337b19c778d3876c67c817fd28c5fe40960cf1abf5ea5bfcca6749
