@@ -1,0 +1,59 @@
+version: 2026.249.2125
+
+cachyos:
+    candy:
+        version: 2026.255.2200
+        base: docker.io/cachyos/cachyos-v3@sha256:2f87e702822dc3bc1c527215ace3f7b1b20c5d9d4171bb78e012557be477d487
+        build:
+            - pac
+        platform:
+            - linux/amd64
+
+pacman-mirror-repro:
+    candy:
+        version: 2026.255.2200
+        description: >-
+            Deterministic reproducer for the pacman mirror-abandonment class. It reaches
+            pacman's own sentence "warning: too many errors from <host>, skipping for the
+            remainder of this transaction" by putting a server that refuses every connection
+            FIRST in each mirrorlist and then reinstalling packages the base image already
+            carries into a fresh --cachedir, so pacman must fetch real payloads, fails three
+            times against the dead server, abandons it for the rest of the transaction, and
+            completes from the next mirror. The transaction exits 0.
+        plan:
+            - run: disable pacman's scriptlet network sandbox (the CachyOS base-image precondition)
+              id: mirror-repro-sandbox-disabled
+              command: |
+                  set -eu
+                  grep -q '^DisableSandboxNetwork' /etc/pacman.conf || sed -i '/^\[options\]/a DisableSandboxNetwork' /etc/pacman.conf
+            - run: sync every database while every configured mirror is still reachable
+              id: mirror-repro-sync
+              command: |
+                  set -eu
+                  pacman -Sy --noconfirm
+            - run: put an unreachable server first and reinstall current packages from a fresh cachedir
+              id: mirror-repro-abandon
+              command: |
+                  set -eu
+                  for f in /etc/pacman.d/*mirrorlist; do
+                      [ -f "$f" ] || continue
+                      printf 'Server = http://127.0.0.1:1/$repo/os/$arch\n' | cat - "$f" > "$f.tmp"
+                      mv "$f.tmp" "$f"
+                  done
+                  rm -rf /tmp/mirror-repro-cache
+                  mkdir -p /tmp/mirror-repro-cache
+                  pacman -S --noconfirm --cachedir /tmp/mirror-repro-cache glibc gcc libgfortran libgcc libstdc++
+            - check: pacman is present (the reproducer steps above need it)
+              id: mirror-repro-pacman-present
+              exit_status: 0
+              context:
+                - build
+              command:
+                  command: pacman --version
+
+mirror-repro:
+    candy:
+        version: 2026.255.2200
+        base: cachyos
+        candy:
+            - pacman-mirror-repro

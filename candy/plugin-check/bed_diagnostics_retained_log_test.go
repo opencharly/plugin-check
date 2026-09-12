@@ -2,10 +2,9 @@ package check
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
-
-	"slices"
 )
 
 // The retained-log counterpart of TestPacmanMirrorAbandonedTransactionAllowance. That test

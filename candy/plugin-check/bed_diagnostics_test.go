@@ -836,3 +836,108 @@ func TestPacmanMirrorAbandonedTransactionAllowance(t *testing.T) {
 		})
 	}
 }
+
+// TestPacmanReinstalledAlreadyCurrentAllowanceIsConditional covers the sibling of
+// pacman-needed-package-already-current: the SAME pacman sentence with the verb pacman prints
+// when `--needed` was NOT passed, so the package is REINSTALLED rather than skipped. Only that
+// verb separates the two, which is why they are two entries instead of one widened alternation —
+// and why the boundary between them is asserted here rather than left to review.
+//
+// The entry is CONDITIONAL on pacman's own `reinstalling <name>...` line, so the negative half is
+// the point: a `-- reinstalling` warning with no matching reinstall line stays counted.
+func TestPacmanReinstalledAlreadyCurrentAllowanceIsConditional(t *testing.T) {
+	const id = "pacman-package-reinstalled-already-current"
+	const step = "STEP 1/12: RUN pacman -S --noconfirm --cachedir /tmp/repro-cache glibc gcc\n"
+
+	// The lines a real transaction prints, verbatim: the warning names <name>-<pkgver>-<pkgrel>
+	// (an EPOCH renders as <name>-<epoch>:<ver>-<rel>), the progress line names the package
+	// alone. Each row exercises a shape the capture must survive.
+	pkgs := []struct{ warning, recovery string }{
+		{"warning: glibc-2.44+r24+g16be1518495f-1 is up to date -- reinstalling", "reinstalling glibc..."},
+		{"warning: libgfortran-16.2.1+r23+gd564253eb6c8-1 is up to date -- reinstalling", "reinstalling libgfortran..."},
+		{"warning: rust-1:1.98.0-1.1 is up to date -- reinstalling", "reinstalling rust..."},
+		{"warning: nvidia-container-toolkit-1.17.8-1 is up to date -- reinstalling", "reinstalling nvidia-container-toolkit..."},
+	}
+
+	t.Run("classifies as a warning and is claimed", func(t *testing.T) {
+		sev, _, ok := classifyDiagnosticLine(pkgs[0].warning)
+		if !ok {
+			t.Fatalf("%q was not recognised as a diagnostic at all", pkgs[0].warning)
+		}
+		if sev != severityWarning {
+			t.Fatalf("the sentence classifies as %q, want %q", sev, severityWarning)
+		}
+		a := allowanceFor(sev, pkgs[0].warning)
+		if a == nil || a.ID != id {
+			t.Fatalf("%q: want the %s allowance, got %v", pkgs[0].warning, id, a)
+		}
+	})
+
+	// The captured sequence: every warned package followed by pacman's own reinstall line, so
+	// the step scans clean — and every claimed line is claimed by THIS entry, not by a
+	// neighbour that happens to match the same sentence.
+	t.Run("the real sequence scans clean", func(t *testing.T) {
+		var log strings.Builder
+		log.WriteString(step)
+		for _, p := range pkgs {
+			log.WriteString(p.warning + "\n")
+		}
+		log.WriteString("checking keyring...\n")
+		for _, p := range pkgs {
+			log.WriteString(p.recovery + "\n")
+		}
+		d := scanStepDiagnostics(log.String())
+		if d.Errors != 0 || d.Warnings != 0 || d.Allowlisted != len(pkgs) {
+			t.Errorf("want 0 errors / 0 warnings / %d allowlisted; got %+v", len(pkgs), d)
+		}
+		for _, f := range d.Findings {
+			if f.AllowID != "" && f.AllowID != id {
+				t.Errorf("line claimed by %q, want %q: %q", f.AllowID, id, f.Text)
+			}
+		}
+	})
+
+	// The conditional half: the warning alone is pacman's plan, not pacman acting, so with no
+	// reinstall line the entry claims nothing and the line stays a warning.
+	t.Run("no reinstall line is not exempted", func(t *testing.T) {
+		d := scanStepDiagnostics(step + pkgs[0].warning + "\nchecking keyring...\n")
+		if d.Warnings != 1 || d.Allowlisted != 0 {
+			t.Errorf("without pacman's reinstall line the warning must not be claimed; got %+v", d)
+		}
+		promoted := diagnosticPolicy{ErrorsFatal: true, WarningsFatal: true}
+		if !d.fails(promoted) {
+			t.Errorf("an unrecovered reinstall warning must go red under the promoted tier; got %+v", d)
+		}
+	})
+
+	// The subject tie: another package's reinstall line must NOT discharge this package's
+	// warning, which is the property the capture group exists for.
+	t.Run("another package's reinstall line does not discharge it", func(t *testing.T) {
+		d := scanStepDiagnostics(step + pkgs[0].warning + "\nreinstalling gcc...\n")
+		if d.Warnings != 1 || d.Allowlisted != 0 {
+			t.Errorf("a different package's reinstall line must not claim this warning; got %+v", d)
+		}
+	})
+
+	// The entry must stay NARROW. Every row below carries a reinstall line, so a claim could
+	// only come from the pattern — never from an absent proof.
+	for _, line := range []string{
+		// The sibling VERB belongs to the sibling entry, not to this one.
+		"warning: glibc-2.44+r24+g16be1518495f-1 is up to date -- skipping",
+		// No <name>-<ver>-<rel> token: two hyphen-separated trailing fields are required.
+		"warning: glibc is up to date -- reinstalling",
+		// The sentence must END there.
+		"warning: glibc-2.44+r24+g16be1518495f-1 is up to date -- reinstalling and then exploding",
+		// A warning-tier entry can never absolve an error-tier finding.
+		"error: glibc-2.44+r24+g16be1518495f-1 is up to date -- reinstalling",
+	} {
+		t.Run("near miss: "+line, func(t *testing.T) {
+			d := scanStepDiagnostics(step + line + "\nreinstalling glibc...\n")
+			for _, f := range d.Findings {
+				if f.AllowID == id {
+					t.Errorf("the entry over-claimed %q", line)
+				}
+			}
+		})
+	}
+}
