@@ -431,7 +431,10 @@ func TestPacmanHookFailedMkinitcpioIsConditional(t *testing.T) {
 // wrapper error with NO refusal in the log still fails the step, and pacman's own real failure
 // wording is never claimed — not even when the refusal shares the log.
 func TestPacmanPostTransactionHookContainerSystemdIsConditional(t *testing.T) {
-	// Verbatim lines 1842-1846 of the retained image-build log.
+	// Captured verbatim from the run whose image tag is `check-githubrunner-pod-2026.254.2125`.
+	// The line numbers previously cited here (1842-1846) belong to THAT capture run; in the
+	// body's RETAINED run (`2026.255.0829`) the same refusal appears at `first_line: 1703`
+	// (`error: command failed to execute correctly`). Citations name their own run.
 	const captured = "( 6/10) Loading new kernel modules...\n" +
 		"System has not been booted with systemd as init system (PID 1). Can't operate.\n" +
 		"Failed to connect to system scope bus via local transport: Host is down\n" +
@@ -509,11 +512,13 @@ func TestHookWrapperEntriesResolvePerProof(t *testing.T) {
 // container the OCI runtime mounts the rootfs MS_PRIVATE, so the nested podman the
 // container-nesting candy runs always prints it and then populates the nested store.
 //
-// The fixture is the verbatim line 1958 of the retained check-githubrunner-pod image-build, inside
-// the STEP 56/99 RUN that prefetches quay.io/libpod/alpine.
+// Captured verbatim from the run whose image tag is `check-githubrunner-pod-2026.254.2125`
+// (its `level=warning` timestamp is that run's), inside the STEP 56/99 RUN that prefetches
+// quay.io/libpod/alpine. In the body's RETAINED run (`2026.255.0829`) the same advisory appears
+// at `first_line: 1812`. The line number below names the CAPTURE run, not the retained one.
 func TestPodmanNestedRootfsNotSharedMountAdvisoryIsConditional(t *testing.T) {
-	// Verbatim line 1958 of the retained image-build log. The escaped quote pair around the
-	// slash is podman's logrus rendering of the mount path the advisory names.
+	// Verbatim from the CAPTURE run named above. The escaped quote pair around the slash is
+	// podman's logrus rendering of the mount path the advisory names.
 	const advisory = `time="2026-09-11T21:31:45Z" level=warning msg="\"/\" is not a shared mount, this could cause issues or missing mounts with rootless containers"` + "\n"
 	const step = "[23/23] STEP 56/99: RUN --mount=type=bind,from=container-nesting,source=/,target=/ctx sh -c 'exec \"$SH\"'\n"
 	const tagged = "Successfully tagged ghcr.io/opencharly/githubrunner:check-githubrunner-pod-2026.254.2125\n"
