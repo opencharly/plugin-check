@@ -68,3 +68,31 @@ rather than pass review unnoticed. Two of the retrieval errors and one of the tw
 sentences in it come from a real CachyOS CDN (`cdn77.cachyos.org`) 404ing a superseded build —
 the upstream condition the class was first observed under; the other ten errors and the other
 sentence come from the dead server this reproducer introduces.
+
+## Composing it into a check bed (the R10 live proof)
+
+The bed run quoted in the proof section of the PR does not run THIS project: it composes this candy
+into the bed under test so the bed's `image-build` step log carries the sentence. The whole recipe:
+
+1. append this directory's `charly.yml` candy node — the `pacman-mirror-repro:` node, from that
+   key to the end of the file — to the bed project's own `charly.yml`;
+
+2. add ONE line to the box under test (distro-cachyos: `box/immich-ml/charly.yml`), after the end
+   of its candy list:
+
+   ```yaml
+   - pacman-mirror-repro
+   ```
+
+3. run the bed:
+
+   ```
+   charly check run check-cachyos-immich-ml-pod
+   ```
+
+With the two `pod-immich-ml` pin lines at the MERGED tag `v2026.255.1229`
+(`box/immich-ml/charly.yml` and `candy/charly-marketplace/charly.yml` — the merged
+opencharly/pod-immich-ml release, which is also what clears the unrelated
+`resolved to multiple versions` class), that composition is the ENTIRE delta from the project's
+`main`: 2 pin lines + 1 composed candy. `git diff --stat` reports exactly those three files and no
+fourth path is modified.
