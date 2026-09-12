@@ -293,9 +293,9 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"requested, pacman performed it, and the sentence reports the plan — suppressing it " +
 			"would mean not doing what the plan asked. Observed live: 5 lines in the " +
 			"check-cachyos-immich-ml-pod image-build (calver 2026.255.0830), emitted by the " +
-			"reproducer layer's forced reinstall, and 5 more in the SAME bed once the committed " +
-			"reproducer was composed into it (calver 2026.255.2102, this entry claiming all " +
-			"five). The verb is the image's repository state, not a property of the reproducer: " +
+			"reproducer layer's forced reinstall, and 5 more in the same bed once the committed " +
+			"reproducer is composed into it (the PR's live run claims all five there). The verb " +
+			"is the image's repository state, not a property of the reproducer: " +
 			"the committed reproducer's own standalone build takes the `upgrading ...` branch, " +
 			"and both verbs are recovery lines the error-tier mirror entry accepts.",
 	},
@@ -587,10 +587,10 @@ var diagnosticAllowlist = []diagnosticAllowance{
 		// The recovery is pacman's next STAGE line, `checking keyring...`, which it prints only
 		// after EVERY payload of the transaction has been retrieved — so reaching it is exactly
 		// the proof that abandoning this mirror cost the transaction nothing: the files came
-		// from another one. Measured over the retained bed corpus: `checking keyring...` occurs
-		// once per package transaction in every one of the 56 retained step logs that carry a
-		// `:: Processing package changes...` (one database-only sync carries a spare line), so it
-		// is pacman's normal stage on this platform rather than an artefact of one image. No %s
+		// from another one. `checking keyring...` is pacman's normal stage on this platform rather
+		// than an artefact of one image, and both committed artifacts carry it right after the
+		// sentence, on transactions that completed: the retained excerpt and the committed
+		// reproducer's build.log (the tests assert the stage in both). No %s
 		// placeholder: the sentence names a MIRROR, and no recovery line names a mirror, so the
 		// pattern is used as-is (see allowanceRecovered) and the step log is the tie — the same
 		// step-boundary tie the pip and dnf entries use.
