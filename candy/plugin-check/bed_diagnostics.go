@@ -353,6 +353,49 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"the notice, and silencing it would mean suppressing systemd's own reload hint.",
 	},
 	{
+		ID:       "podman-store-bloat-hygiene-nudge",
+		Severity: severityWarning,
+		// The emitter is plugin-build's warnIfStoreBloatedFromPayload
+		// (plugin-build/candy/plugin-build/store_bloat.go). The pattern is the WHOLE emitted
+		// sentence — humanBytes' `<%.1f><K|M|G|T|P|E>iB` rendering and the integer percentage are
+		// the only generalized fields — so it claims the nudge and nothing else.
+		//
+		// It carries NO RecoveredBy, deliberately: nothing RECOVERS here. The store is still
+		// bloated after the line prints, and the purge the line names is an OPERATOR action
+		// against the SHARED host store, so there is no step outcome to condition on. The entry
+		// is unconditional because there is no recovery to prove — not because the line is
+		// assumed benign, which is what Why records, verbatim, on every single run.
+		//
+		// The sentence is matched TEXTUALLY rather than against a shared constant: plugin-build is
+		// a separate module and a separate plugin candy, so no Go symbol is importable across that
+		// boundary (R3 has nothing to share here). The coupling is pinned instead by the testdata
+		// excerpt in bed_diagnostics_store_bloat_test.go, which carries the bytes a real run
+		// emitted. If the emitter ever rewords the sentence, this entry stops claiming the line
+		// and the nudge surfaces as an ordinary warning again: the divergence lands in the
+		// fail-CLOSED direction.
+		Match: regexp.MustCompile("^warning: podman store is bloated \\([0-9.]+[KMGTPE]iB reclaimable, ~[0-9]+% of [0-9.]+[KMGTPE]iB\\) — the overlay-store corruption class tracked in opencharly/charly#173 tracks this factor\\. Run `charly clean --deep` \\(pair with --invalidate for the fullest reclaim\\) before building\\.$"),
+		Why: "plugin-build prints this once per build drive when its podman store's reclaimable " +
+			"bytes exceed 50 GiB, and its OWN source declares the line non-blocking: " +
+			"warnIfStoreBloatedFromPayload's doc comment reads 'It is fail-soft by design: a " +
+			"store probe that fails (podman absent, non-JSON output, no Images entry) is skipped " +
+			"silently — the warning is a hygiene nudge, never a build blocker' " +
+			"(plugin-build/candy/plugin-build/store_bloat.go, adjacent to " +
+			"storeBloatReclaimableThreshold = 50 GiB). The condition it names is the measured " +
+			"co-factor of the overlay-store corruption class tracked in opencharly/charly#173 — " +
+			"the threshold's own comment cites that issue — and the purge it names is a " +
+			"`charly clean --deep` an OPERATOR runs against the SHARED host store, so no box, " +
+			"candy or PR can clear it. The reclaimable total drifts around the threshold as beds " +
+			"build (measured across retained runs of one host: 63.6GiB, then 104.2GiB / ~69% of " +
+			"149.9GiB, then 150.2GiB / ~82% of 181.7GiB), so the SAME change passes one run and " +
+			"is gated the next on a condition its own product code says must never block — " +
+			"observed live, the charly/pr-validator BLOCK on pod-immich-ml#5 (B5/R10/B14) is " +
+			"exactly this line: reported as warnings: 1 and absent from allowlist_used. " +
+			"Allowlisting keeps the notice VISIBLE — every run reports this entry and this Why " +
+			"verbatim under allowlist_used — while removing only the gate role its emitter never " +
+			"gave it: the correction is to the SCANNER's classification of the line, not to the " +
+			"hygiene warning itself.",
+	},
+	{
 		ID:       "limine-esp-not-mounted-in-chroot",
 		Severity: severityError,
 		// limine's alpm hook (80-limine-efi-deploy.hook, shipped by limine-mkinitcpio-hook)
