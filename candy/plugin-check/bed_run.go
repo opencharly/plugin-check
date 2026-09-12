@@ -1057,6 +1057,27 @@ func printDebugRetentionNotice(w *os.File, name string, d spec.CheckBedReply) {
 	}
 }
 
+// rollupStepDiagnostics folds the per-step diagnostics into the run-level rollup the summary
+// reports. It exists as ONE helper so a counter that exists at step level cannot silently fail to
+// reach the run level — which is exactly how the advisory tier shipped: counted per step
+// (advisories: 1) and structurally 0 in the run rollup, because this fold listed every other
+// counter and not this one. A tier that is invisible at run level is not a reported tier.
+func rollupStepDiagnostics(steps []stepResult) stepDiagnostics {
+	var run stepDiagnostics
+	for _, s := range steps {
+		run.Errors += s.Diag.Errors
+		run.Warnings += s.Diag.Warnings
+		run.Advisories += s.Diag.Advisories
+		run.Allowlisted += s.Diag.Allowlisted
+		run.CacheSteps += s.Diag.CacheSteps
+		run.CacheHits += s.Diag.CacheHits
+		// Findings travel too, not just the counters: the run rollup reports WHICH exemption
+		// suppressed what, and it can only do that from the findings themselves.
+		run.Findings = append(run.Findings, s.Diag.Findings...)
+	}
+	return run
+}
+
 // writeBedSummary emits a YAML summary alongside the per-step logs. Hand-rolled to
 // keep the file dependency-free and diff-friendly.
 func writeBedSummary(dir string, res *bedRunResult) {
@@ -1073,22 +1094,14 @@ func writeBedSummary(dir string, res *bedRunResult) {
 	}
 	fmt.Fprintln(&buf, "steps:")
 	var total time.Duration
-	var run stepDiagnostics
 	for _, s := range res.Step {
 		fmt.Fprintf(&buf, "  - name: %s\n", s.Name)
 		fmt.Fprintf(&buf, "    duration_seconds: %d\n", int(s.Duration.Round(time.Second)/time.Second))
 		fmt.Fprintf(&buf, "    ok: %t\n", s.OK)
 		writeStepDiagnostics(&buf, "    ", s.Diag)
 		total += s.Duration
-		run.Warnings += s.Diag.Warnings
-		run.Errors += s.Diag.Errors
-		run.Allowlisted += s.Diag.Allowlisted
-		run.CacheSteps += s.Diag.CacheSteps
-		run.CacheHits += s.Diag.CacheHits
-		// Findings travel too, not just the counters: the run rollup reports WHICH exemption
-		// suppressed what, and it can only do that from the findings themselves.
-		run.Findings = append(run.Findings, s.Diag.Findings...)
 	}
+	run := rollupStepDiagnostics(res.Step)
 	fmt.Fprintf(&buf, "total_seconds: %d\n", int(total.Round(time.Second)/time.Second))
 	writeRunDiagnostics(&buf, run)
 	fmt.Fprintf(&buf, "ok: %t\n", res.OK)
