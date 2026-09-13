@@ -384,12 +384,24 @@ func bedSetup(ctx context.Context, ex *sdk.Executor, bed, dir string) (spec.Chec
 		}
 	}
 
-	// Per-bed exclusive lock — fail-fast on a duplicate concurrent run of the SAME bed.
-	bedUnlock, lockErr := lock.AcquireFileLock(filepath.Join(".check", bed, ".lock"), false)
+	// Per-bed exclusive lock — fail-fast on a duplicate concurrent run of the SAME bed, from ANY
+	// project directory. The key is user-scoped (bed_lock.go): what a second run would steal is the
+	// first run's CONTAINERS AND VOLUMES in the shared podman store, not anything under the project
+	// directory, so a project-relative key let two runs of one bed proceed side by side and reclaim
+	// each other's containers (measured: check run 2026.255.2323 — green through [start], then its
+	// pod container gone before the probes ran: 67 probes at exit-125, 28 lines carrying
+	// `container state improper` (15 lines carry exit=255), and
+	// nothing in that run attributing the disappearance to itself).
+	bedLock, bedLockErr := bedRunLockPath(bed)
+	if bedLockErr != nil {
+		rollback()
+		return spec.CheckBedReply{}, nil, fmt.Errorf("resolving the check bed lock for %q: %w", bed, bedLockErr)
+	}
+	bedUnlock, lockErr := lock.AcquireFileLock(bedLock, false)
 	if lockErr != nil {
 		rollback()
 		if errors.Is(lockErr, lock.ErrLockBusy) {
-			return spec.CheckBedReply{}, nil, fmt.Errorf("check bed %q is already running in this project — refusing a concurrent run (lock: .check/%s/.lock)", bed, bed)
+			return spec.CheckBedReply{}, nil, fmt.Errorf("check bed %q is already running — refusing a concurrent run: another charly process holds the bed lock %s. Two runs of one bed share the container/volume names of its deploy identity in the podman store, so the second would reclaim the first run's containers and volumes instead of testing them. Wait for that run to finish, or stop it: charly check stop %s", bed, bedLock, bed)
 		}
 		return spec.CheckBedReply{}, nil, fmt.Errorf("locking check bed %q: %w", bed, lockErr)
 	}

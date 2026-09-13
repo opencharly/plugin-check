@@ -33,10 +33,12 @@ import (
 //     because the kernel drops an flock when the holder dies — the file's presence
 //     proves nothing and its absence proves nothing. A `pid=` line there previously
 //     misled three readers into trusting the file over the process table.
-//   - BY LOCK HOLDER. A bed run holds an flock on `.check/<bed>/.lock` for its whole
-//     lifetime (bed_session.go). Asking the kernel who holds that specific file open
-//     identifies this bed's runner and nothing else — no other bed, no other session,
-//     no unrelated charly.
+//   - BY LOCK HOLDER. A bed run holds an flock on its USER-SCOPED bed lock
+//     (`$XDG_CACHE_HOME/charly/locks/bed-<sha8>.lock`, bed_lock.go) for its whole lifetime
+//     (bed_session.go). Asking the kernel who holds that specific file open identifies this
+//     bed's runner and nothing else — no other bed, no other session, no unrelated charly.
+//     The lock is user-scoped precisely so this works from ANY project directory: a bed run
+//     started elsewhere still owns the same container/volume names.
 //
 // The signal is SIGTERM first so the runner's own shutdown hooks run (they deregister
 // temp dirs and release the lock); SIGKILL only after a grace period, and only for a
@@ -51,7 +53,10 @@ func (c *CheckStopCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	lockPath := filepath.Join(cwd, ".check", c.Bed, ".lock")
+	lockPath, err := bedRunLockPath(c.Bed)
+	if err != nil {
+		return err
+	}
 
 	holders := proc.PIDsHoldingPath(lockPath)
 	if len(holders) == 0 {
