@@ -160,6 +160,17 @@ type diagnosticAllowance struct {
 	// A conditional error exemption still fails the step when the recovery is absent, which is the
 	// property the unconditional form would have thrown away.
 	RecoveredBy string
+
+	// ProofEndsOnLine binds a conditional proof to the CLAIMED LINE, for entries whose
+	// RecoveredBy chain TERMINATES IN the subject itself (the wording Match matches on).
+	// When set, the proof's match must END on the line being claimed, not merely appear
+	// somewhere in the step log. Without it a proof is LOG-scoped: pacman prints ONE
+	// wrapper wording for EVERY failing post-transaction hook, so "the chain is in this
+	// log" would discharge a SECOND hook's identically-worded error too. Only the
+	// container-systemd entry needs it today (its chain ends with the wrapper error);
+	// entries whose proof is a SEPARATE recovery line (mkinitcpio's success line, dnf's
+	// transaction-completion line) legitimately sit at a different line and leave it off.
+	ProofEndsOnLine bool
 }
 
 // diagnosticAllowlist is the complete set of reviewed exemptions.
@@ -493,6 +504,86 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"and the step still fails.",
 	},
 	{
+		ID:       "pacman-post-transaction-hook-container-systemd",
+		Severity: severityError,
+		// pacman runs every installed package's post-transaction hooks and reports a hook that
+		// exits nonzero as this ONE generic wrapper error — the same wording mkinitcpio's
+		// autodetect hook failure produces, which is why this entry and the mkinitcpio one both
+		// match it. The container case has a DIFFERENT hook and a different proof: e.g.
+		// `( 6/10) Loading new kernel modules...` calls systemd, systemd refuses because it is
+		// not PID 1, and the hook's nonzero exit becomes the wrapper error. The capture group
+		// satisfies the error-tier conditional requirement; the init refusal IS the proof (see
+		// RecoveredBy).
+		Match: regexp.MustCompile(`^error: (command failed to execute correctly)$`),
+		// The proof BINDS the claim to the hook that names this class, in order. pacman prints
+		// this ONE wrapper wording for EVERY failing post-transaction hook, so "a systemd
+		// refusal is somewhere in the log" is NOT sufficient: another hook can fail in the
+		// same step while the modules-load hook is separately refused, and that other failure
+		// would then be claimed. The anchor therefore requires the whole chain — the
+		// modules-load hook's OWN banner (`( N/M) Loading new kernel modules...`), systemd's
+		// container-init refusal that it triggers, and the wrapper error that follows — so a
+		// refusal printed by a DIFFERENT hook (device-manager, fontconfig, …) leaves the
+		// wrapper error FATAL — and because this chain TERMINATES IN the wrapper error it
+		// names, ProofEndsOnLine binds the proof to THAT line, so a SECOND wrapper error in
+		// the same log (a different hook failing alongside) is a different line and stays
+		// fatal too. Both the banner and the refusal sentences are asserted up to
+		// the point that NAMES the cause; their tails are not, so a line-wrapped or
+		// width-padded rendering of the SAME sentences still proves the class.
+		RecoveredBy: `(?s)\(\s*\d+/\d+\) Loading new kernel modules\.\.\.\n.*?` +
+			`System has not been booted with systemd as init system \(PID 1\)\.[^\n]*\n` +
+			`(?:[^\n]*\n){0,3}` +
+			`error: command failed to execute correctly`,
+		// The chain ENDS on the subject line, so the proof is LINE-BOUND: the match must end
+		// on the line being claimed (allowanceRecovered). Every other hook's wrapper error is
+		// a different line, and therefore stays fatal even in a log that carries this chain.
+		ProofEndsOnLine: true,
+		Why: "pacman reports a post-transaction HOOK that exits nonzero as the generic " +
+			"'error: command failed to execute correctly'. Inside a container build the " +
+			"kernel-modules hook calls systemd, and systemd refuses because it is not PID 1 — " +
+			"observed live in the check-githubrunner-pod image-build (RCA 2026-09-12): " +
+			"'( 6/10) Loading new kernel modules...', 'System has not been booted with " +
+			"systemd as init system (PID 1). Can't operate.', 'Failed to connect to system " +
+			"scope bus via local transport: Host is down', then the wrapper error — while the " +
+			"SAME log ends with the image successfully tagged, so the hook noise is the ONLY " +
+			"finding. Every image that runs pacman without systemd as PID 1 hits this, and there " +
+			"is nothing to fix at either end: the hook is doing what it was packaged to do, in a " +
+			"container it cannot succeed in. CONDITIONAL and BOUND TO THIS HOOK: the claim " +
+			"requires the modules-load hook's OWN '( N/M) Loading new kernel modules...' banner, " +
+			"the systemd refusal it triggers, and the wrapper error that follows them, in that " +
+			"order, and the proof is LINE-BOUND: it must END on the very line it claims. So a " +
+			"wrapper error belonging to a DIFFERENT failing hook is FATAL even in a log where " +
+			"the modules-load hook is also refused (it is a different line, and this entry's " +
+			"chain does not end there), and a genuine failure prints its OWN diagnostic line, " +
+			"which this entry does not claim.",
+	},
+	{
+		ID:       "podman-nested-rootfs-not-shared-mount",
+		Severity: severityWarning,
+		// podman (logrus) prints this when the root filesystem it is about to bind a rootless
+		// container against is not a SHARED mount — private roots do not propagate bind mounts.
+		// In a CONTAINER the rootfs IS private by construction: the OCI runtime mounts it
+		// MS_PRIVATE, so the nested podman a build step runs (the container-nesting candy)
+		// always sees this and prints it once per invocation, then goes on to populate the
+		// nested store. The capture group names the mount the advisory is about (`/`); the
+		// image being tagged is the proof the advisory stayed an advisory (see RecoveredBy).
+		Match:       regexp.MustCompile(`^[ \t]*time="[^"]*"[ \t]+level=warning[ \t]+msg="\\"(/)\\" is not a shared mount, this could cause issues or missing mounts with rootless containers"$`),
+		RecoveredBy: `(?m)^Successfully tagged `,
+		Why: "podman warns when the root it will bind a rootless container against is not a " +
+			"SHARED mount. Inside a build container the rootfs is PRIVATE — the OCI runtime " +
+			"mounts it MS_PRIVATE — so the nested rootless podman the container-nesting candy " +
+			"runs cannot see a shared root and reports it once per invocation. Observed live in " +
+			"check-githubrunner-pod's image-build (RCA 2026-09-12) at the STEP 56/99 RUN that " +
+			"prefetches quay.io/libpod/alpine into the nested store: the advisory is followed by " +
+			"the pull completing, by the remaining steps, and by 'Successfully tagged " +
+			"ghcr.io/opencharly/githubrunner:...'. The HOST is not the source: findmnt reports " +
+			"/ shared and a host-side podman run prints no such line, so this is container " +
+			"structure, not host mis-setup — and no mount went missing, which is what the tag " +
+			"proves. Inherent to ANY nested-podman build step; suppressing it would mean setting " +
+			"shared propagation on an isolated container rootfs, which its mount namespace makes " +
+			"meaningless. CONDITIONAL on the same log proving the image was tagged; a build that " +
+			"never tags does not claim the line.",
+	},
+	{
 		ID:       "mkinitcpio-chroot-warnings",
 		Severity: severityWarning,
 		// The pacstrap bootstrap VM's mkinitcpio/grub build emits four warning lines that
@@ -626,8 +717,10 @@ var diagnosticAllowlist = []diagnosticAllowance{
 //
 // The %s subject-tie is optional: an entry whose subject names no recoverable token omits the
 // placeholder and the recovery pattern is used as-is. Both forms are still conditional on the
-// same step log proving the operation recovered.
-func allowanceRecovered(a *diagnosticAllowance, text, log string) bool {
+// same step log proving the operation recovered — and an entry whose chain TERMINATES IN its
+// subject sets ProofEndsOnLine, which additionally requires the proof's match to END ON the
+// line being claimed rather than somewhere in the log.
+func allowanceRecovered(a *diagnosticAllowance, text, log string, line int) bool {
 	if a.RecoveredBy == "" {
 		return true
 	}
@@ -643,7 +736,19 @@ func allowanceRecovered(a *diagnosticAllowance, text, log string) bool {
 	if err != nil {
 		return false
 	}
-	return re.MatchString(log)
+	loc := re.FindStringIndex(log)
+	if loc == nil {
+		return false
+	}
+	if !a.ProofEndsOnLine {
+		return true
+	}
+	// LINE-BOUND proofs (ProofEndsOnLine): the chain must END on the line being claimed.
+	// A proof that merely APPEARS SOMEWHERE in the step log discharges every other line
+	// carrying the same wording, and several hooks share pacman's one wrapper wording — so
+	// "this chain is in the log" is NOT the same claim as "THIS line is the chain's end",
+	// which is the claim the entry makes. Lines before the match end cannot be inside it.
+	return strings.Count(log[:loc[1]], "\n")+1 == line
 }
 
 // diagnosticFinding is one matched line, resolved against the allowlist.
@@ -709,13 +814,42 @@ func classifyDiagnosticLine(line string) (diagnosticSeverity, string, bool) {
 	return "", "", false
 }
 
-// allowanceFor returns the allowlist entry claiming this line, or nil. An entry only claims
-// a line in its own severity tier, so a warning-tier exemption can never silently absolve an
-// error-tier finding that happens to share wording.
+// allowanceFor returns the FIRST allowlist entry whose anchored pattern fires on this line, or
+// nil — the pattern-scoping lookup, in table order and INDEPENDENT of any conditional proof. An
+// entry only matches a line in its own severity tier, so a warning-tier exemption can never
+// silently absolve an error-tier finding that happens to share wording.
+//
+// The GATE does not resolve a claim with this: it calls allowanceClaiming, which additionally
+// requires the matching entry's own proof to hold against the step log.
 func allowanceFor(severity diagnosticSeverity, text string) *diagnosticAllowance {
 	for i := range diagnosticAllowlist {
 		a := &diagnosticAllowlist[i]
 		if a.Severity == severity && a.Match.MatchString(text) {
+			return a
+		}
+	}
+	return nil
+}
+
+// allowanceClaiming returns the entry that CLAIMS this line in THIS log: the first matching
+// entry whose conditional proof holds, or nil.
+//
+// SEVERAL ENTRIES CAN MATCH ONE LINE, and each brings its own proof. pacman reports EVERY
+// failing post-transaction hook as the same generic `error: command failed to execute
+// correctly`, and the hook families are indistinguishable from that wrapper text alone — so the
+// mkinitcpio entry and the container-systemd entry both match it. The walk therefore CONTINUES
+// past a matching entry whose proof is absent from this log instead of letting it shadow a
+// later entry whose proof IS there; with a first-match-wins lookup, a second entry for an
+// existing wrapper wording could never take effect at all. The claim stays CONDITIONAL
+// per-entry either way: a line is discharged only when the CLAIMING entry's own RecoveredBy
+// holds against this log.
+func allowanceClaiming(severity diagnosticSeverity, text, log string, line int) *diagnosticAllowance {
+	for i := range diagnosticAllowlist {
+		a := &diagnosticAllowlist[i]
+		if a.Severity != severity || !a.Match.MatchString(text) {
+			continue
+		}
+		if allowanceRecovered(a, text, log, line) {
 			return a
 		}
 	}
@@ -740,7 +874,7 @@ func scanStepDiagnostics(log string) stepDiagnostics {
 		}
 		text := strings.TrimSpace(raw)
 		finding := diagnosticFinding{Severity: severity, Pattern: pattern, Line: i + 1, Text: text}
-		if a := allowanceFor(severity, text); a != nil && allowanceRecovered(a, text, log) {
+		if a := allowanceClaiming(severity, text, log, i+1); a != nil {
 			finding.AllowID = a.ID
 			d.Allowlisted++
 		} else if severity == severityError {

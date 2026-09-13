@@ -421,6 +421,188 @@ func TestPacmanHookFailedMkinitcpioIsConditional(t *testing.T) {
 	})
 }
 
+// TestPacmanPostTransactionHookContainerSystemdIsConditional covers the OTHER hook family that
+// pacman reports with the same generic wrapper error: the post-transaction kernel-modules hook
+// of a CONTAINER build, where there is no systemd as PID 1 to answer. The fixture is the
+// verbatim captured sequence from the check-githubrunner-pod image-build (RCA 2026-09-11/12),
+// where the log carried this ONE error line and the image itself built and was tagged.
+//
+// The negative rows are why this is an allowance rather than a blanket pacman exemption: the
+// wrapper error with NO refusal in the log still fails the step, and pacman's own real failure
+// wording is never claimed — not even when the refusal shares the log.
+func TestPacmanPostTransactionHookContainerSystemdIsConditional(t *testing.T) {
+	// Captured verbatim from the run whose image tag is `check-githubrunner-pod-2026.254.2125`.
+	// The line numbers previously cited here (1842-1846) belong to THAT capture run; in the
+	// body's PRIMARY run (`2026.256.0058`, forced cold) the same chain appears at lines 1745–1748,
+	// the wrapper error at `first_line: 1748`. Citations name their own run.
+	const captured = "( 6/10) Loading new kernel modules...\n" +
+		"System has not been booted with systemd as init system (PID 1). Can't operate.\n" +
+		"Failed to connect to system scope bus via local transport: Host is down\n" +
+		"error: command failed to execute correctly\n" +
+		"( 7/10) Updating fontconfig configuration...\n"
+	const errLine = "error: command failed to execute correctly\n"
+	const step = "STEP 12/14: RUN pacman -S --needed ...\n"
+
+	t.Run("the captured container hook sequence is exempt", func(t *testing.T) {
+		d := scanStepDiagnostics(step + captured)
+		if d.Errors != 0 || d.Allowlisted != 1 || d.fails(defaultDiagnosticPolicy()) {
+			t.Errorf("the container hook wrapper error must be exempt; got %+v", d)
+		}
+		if id := allowIDForLine(d, errLine); id != "pacman-post-transaction-hook-container-systemd" {
+			t.Errorf("the wrapper error must be claimed by its OWN entry, got %q", id)
+		}
+	})
+
+	t.Run("the wrapper error with no refusal in the log is fatal", func(t *testing.T) {
+		d := scanStepDiagnostics(step + errLine)
+		if d.Errors != 1 || d.Allowlisted != 0 || !d.fails(defaultDiagnosticPolicy()) {
+			t.Errorf("an unexplained hook failure must still fail the step; got %+v", d)
+		}
+	})
+
+	t.Run("a DIFFERENT hook's refusal does not exempt the wrapper error", func(t *testing.T) {
+		// The device-manager hook is refused by systemd in the same container build, but the
+		// modules-load hook's OWN banner is absent: the refusal ALONE must not claim a wrapper
+		// error that can belong to the device-manager hook instead. This is the boundary the
+		// review required — several hooks share the one wrapper wording, so the anchor binds to
+		// the hook that names this class.
+		const otherHook = "( 6/10) Reloading device manager configuration...\n" +
+			"System has not been booted with systemd as init system (PID 1). Can't operate.\n" +
+			"error: command failed to execute correctly\n"
+		d := scanStepDiagnostics(step + otherHook)
+		if d.Errors != 1 || d.Allowlisted != 0 || !d.fails(defaultDiagnosticPolicy()) {
+			t.Errorf("a refusal from a DIFFERENT hook must leave the wrapper error fatal; got %+v", d)
+		}
+	})
+
+	t.Run("a SECOND hook's wrapper error in the same log stays fatal", func(t *testing.T) {
+		// The co-occurrence boundary the review named: the modules-load chain IS present in
+		// the log (so a LOG-scoped proof would find it), and ANOTHER post-transaction hook
+		// fails in the same transaction. Because pacman prints the SAME wrapper wording for
+		// both, "the chain is somewhere in this log" would discharge the other hook's error
+		// too. ProofEndsOnLine binds the proof to the line it claims: the chain ends on the
+		// modules-load wrapper error — a different line — so the other hook's failure still
+		// counts and the step still fails.
+		const secondHookFails = "( 7/10) Reloading device manager configuration...\n" +
+			"System has not been booted with systemd as init system (PID 1). Can't operate.\n" +
+			"error: command failed to execute correctly\n"
+		d := scanStepDiagnostics(step + captured + secondHookFails)
+		if d.Errors != 1 || d.Allowlisted != 1 || !d.fails(defaultDiagnosticPolicy()) {
+			t.Errorf("a second hook's wrapper error must stay fatal while the chain's own line is claimed; got %+v", d)
+		}
+		if id := allowIDForLine(d, errLine); id != "pacman-post-transaction-hook-container-systemd" {
+			t.Errorf("the modules-load wrapper error must still be claimed by its OWN entry, got %q", id)
+		}
+	})
+
+	t.Run("the refusal does not exempt a REAL pacman failure", func(t *testing.T) {
+		const realFailure = "error: failed to commit transaction (conflicting files)\n"
+		d := scanStepDiagnostics(step + captured + realFailure)
+		if d.Errors != 1 || d.Allowlisted != 1 || !d.fails(defaultDiagnosticPolicy()) {
+			t.Errorf("a failed transaction must stay fatal; got %+v", d)
+		}
+		if id := allowIDForLine(d, realFailure); id != "" {
+			t.Errorf("pacman's real failure wording must not be claimed, got %q", id)
+		}
+	})
+}
+
+// TestHookWrapperEntriesResolvePerProof pins the resolution rule the two wrapper entries depend
+// on. pacman's `error: command failed to execute correctly` is matched by BOTH
+// pacman-hook-failed-mkinitcpio-recovered and pacman-post-transaction-hook-container-systemd,
+// and which one CLAIMS it is decided by the proof present in the log — never by table order
+// alone. With a first-match-wins lookup, adding the second entry would have been a no-op: the
+// mkinitcpio entry matches first, its recovery is absent in a container build, and the
+// container class would have stayed fatal with the new entry never consulted.
+func TestHookWrapperEntriesResolvePerProof(t *testing.T) {
+	const errLine = "error: command failed to execute correctly\n"
+	const step = "STEP 1/1: RUN pacman -Syu --needed linux\n"
+
+	t.Run("only the mkinitcpio proof present", func(t *testing.T) {
+		d := scanStepDiagnostics(step + errLine + "==> Initcpio image generation successful\n")
+		if d.Errors != 0 || d.Allowlisted != 1 {
+			t.Fatalf("the completed hook must exempt the wrapper error; got %+v", d)
+		}
+		if id := allowIDForLine(d, errLine); id != "pacman-hook-failed-mkinitcpio-recovered" {
+			t.Errorf("want the mkinitcpio entry, got %q", id)
+		}
+	})
+
+	t.Run("only the container-init proof present", func(t *testing.T) {
+		// The container-init proof is the WHOLE chain the entry's RecoveredBy binds to: the
+		// modules-load hook's own banner, systemd's refusal, then the wrapper error (verbatim
+		// from the captured check-githubrunner-pod image-build).
+		const containerChain = "( 6/10) Loading new kernel modules...\n" +
+			"System has not been booted with systemd as init system (PID 1). Can't operate.\n" +
+			"Failed to connect to system scope bus via local transport: Host is down\n" +
+			"error: command failed to execute correctly\n"
+		d := scanStepDiagnostics(step + containerChain)
+		if d.Errors != 0 || d.Allowlisted != 1 {
+			t.Fatalf("the container-init signature must claim the wrapper error; got %+v", d)
+		}
+		if id := allowIDForLine(d, errLine); id != "pacman-post-transaction-hook-container-systemd" {
+			t.Errorf("want the container-systemd entry, got %q", id)
+		}
+	})
+}
+
+// TestPodmanNestedRootfsNotSharedMountAdvisoryIsConditional covers the podman logrus advisory an
+// IN-CONTAINER (nested) rootless podman prints when the root filesystem it will bind against is
+// not a SHARED mount. The host is not the source — findmnt reports `/` shared there and a
+// host-side podman run prints no such line (both checked 2026-09-12) — while inside a build
+// container the OCI runtime mounts the rootfs MS_PRIVATE, so the nested podman the
+// container-nesting candy runs always prints it and then populates the nested store.
+//
+// Captured verbatim from the run whose image tag is `check-githubrunner-pod-2026.254.2125`
+// (its `level=warning` timestamp is that run's), inside the STEP 56/99 RUN that prefetches
+// quay.io/libpod/alpine. In the body's PRIMARY run (`2026.256.0058`, forced cold) the same
+// advisory appears at `first_line: 1857`. The line number below names the CAPTURE run, not that one.
+func TestPodmanNestedRootfsNotSharedMountAdvisoryIsConditional(t *testing.T) {
+	// Verbatim from the CAPTURE run named above. The escaped quote pair around the slash is
+	// podman's logrus rendering of the mount path the advisory names.
+	const advisory = `time="2026-09-11T21:31:45Z" level=warning msg="\"/\" is not a shared mount, this could cause issues or missing mounts with rootless containers"` + "\n"
+	const step = "[23/23] STEP 56/99: RUN --mount=type=bind,from=container-nesting,source=/,target=/ctx sh -c 'exec \"$SH\"'\n"
+	const tagged = "Successfully tagged ghcr.io/opencharly/githubrunner:check-githubrunner-pod-2026.254.2125\n"
+
+	t.Run("the nested podman advisory is exempt once the image is tagged", func(t *testing.T) {
+		d := scanStepDiagnostics(step + advisory + "Trying to pull quay.io/libpod/alpine:latest...\n" + tagged)
+		if d.Warnings != 0 || d.Allowlisted != 1 {
+			t.Errorf("the container-inherent advisory must be exempt; got %+v", d)
+		}
+		if id := allowIDForLine(d, advisory); id != "podman-nested-rootfs-not-shared-mount" {
+			t.Errorf("want the podman-nested-rootfs-not-shared-mount entry, got %q", id)
+		}
+	})
+
+	t.Run("the advisory in a build that never tags is still a warning", func(t *testing.T) {
+		d := scanStepDiagnostics(step + advisory)
+		if d.Warnings != 1 || d.Allowlisted != 0 {
+			t.Errorf("an untagged build must not discharge the advisory; got %+v", d)
+		}
+	})
+
+	t.Run("other podman logrus warnings are untouched", func(t *testing.T) {
+		const other = `time="2026-09-11T21:31:45Z" level=warning msg="some other podman warning"` + "\n"
+		d := scanStepDiagnostics(step + other + tagged)
+		if d.Warnings != 1 || d.Allowlisted != 0 {
+			t.Errorf("the entry must claim ONLY the shared-mount advisory; got %+v", d)
+		}
+	})
+}
+
+// allowIDForLine returns the allowlist id a scan attributed to the finding whose text equals
+// line, or "" when the line carried no exemption. Naming WHICH entry claimed a line is the
+// whole point of the per-entry conditional form, so the tests assert it rather than the count
+// alone.
+func allowIDForLine(d stepDiagnostics, line string) string {
+	for _, f := range d.Findings {
+		if f.Text == strings.TrimSpace(line) {
+			return f.AllowID
+		}
+	}
+	return ""
+}
+
 // TestSystemdUnitFileDaemonReloadAllowanceIsScoped proves the systemd 'unit file
 // changed on disk' notice (printed by RPM scriptlets when a package ships/modifies
 // a unit — nfs-utils/gssproxy etc.) is allowlisted, while a REAL unit-file error
