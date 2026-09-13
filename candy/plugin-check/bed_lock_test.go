@@ -15,8 +15,12 @@ import (
 // bed_lock_test.go — the regression guard for the PROJECT-INDEPENDENT bed lock. The defect it
 // pins: the duplicate-run guard keyed on `.check/<bed>/.lock`, a path derived from the invoking
 // project directory, so two runs of the SAME bed from two directories saw no contention while
-// claiming the SAME container/volume names in the shared podman store (measured: run 2026.255.2323,
-// 67 probes at exit-125 after a peer lane reclaimed its container).
+// claiming the SAME container/volume names in the shared podman store. The measured shape (check
+// run 2026.255.2323): the run went green through [start], then its pod container stopped existing
+// before its probes ran — 67 probes at exit-125 (`no container with name or ID … found`), 28 lines
+// at exit=255 (`container state improper`), and nothing in the run attributing the disappearance
+// to itself, i.e. it came from outside. The peer-lane SIGTERM attribution is that campaign's
+// report (distro-cachyos#83).
 
 // TestBedRunLockPath_IsProjectIndependent is the failing-then-passing half: with the old
 // project-relative key, the path CHANGED with the working directory and this test fails.
