@@ -475,6 +475,26 @@ func TestPacmanPostTransactionHookContainerSystemdIsConditional(t *testing.T) {
 		}
 	})
 
+	t.Run("a SECOND hook's wrapper error in the same log stays fatal", func(t *testing.T) {
+		// The co-occurrence boundary the review named: the modules-load chain IS present in
+		// the log (so a LOG-scoped proof would find it), and ANOTHER post-transaction hook
+		// fails in the same transaction. Because pacman prints the SAME wrapper wording for
+		// both, "the chain is somewhere in this log" would discharge the other hook's error
+		// too. ProofEndsOnLine binds the proof to the line it claims: the chain ends on the
+		// modules-load wrapper error — a different line — so the other hook's failure still
+		// counts and the step still fails.
+		const secondHookFails = "( 7/10) Reloading device manager configuration...\n" +
+			"System has not been booted with systemd as init system (PID 1). Can't operate.\n" +
+			"error: command failed to execute correctly\n"
+		d := scanStepDiagnostics(step + captured + secondHookFails)
+		if d.Errors != 1 || d.Allowlisted != 1 || !d.fails(defaultDiagnosticPolicy()) {
+			t.Errorf("a second hook's wrapper error must stay fatal while the chain's own line is claimed; got %+v", d)
+		}
+		if id := allowIDForLine(d, errLine); id != "pacman-post-transaction-hook-container-systemd" {
+			t.Errorf("the modules-load wrapper error must still be claimed by its OWN entry, got %q", id)
+		}
+	})
+
 	t.Run("the refusal does not exempt a REAL pacman failure", func(t *testing.T) {
 		const realFailure = "error: failed to commit transaction (conflicting files)\n"
 		d := scanStepDiagnostics(step + captured + realFailure)

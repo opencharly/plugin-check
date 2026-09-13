@@ -160,6 +160,17 @@ type diagnosticAllowance struct {
 	// A conditional error exemption still fails the step when the recovery is absent, which is the
 	// property the unconditional form would have thrown away.
 	RecoveredBy string
+
+	// ProofEndsOnLine binds a conditional proof to the CLAIMED LINE, for entries whose
+	// RecoveredBy chain TERMINATES IN the subject itself (the wording Match matches on).
+	// When set, the proof's match must END on the line being claimed, not merely appear
+	// somewhere in the step log. Without it a proof is LOG-scoped: pacman prints ONE
+	// wrapper wording for EVERY failing post-transaction hook, so "the chain is in this
+	// log" would discharge a SECOND hook's identically-worded error too. Only the
+	// container-systemd entry needs it today (its chain ends with the wrapper error);
+	// entries whose proof is a SEPARATE recovery line (mkinitcpio's success line, dnf's
+	// transaction-completion line) legitimately sit at a different line and leave it off.
+	ProofEndsOnLine bool
 }
 
 // diagnosticAllowlist is the complete set of reviewed exemptions.
@@ -512,13 +523,20 @@ var diagnosticAllowlist = []diagnosticAllowance{
 		// modules-load hook's OWN banner (`( N/M) Loading new kernel modules...`), systemd's
 		// container-init refusal that it triggers, and the wrapper error that follows — so a
 		// refusal printed by a DIFFERENT hook (device-manager, fontconfig, …) leaves the
-		// wrapper error FATAL. Both the banner and the refusal sentences are asserted up to
+		// wrapper error FATAL — and because this chain TERMINATES IN the wrapper error it
+		// names, ProofEndsOnLine binds the proof to THAT line, so a SECOND wrapper error in
+		// the same log (a different hook failing alongside) is a different line and stays
+		// fatal too. Both the banner and the refusal sentences are asserted up to
 		// the point that NAMES the cause; their tails are not, so a line-wrapped or
 		// width-padded rendering of the SAME sentences still proves the class.
 		RecoveredBy: `(?s)\(\s*\d+/\d+\) Loading new kernel modules\.\.\.\n.*?` +
 			`System has not been booted with systemd as init system \(PID 1\)\.[^\n]*\n` +
 			`(?:[^\n]*\n){0,3}` +
 			`error: command failed to execute correctly`,
+		// The chain ENDS on the subject line, so the proof is LINE-BOUND: the match must end
+		// on the line being claimed (allowanceRecovered). Every other hook's wrapper error is
+		// a different line, and therefore stays fatal even in a log that carries this chain.
+		ProofEndsOnLine: true,
 		Why: "pacman reports a post-transaction HOOK that exits nonzero as the generic " +
 			"'error: command failed to execute correctly'. Inside a container build the " +
 			"kernel-modules hook calls systemd, and systemd refuses because it is not PID 1 — " +
@@ -532,9 +550,11 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"container it cannot succeed in. CONDITIONAL and BOUND TO THIS HOOK: the claim " +
 			"requires the modules-load hook's OWN '( N/M) Loading new kernel modules...' banner, " +
 			"the systemd refusal it triggers, and the wrapper error that follows them, in that " +
-			"order — so a wrapper error belonging to a DIFFERENT failing hook stays fatal even in " +
-			"a log where the modules-load hook is also refused, and a genuine failure prints its " +
-			"OWN diagnostic line, which this entry does not claim.",
+			"order, and the proof is LINE-BOUND: it must END on the very line it claims. So a " +
+			"wrapper error belonging to a DIFFERENT failing hook is FATAL even in a log where " +
+			"the modules-load hook is also refused (it is a different line, and this entry's " +
+			"chain does not end there), and a genuine failure prints its OWN diagnostic line, " +
+			"which this entry does not claim.",
 	},
 	{
 		ID:       "podman-nested-rootfs-not-shared-mount",
@@ -697,8 +717,10 @@ var diagnosticAllowlist = []diagnosticAllowance{
 //
 // The %s subject-tie is optional: an entry whose subject names no recoverable token omits the
 // placeholder and the recovery pattern is used as-is. Both forms are still conditional on the
-// same step log proving the operation recovered.
-func allowanceRecovered(a *diagnosticAllowance, text, log string) bool {
+// same step log proving the operation recovered — and an entry whose chain TERMINATES IN its
+// subject sets ProofEndsOnLine, which additionally requires the proof's match to END ON the
+// line being claimed rather than somewhere in the log.
+func allowanceRecovered(a *diagnosticAllowance, text, log string, line int) bool {
 	if a.RecoveredBy == "" {
 		return true
 	}
@@ -714,7 +736,19 @@ func allowanceRecovered(a *diagnosticAllowance, text, log string) bool {
 	if err != nil {
 		return false
 	}
-	return re.MatchString(log)
+	loc := re.FindStringIndex(log)
+	if loc == nil {
+		return false
+	}
+	if !a.ProofEndsOnLine {
+		return true
+	}
+	// LINE-BOUND proofs (ProofEndsOnLine): the chain must END on the line being claimed.
+	// A proof that merely APPEARS SOMEWHERE in the step log discharges every other line
+	// carrying the same wording, and several hooks share pacman's one wrapper wording — so
+	// "this chain is in the log" is NOT the same claim as "THIS line is the chain's end",
+	// which is the claim the entry makes. Lines before the match end cannot be inside it.
+	return strings.Count(log[:loc[1]], "\n")+1 == line
 }
 
 // diagnosticFinding is one matched line, resolved against the allowlist.
@@ -809,13 +843,13 @@ func allowanceFor(severity diagnosticSeverity, text string) *diagnosticAllowance
 // existing wrapper wording could never take effect at all. The claim stays CONDITIONAL
 // per-entry either way: a line is discharged only when the CLAIMING entry's own RecoveredBy
 // holds against this log.
-func allowanceClaiming(severity diagnosticSeverity, text, log string) *diagnosticAllowance {
+func allowanceClaiming(severity diagnosticSeverity, text, log string, line int) *diagnosticAllowance {
 	for i := range diagnosticAllowlist {
 		a := &diagnosticAllowlist[i]
 		if a.Severity != severity || !a.Match.MatchString(text) {
 			continue
 		}
-		if allowanceRecovered(a, text, log) {
+		if allowanceRecovered(a, text, log, line) {
 			return a
 		}
 	}
@@ -840,7 +874,7 @@ func scanStepDiagnostics(log string) stepDiagnostics {
 		}
 		text := strings.TrimSpace(raw)
 		finding := diagnosticFinding{Severity: severity, Pattern: pattern, Line: i + 1, Text: text}
-		if a := allowanceClaiming(severity, text, log); a != nil {
+		if a := allowanceClaiming(severity, text, log, i+1); a != nil {
 			finding.AllowID = a.ID
 			d.Allowlisted++
 		} else if severity == severityError {
