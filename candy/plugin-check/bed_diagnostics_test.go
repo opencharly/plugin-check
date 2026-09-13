@@ -433,8 +433,8 @@ func TestPacmanHookFailedMkinitcpioIsConditional(t *testing.T) {
 func TestPacmanPostTransactionHookContainerSystemdIsConditional(t *testing.T) {
 	// Captured verbatim from the run whose image tag is `check-githubrunner-pod-2026.254.2125`.
 	// The line numbers previously cited here (1842-1846) belong to THAT capture run; in the
-	// body's RETAINED run (`2026.255.0829`) the same refusal appears at `first_line: 1703`
-	// (`error: command failed to execute correctly`). Citations name their own run.
+	// body's PRIMARY run (`2026.256.0058`, forced cold) the same chain appears at lines 1745–1748,
+	// the wrapper error at `first_line: 1748`. Citations name their own run.
 	const captured = "( 6/10) Loading new kernel modules...\n" +
 		"System has not been booted with systemd as init system (PID 1). Can't operate.\n" +
 		"Failed to connect to system scope bus via local transport: Host is down\n" +
@@ -535,8 +535,8 @@ func TestHookWrapperEntriesResolvePerProof(t *testing.T) {
 //
 // Captured verbatim from the run whose image tag is `check-githubrunner-pod-2026.254.2125`
 // (its `level=warning` timestamp is that run's), inside the STEP 56/99 RUN that prefetches
-// quay.io/libpod/alpine. In the body's RETAINED run (`2026.255.0829`) the same advisory appears
-// at `first_line: 1812`. The line number below names the CAPTURE run, not the retained one.
+// quay.io/libpod/alpine. In the body's PRIMARY run (`2026.256.0058`, forced cold) the same
+// advisory appears at `first_line: 1857`. The line number below names the CAPTURE run, not that one.
 func TestPodmanNestedRootfsNotSharedMountAdvisoryIsConditional(t *testing.T) {
 	// Verbatim from the CAPTURE run named above. The escaped quote pair around the slash is
 	// podman's logrus rendering of the mount path the advisory names.
