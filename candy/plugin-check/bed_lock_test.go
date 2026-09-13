@@ -18,7 +18,7 @@ import (
 // claiming the SAME container/volume names in the shared podman store. The measured shape (check
 // run 2026.255.2323): the run went green through [start], then its pod container stopped existing
 // before its probes ran — 67 probes at exit-125 (`no container with name or ID … found`), 28 lines
-// at exit=255 (`container state improper`), and nothing in the run attributing the disappearance
+// carrying `container state improper`, 15 lines carrying exit=255, and nothing in the run attributing the disappearance
 // to itself, i.e. it came from outside. The peer-lane SIGTERM attribution is that campaign's
 // report (distro-cachyos#83).
 

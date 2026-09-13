@@ -389,7 +389,8 @@ func bedSetup(ctx context.Context, ex *sdk.Executor, bed, dir string) (spec.Chec
 	// first run's CONTAINERS AND VOLUMES in the shared podman store, not anything under the project
 	// directory, so a project-relative key let two runs of one bed proceed side by side and reclaim
 	// each other's containers (measured: check run 2026.255.2323 — green through [start], then its
-	// pod container gone before the probes ran: 67 probes at exit-125, 28 lines at exit=255, and
+	// pod container gone before the probes ran: 67 probes at exit-125, 28 lines carrying
+	// `container state improper` (15 lines carry exit=255), and
 	// nothing in that run attributing the disappearance to itself).
 	bedLock, bedLockErr := bedRunLockPath(bed)
 	if bedLockErr != nil {

@@ -11,8 +11,8 @@ package check
 //
 // From check run 2026.255.2323's OWN output: it ran green through [start] (01:29:12), then its
 // pod container `charly-check-githubrunner-pod` stopped existing before its probes ran (01:29:34)
-// — 67 probes failed with exit-125 (`no container with name or ID … found`) and 28 lines carry
-// `container state improper` (exit=255). Nothing in that run attributes the disappearance to
+// — 67 probes failed with exit-125 (`no container with name or ID … found`), 28 lines carry
+// `container state improper`, and 15 lines carry exit=255. Nothing in that run attributes the disappearance to
 // itself, i.e. it came from OUTSIDE the run; the peer-lane SIGTERM is that campaign's report
 // (distro-cachyos#83), not something this run's log shows. A project-scoped guard cannot see an
 // outside run, which is the whole point of the user-scoped key below.
