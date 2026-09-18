@@ -137,6 +137,14 @@ func configStartArgs(name, imageTag string, hasAddCandy bool) (configArgs, start
 	return configArgs, startArgs
 }
 
+// capturesGolden reports whether THIS run captures an on_finalize golden: a VM bed, the
+// FRESH lane (no --anchor — the anchored lane reverts to the golden instead), and a
+// snapshot: policy naming OnFinalize. Extracted so the §5.3 capture + the §5.3.2
+// keeper-stop (which MUST both fire together) have ONE definition and a unit gate.
+func capturesGolden(d spec.CheckBedReply, opts bedRunOpts, snap *spec.VmSnapshotPolicy) bool {
+	return d.IsVM && opts.Anchor == "" && snap != nil && snap.OnFinalize != ""
+}
+
 // vmBuildArgs returns the vm-build step args: `vm build <entity>` threaded with
 // --from-snapshot <snapshot> when the deploy carries one (the unified from: name:tag
 // clone drive — the bed builds the entity as a clone of its own golden at that
@@ -933,7 +941,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// anchored lane (--anchor) reverts to it instead of reinstalling. The capture
 	// targets the bed's per-deploy domain (--domain <BedDomain>, #33/P33) and is
 	// idempotent: an already-captured baseline (a re-run of the fresh lane) skips.
-	if d.IsVM && opts.Anchor == "" && bedNode.Snapshot != nil && bedNode.Snapshot.OnFinalize != "" {
+	if capturesGolden(d, opts, bedNode.Snapshot) {
 		verb := "create"
 		if bedNode.Snapshot.Consistent {
 			verb = "create-consistent"
@@ -947,6 +955,26 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 				return fail("snapshot capture %s -> %q: %w", d.VMTemplate, bedNode.Snapshot.OnFinalize, err)
 			}
 			fmt.Fprintf(os.Stderr, "note: snapshot %q already captured on %s \u2014 keeping the existing baseline\n", bedNode.Snapshot.OnFinalize, d.BedDomain)
+		}
+
+		// §5.3.2 STOP THE KEEPER (R1, the golden-exclusive-lock regression). The capture
+		// above created an EXTERNAL snapshot while the keeper domain stayed RUNNING on
+		// it — so the keeper holds an exclusive qemu write lock on
+		// snapshots/<name>/disk.qcow2, and every anchored lane's clone then fails to
+		// open the SAME file as a read-only backing:
+		//
+		//   qemu-system-x86_64: ... Failed to get shared "write" lock
+		//     Is another process using the image [.../snapshots/golden/disk.qcow2]?
+		//
+		// docs/golden-vm.md states the requirement ("stop the domain so the golden is
+		// never held exclusively") but the runner never did it, because keep_venue:
+		// true forces opts.Keep and suppresses the teardown's `vm destroy`. Stop the
+		// keeper here, AFTER the capture, so the golden is frozen and shareable for
+		// every subsequent anchored lane. Idempotent (`vm stop` on a shut-off domain is
+		// a clean success), so a re-run of the fresh lane is safe; the venue is KEPT
+		// (disk + definition preserved) — only the running process is released.
+		if err := step("snapshot-stop-keeper", "vm", "stop", d.VMTemplate, "--domain", d.BedDomain); err != nil {
+			return fail("stop the keeper after golden capture %s -> %q: %w", d.VMTemplate, bedNode.Snapshot.OnFinalize, err)
 		}
 	}
 
