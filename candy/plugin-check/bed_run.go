@@ -137,6 +137,49 @@ func configStartArgs(name, imageTag string, hasAddCandy bool) (configArgs, start
 	return configArgs, startArgs
 }
 
+// capturesGolden reports whether THIS run captures an on_finalize golden: a VM bed, the
+// FRESH lane (no --anchor — the anchored lane reverts to the golden instead), and a
+// snapshot: policy naming OnFinalize. Extracted so the §5.3 capture + the §5.3.2
+// keeper-stop (which MUST both fire together) have ONE definition and a unit gate.
+func capturesGolden(d spec.CheckBedReply, opts bedRunOpts, snap *spec.VmSnapshotPolicy) bool {
+	return d.IsVM && opts.Anchor == "" && snap != nil && snap.OnFinalize != ""
+}
+
+// bedStep is one emitted `charly` step in a bed run: a step name + its argv.
+type bedStep struct {
+	Name string
+	Argv []string
+}
+
+// goldenCaptureSteps is the ORDERED step sequence emitted when a bed captures an
+// on_finalize golden: §5.3 the snapshot capture, then §5.3.2 the keeper stop that
+// releases the exclusive qemu write lock on the freshly captured golden. It is the ONE
+// definition of that sequence, so a test pins the emitted steps themselves (not merely
+// the capture predicate): deleting the keeper-stop while leaving capturesGolden intact
+// fails TestGoldenCaptureSteps. Pure — no executor, no side effects.
+func goldenCaptureSteps(d spec.CheckBedReply, snap *spec.VmSnapshotPolicy) []bedStep {
+	verb := "create"
+	if snap.Consistent {
+		verb = "create-consistent"
+	}
+	capture := []string{"vm", "snapshot", verb, d.VMTemplate, snap.OnFinalize, "--domain", d.BedDomain}
+	if snap.Mode != "" {
+		capture = append(capture, "--mode", snap.Mode)
+	}
+	return []bedStep{
+		{Name: "snapshot-capture", Argv: capture},
+		// §5.3.2 STOP THE KEEPER (the golden-exclusive-lock regression): the capture
+		// above created an EXTERNAL snapshot while the keeper domain stayed RUNNING on
+		// it, so the keeper holds an exclusive qemu write lock on
+		// snapshots/<name>/disk.qcow2 and every anchored clone fails to open it as a
+		// read-only backing (`Failed to get shared "write" lock`). keep_venue: true
+		// forces opts.Keep and suppresses the teardown's `vm destroy`, so this explicit
+		// stop is the ONLY release. Idempotent (a shut-off domain stops cleanly); the
+		// venue stays KEPT — only the process is released.
+		{Name: "snapshot-stop-keeper", Argv: []string{"vm", "stop", d.VMTemplate, "--domain", d.BedDomain}},
+	}
+}
+
 // vmBuildArgs returns the vm-build step args: `vm build <entity>` threaded with
 // --from-snapshot <snapshot> when the deploy carries one (the unified from: name:tag
 // clone drive — the bed builds the entity as a clone of its own golden at that
@@ -933,20 +976,16 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// anchored lane (--anchor) reverts to it instead of reinstalling. The capture
 	// targets the bed's per-deploy domain (--domain <BedDomain>, #33/P33) and is
 	// idempotent: an already-captured baseline (a re-run of the fresh lane) skips.
-	if d.IsVM && opts.Anchor == "" && bedNode.Snapshot != nil && bedNode.Snapshot.OnFinalize != "" {
-		verb := "create"
-		if bedNode.Snapshot.Consistent {
-			verb = "create-consistent"
-		}
-		argv := []string{"vm", "snapshot", verb, d.VMTemplate, bedNode.Snapshot.OnFinalize, "--domain", d.BedDomain}
-		if bedNode.Snapshot.Mode != "" {
-			argv = append(argv, "--mode", bedNode.Snapshot.Mode)
-		}
-		if err := step("snapshot-capture", argv...); err != nil {
-			if !strings.Contains(err.Error(), "already exists") {
-				return fail("snapshot capture %s -> %q: %w", d.VMTemplate, bedNode.Snapshot.OnFinalize, err)
+	if capturesGolden(d, opts, bedNode.Snapshot) {
+		// The ONE ordered sequence (capture then keeper-stop); see goldenCaptureSteps.
+		for _, s := range goldenCaptureSteps(d, bedNode.Snapshot) {
+			if err := step(s.Name, s.Argv...); err != nil {
+				if s.Name == "snapshot-capture" && strings.Contains(err.Error(), "already exists") {
+					fmt.Fprintf(os.Stderr, "note: snapshot %q already captured on %s \u2014 keeping the existing baseline\n", bedNode.Snapshot.OnFinalize, d.BedDomain)
+					continue
+				}
+				return fail("%s %s -> %q: %w", s.Name, d.VMTemplate, bedNode.Snapshot.OnFinalize, err)
 			}
-			fmt.Fprintf(os.Stderr, "note: snapshot %q already captured on %s \u2014 keeping the existing baseline\n", bedNode.Snapshot.OnFinalize, d.BedDomain)
 		}
 	}
 
