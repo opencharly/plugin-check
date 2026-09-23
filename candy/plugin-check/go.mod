@@ -8,6 +8,13 @@ require (
 )
 
 require (
+	github.com/opencharly/plugin-egress/candy/plugin-egress v0.2026250.951 // indirect
+	github.com/opencharly/plugin-init/candy/plugin-init v0.2026240.1727 // indirect
+	github.com/stretchr/testify v1.11.1 // indirect
+	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
+)
+
+require (
 	cuelang.org/go v0.16.1 // indirect
 	github.com/alecthomas/kong v1.15.0 // indirect
 	github.com/cockroachdb/apd/v3 v3.2.1 // indirect
@@ -19,7 +26,7 @@ require (
 	github.com/hashicorp/go-plugin v1.8.0 // indirect
 	github.com/hashicorp/yamux v0.1.2 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
-	github.com/mattn/go-isatty v0.0.17 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
 	github.com/oklog/run v1.1.0 // indirect
 	github.com/opencharly/spec v0.2026266.545
