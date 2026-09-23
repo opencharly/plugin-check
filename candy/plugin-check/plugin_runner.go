@@ -63,10 +63,11 @@ func newPluginCheckRunner(ex *sdk.Executor, ctx context.Context, env spec.CheckE
 	// stays unpopulated there (the label path owns it).
 	if de, ok := cfg.Exec.(spec.DeployExecutor); ok {
 		if d := kit.DescriptorFromExecutor(de); d.Kind != "container" {
-			// a NestedExecutor over a container jump (podman/docker exec) is a
+			// a NestedExecutor over a container jump (podman/docker/nerdctl exec) is a
 			// container venue too - its descriptor Kind is empty, the jump kind
-			// is the tell.
-			if ne, ok := cfg.Exec.(*kit.NestedExecutor); !ok || ne.Jump.Kind != kit.JumpPodmanExec {
+			// is the tell. The engine is DATA on the jump, so ONE arm covers every
+			// engine.
+			if ne, ok := cfg.Exec.(*kit.NestedExecutor); !ok || ne.Jump.Kind != kit.JumpContainerExec {
 				cfg.MCPProvide = env.MCPProvide
 			}
 		}

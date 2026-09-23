@@ -157,15 +157,16 @@ func TestPluginSnapshotCheckEnv_CarriesVmMcpProvide(t *testing.T) {
 		t.Errorf("marshaled env JSON %s lacks the mcp_provide declaration the mcp: verb resolves on a VM venue", envJSON)
 	}
 
-	// Container venue (negative case): a NestedExecutor over podman exec derives Kind
-	// "container" — that venue resolves mcp_provide from its OCI image label, so the env
+	// Container venue (negative case): a NestedExecutor over a container jump
+	// (podman/docker/nerdctl exec — the engine is DATA) derives Kind "container" —
+	// that venue resolves mcp_provide from its OCI image label, so the env
 	// stays unpopulated even when a constructor supplied the slice.
 	containerRunner := newPluginCheckRunner(nil, context.Background(), spec.CheckEnv{
 		Mode:       "live",
 		Box:        "pod",
 		MCPProvide: want,
 	}, kit.RunnerConfig{
-		Exec: &kit.NestedExecutor{Jump: kit.NestedJump{Kind: kit.JumpPodmanExec}},
+		Exec: &kit.NestedExecutor{Jump: kit.NestedJump{Kind: kit.JumpContainerExec, Engine: "podman"}},
 		Mode: kit.ModeLive,
 	})
 	cpvr, ok := containerRunner.Verbs().(*kitVerbs)
