@@ -23,6 +23,12 @@ type provider struct{ pb.UnimplementedProviderServer }
 // dispatch), stashes it for the deep CLI handlers (setCommandContext), and kong-parses + runs the
 // CheckCmd tree. It RETURNS the error so a non-zero / check-fail exit propagates.
 func (provider) Invoke(ctx context.Context, req *pb.InvokeRequest) (*pb.InvokeReply, error) {
+	// kind:check-roster OpLoad — the host landed an authored `check-roster:` body opaquely
+	// (FLAT kind); the roster runner reads it back from the project loader at run time, so
+	// OpLoad is a validation-only acknowledge (the static CUE gate already ran host-side).
+	if req.GetOp() == sdk.OpLoad {
+		return &pb.InvokeReply{}, nil
+	}
 	// verb:check-resolve (OpResolve) — the internal venue-classification capability the host's
 	// floor reverse-legs call (#118 check broker-envelope-out); routed here, never the command path.
 	if req.GetOp() == sdk.OpResolve {
