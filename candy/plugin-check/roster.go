@@ -84,7 +84,12 @@ func (c *CheckRunCmd) runCheckRoster(ex *sdk.Executor, ctx context.Context, name
 	if !ok || uf == nil {
 		return fmt.Errorf("charly check run %s: no charly.yml in %s", name, cwd)
 	}
-	raw, ok := uf.PluginKinds["check-roster"][name]
+	// The authored body is cached by the plugin at OpLoad (provider.go rosterCache);
+	// fall back to the opaque uf.PluginKinds fold if OpLoad ran in a prior process.
+	raw, ok := rosterCache[name]
+	if !ok {
+		raw, ok = uf.PluginKinds["check-roster"][name]
+	}
 	if !ok {
 		return fmt.Errorf("charly check run %s: no check-roster entity by that name", name)
 	}

@@ -18,16 +18,25 @@ import (
 
 type provider struct{ pb.UnimplementedProviderServer }
 
+// rosterCache holds each `check-roster` entity body captured at OpLoad (the plugin
+// itself received the RESOLVED, schema-validated body), keyed by entity name — the
+// pipeline `entityCache` precedent. The roster runner reads it here rather than
+// re-deriving from the opaque uf.PluginKinds fold. Same process: OpLoad runs at the
+// project load preceding the `charly check run <roster>` dispatch.
+var rosterCache = map[string]json.RawMessage{}
+
 // Invoke runs `charly check …` in-process for the compiled-in command:check placement: it decodes the
 // pass-through args, recovers the reverse-channel executor from the ctx (threaded by the host command
 // dispatch), stashes it for the deep CLI handlers (setCommandContext), and kong-parses + runs the
 // CheckCmd tree. It RETURNS the error so a non-zero / check-fail exit propagates.
 func (provider) Invoke(ctx context.Context, req *pb.InvokeRequest) (*pb.InvokeReply, error) {
-	// kind:check-roster OpLoad — the host landed an authored `check-roster:` body opaquely
-	// (FLAT kind); the roster runner reads it back from the project loader at run time, so
-	// OpLoad is a validation-only acknowledge (the static CUE gate already ran host-side).
+	// kind:check-roster OpLoad — the host validates the authored `check-roster:` body
+	// against #CheckRosterInput, then dispatches OpLoad. Cache the body here (the
+	// pipeline precedent) so the roster runner reads the RESOLVED body the plugin
+	// itself received, independent of the opaque PluginKinds fold.
 	if req.GetOp() == sdk.OpLoad {
-		return &pb.InvokeReply{}, nil
+		rosterCache[req.GetReserved()] = append(json.RawMessage(nil), req.GetParamsJson()...)
+		return &pb.InvokeReply{ResultJson: req.GetParamsJson()}, nil
 	}
 	// verb:check-resolve (OpResolve) — the internal venue-classification capability the host's
 	// floor reverse-legs call (#118 check broker-envelope-out); routed here, never the command path.
