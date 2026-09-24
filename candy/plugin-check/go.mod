@@ -3,7 +3,7 @@ module github.com/opencharly/plugin-check/candy/plugin-check
 go 1.26.4
 
 require (
-	github.com/opencharly/sdk v0.2026267.2141
+	github.com/opencharly/sdk v0.2026267.2238
 	gopkg.in/yaml.v3 v3.0.1
 )
 
