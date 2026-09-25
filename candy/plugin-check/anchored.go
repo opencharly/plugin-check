@@ -86,6 +86,20 @@ func anchoredPreCheckStep(d spec.CheckBedReply, opts bedRunOpts) []string {
 	return []string{"vm", "snapshot", "revert-and-start", d.VMTemplate, opts.Anchor, "--domain", d.BedDomain}
 }
 
+// seedBedVmShape folds a bed's OWN cpu:/ram: (authored on the bed deploy) into
+// opts, unless the caller already set them (a roster-supplied cap wins). `vm create`
+// targets the TEMPLATE entity, so plugin-vm's vmShapeOverride never sees the BED's
+// own declaration; seeding here is what makes a bed's cpu:/ram: reach the domain.
+func seedBedVmShape(opts bedRunOpts, bedNode spec.DeployNode) bedRunOpts {
+	if opts.Cpus == 0 && bedNode.Cpus > 0 {
+		opts.Cpus = bedNode.Cpus
+	}
+	if opts.Ram == "" && string(bedNode.Ram) != "" {
+		opts.Ram = string(bedNode.Ram)
+	}
+	return opts
+}
+
 // vmCreateArgs builds the `charly vm create` argv for a bed's VM arm.
 func vmCreateArgs(d spec.CheckBedReply, opts bedRunOpts) []string {
 	args := []string{"vm", "create", d.VMTemplate, "--domain", d.BedDomain}
