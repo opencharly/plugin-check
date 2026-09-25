@@ -107,7 +107,10 @@ func (s *bedSession) release(ctx context.Context, ex *sdk.Executor, ok bool) {
 // arbiterInvoke resolves verb:arbiter and Invokes it with an action-tagged input — the SAME
 // direct-InvokeProvider(verb,"arbiter") pattern candy/plugin-vm/vm_arbiter_shim.go already proves
 // bypasses core's former arbiterProxy entirely.
-func arbiterInvoke(ctx context.Context, ex *sdk.Executor, in spec.ArbiterInvokeInput) (spec.ArbiterInvokeReply, error) {
+//
+// It is a package var so a test can drive arbiterAcquire/arbiterRelease without a live provider
+// (the arbiterAcquire lease-marker path is otherwise only reachable through a real provider).
+var arbiterInvoke = func(ctx context.Context, ex *sdk.Executor, in spec.ArbiterInvokeInput) (spec.ArbiterInvokeReply, error) {
 	params, err := json.Marshal(in)
 	if err != nil {
 		return spec.ArbiterInvokeReply{}, err

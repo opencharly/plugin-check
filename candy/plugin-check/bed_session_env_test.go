@@ -11,6 +11,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/opencharly/sdk"
 	"github.com/opencharly/spec/proc"
 	"github.com/opencharly/spec/spec"
 )
@@ -92,18 +93,46 @@ func TestChildEnvForReq_ExplicitWins(t *testing.T) {
 	}
 }
 
-// TestArbiterLeaseMarkerIsPerInvocation proves the preempt-lease marker is per-invocation DATA,
-// not process env: bed A's claim sets it on bed A's map only, so bed B still acquires its own
-// lease. A process-global marker made bed A's claim suppress bed B's acquire (or vice versa).
-func TestArbiterLeaseMarkerIsPerInvocation(t *testing.T) {
+// TestArbiterAcquire_LeaseMarkerIsPerInvocation drives the REAL arbiterAcquire path (via the
+// stubbed arbiterInvoke seam) twice with two DIFFERENT per-bed env maps: bed A's ACTIVE claim sets
+// the lease marker on A's map only, so bed B's acquire is NOT suppressed. A process-global marker
+// (the retired os.Setenv) would set it on one shared env, making B's acquire a no-op. This test
+// fails if arbiterAcquire reads/writes process env instead of the passed env.
+func TestArbiterAcquire_LeaseMarkerIsPerInvocation(t *testing.T) {
+	orig := arbiterInvoke
+	defer func() { arbiterInvoke = orig }()
+
+	var calls int
+	arbiterInvoke = func(_ context.Context, _ *sdk.Executor, in spec.ArbiterInvokeInput) (spec.ArbiterInvokeReply, error) {
+		calls++
+		return spec.ArbiterInvokeReply{Active: true}, nil
+	}
+
+	// The bed's lease marker must be checked on the PASSED env, not process env.
+	node := spec.DeployNode{RequiresShared: []string{"gpu"}}
 	a := spec.RunEnv{}
 	b := spec.RunEnv{}
-	a[envPreemptLeaseHeld] = "claimant-a"
-	if b[envPreemptLeaseHeld] != "" {
-		t.Fatal("bed B's lease marker was contaminated by bed A's claim")
+	// Pre-set the marker on A as if this bed's outer orchestrator already holds it: A must SKIP
+	// the acquire call; B (no marker) must CALL it and set the marker on B only.
+	a[envPreemptLeaseHeld] = "outer-a"
+	activeA, err := arbiterAcquire(context.Background(), nil, "bed-a", node, true, a)
+	if err != nil {
+		t.Fatalf("arbiterAcquire(A): %v", err)
 	}
-	delete(a, envPreemptLeaseHeld)
-	if b[envPreemptLeaseHeld] != "" {
-		t.Fatal("releasing bed A's claim altered bed B's marker")
+	if activeA || calls != 0 {
+		t.Fatalf("bed A should have skipped (marker set): active=%v calls=%d", activeA, calls)
+	}
+	activeB, err := arbiterAcquire(context.Background(), nil, "bed-b", node, true, b)
+	if err != nil {
+		t.Fatalf("arbiterAcquire(B): %v", err)
+	}
+	if !activeB || calls != 1 {
+		t.Fatalf("bed B should have acquired: active=%v calls=%d (a shared process marker would suppress it)", activeB, calls)
+	}
+	if b[envPreemptLeaseHeld] != "bed-b" {
+		t.Fatalf("bed B's marker = %q, want bed-b", b[envPreemptLeaseHeld])
+	}
+	if a[envPreemptLeaseHeld] != "outer-a" {
+		t.Fatalf("bed A's marker = %q, want outer-a (bed B must not touch it)", a[envPreemptLeaseHeld])
 	}
 }
