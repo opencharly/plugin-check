@@ -51,6 +51,11 @@ type bedRunOpts struct {
 	Anchor    string            // --anchor <name>: revert this golden-disk snapshot before the checks
 	KeepVenue bool              // --keep-venue: keep the VM venue between batch runs (forces Keep)
 	Vars      map[string]string // --var key=value: per-run variable passthrough into the check-run env
+
+	// Roster-enforced VM shape (check-roster cpu:/ram:): forwarded to
+	// `charly vm create --cpus/--ram` so a roster caps every VM bed it runs.
+	Cpus int
+	Ram  string
 }
 
 // stepResult captures one step's outcome for the summary.yml.
@@ -678,7 +683,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// domain (anchored lane without a fresh lane first) fails at the revert
 		// with guidance to run the fresh lane.
 		if opts.Anchor == "" {
-			if err := step("vm-create", vmCreateArgs(d)...); err != nil {
+			if err := step("vm-create", vmCreateArgs(d, opts)...); err != nil {
 				return fail("vm create %s: %w", d.VMTemplate, err)
 			}
 		}

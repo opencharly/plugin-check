@@ -198,34 +198,72 @@ func selectRosterBeds(uf *spec.UnifiedFile, r *checkRoster, beds map[string]spec
 // buildRosterChains groups beds into serial chains: a bed joins the first chain
 // already holding one of its exclusive/shared tokens, else starts a new chain.
 // Distinct chains are disjoint in tokens and run in parallel.
+// buildRosterChains groups beds into serial chains: any two beds sharing an
+// exclusive/shared token are in the SAME chain (a bed's token set UNION-merges
+// every chain it touches, so two chains never share a token). Distinct chains are
+// token-disjoint and therefore run in parallel safely.
 func buildRosterChains(beds []rosterBed) [][]rosterBed {
 	var chains [][]rosterBed
 	tokenChain := map[string]int{}
 	for _, b := range beds {
 		tokens := append(append([]string{}, b.Exclusive...), b.Shared...)
-		idx := -1
+		// Collect the DISTINCT chains this bed's tokens already touch.
+		merge := map[int]bool{}
 		for _, t := range tokens {
 			if ci, ok := tokenChain[t]; ok {
-				idx = ci
-				break
+				merge[ci] = true
 			}
 		}
-		if idx < 0 {
+		var idx int
+		switch len(merge) {
+		case 0:
 			chains = append(chains, nil)
 			idx = len(chains) - 1
+		case 1:
+			for ci := range merge {
+				idx = ci
+			}
+		default:
+			// Union: fold every touched chain into the lowest-indexed one, then
+			// drop the now-empty higher-indexed chains and remap their tokens.
+			idx = -1
+			for ci := range merge {
+				if idx < 0 || ci < idx {
+					idx = ci
+				}
+			}
+			for ci := range merge {
+				if ci == idx {
+					continue
+				}
+				chains[idx] = append(chains[idx], chains[ci]...)
+				chains[ci] = nil
+				for t, mapped := range tokenChain {
+					if mapped == ci {
+						tokenChain[t] = idx
+					}
+				}
+			}
 		}
 		chains[idx] = append(chains[idx], b)
 		for _, t := range tokens {
 			tokenChain[t] = idx
 		}
 	}
-	return chains
+	// Drop any chains emptied by a union-merge.
+	out := chains[:0]
+	for _, c := range chains {
+		if len(c) > 0 {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // runRosterBed runs one bed through the SAME R10 engine a single `charly check run
 // <bed>` uses, then applies the roster's expected-fail semantics.
 func runRosterBed(ex *sdk.Executor, ctx context.Context, b rosterBed, r *checkRoster) rosterBedOutcome {
-	opts := bedRunOpts{Vars: map[string]string{}}
+	opts := bedRunOpts{Vars: map[string]string{}, Cpus: r.CPU, Ram: r.RAM}
 	if len(r.Var) > 0 {
 		if v, err := parseRunVars(r.Var); err == nil {
 			opts.Vars = v
@@ -270,25 +308,33 @@ func runRosterBed(ex *sdk.Executor, ctx context.Context, b rosterBed, r *checkRo
 }
 
 // aggregateRoster renders the roster verdict and maps it to an error whose boundary
-// exit code is honest: 1 if any bed hit an infra error, else 2 if any check failed.
+// exit code is honest. A prereq-SKIPPED bed is neither a pass nor a failure: it is
+// counted separately. The roster exits 0 when no bed failed; 2 when any bed failed a
+// check (and no infra error); 1 when any bed hit an infra error; 3 (skipped) when
+// every non-refused bed skipped and none failed.
 func aggregateRoster(name string, outcomes []rosterBedOutcome) error {
 	sort.Slice(outcomes, func(i, j int) bool { return outcomes[i].Bed < outcomes[j].Bed })
-	var failed []rosterBedOutcome
+	var failed, skipped []rosterBedOutcome
 	infra := false
 	for _, o := range outcomes {
+		if o.Skipped {
+			skipped = append(skipped, o)
+			continue
+		}
 		if o.OK {
 			continue
 		}
 		failed = append(failed, o)
-		if o.Skipped {
-			continue
-		}
 		if o.ExitCode != CheckFailExitCode {
 			infra = true
 		}
 	}
 	if len(failed) == 0 {
-		fmt.Fprintf(os.Stderr, "charly check run %s: roster PASS (%d beds)\n", name, len(outcomes))
+		if len(skipped) == len(outcomes) && len(outcomes) > 0 {
+			fmt.Fprintf(os.Stderr, "charly check run %s: roster SKIPPED (%d beds, absent host prereqs)\n", name, len(skipped))
+			return &CheckSkippedError{Msg: fmt.Sprintf("charly check run %s: all %d beds skipped (absent host prereqs)", name, len(skipped))}
+		}
+		fmt.Fprintf(os.Stderr, "charly check run %s: roster PASS (%d beds, %d skipped)\n", name, len(outcomes)-len(skipped), len(skipped))
 		return nil
 	}
 	msg := fmt.Sprintf("charly check run %s: roster FAIL (%d/%d beds)", name, len(failed), len(outcomes))

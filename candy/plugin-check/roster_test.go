@@ -202,3 +202,45 @@ func TestRosterWaitGroup_BalancedConcurrency(t *testing.T) {
 		t.Fatalf("ran %d beds, want %d (chain/pool accounting)", done, len(beds))
 	}
 }
+
+// TestBuildRosterChains_UnionMergesSharedTokens: a bed whose tokens span two
+// existing chains UNION-merges them, so the two chains never both hold a token and
+// run concurrently. A[t1], B[t2], C[t1,t2] must end in ONE chain (not [[A,C],[B]]).
+func TestBuildRosterChains_UnionMergesSharedTokens(t *testing.T) {
+	beds := []rosterBed{
+		{Name: "A", Exclusive: []string{"t1"}},
+		{Name: "B", Exclusive: []string{"t2"}},
+		{Name: "C", Exclusive: []string{"t1", "t2"}},
+	}
+	chains := buildRosterChains(beds)
+	if len(chains) != 1 {
+		t.Fatalf("A[t1], B[t2], C[t1,t2] must union-merge to ONE chain, got %d chains: %v", len(chains), chains)
+	}
+	if len(chains[0]) != 3 {
+		t.Fatalf("merged chain must hold all 3 beds, got %d", len(chains[0]))
+	}
+}
+
+// TestAggregateRoster_AllSkipped: every bed prereq-skipped → the roster SKIPs
+// (CheckSkippedError → exit 3), not a failure.
+func TestAggregateRoster_AllSkipped(t *testing.T) {
+	sk := rosterBedOutcome{Bed: "b", Skipped: true, OK: false, Reason: "no gpu"}
+	err := aggregateRoster("r", []rosterBedOutcome{sk})
+	if err == nil {
+		t.Fatal("all-skipped roster must return a skip error")
+	}
+	if _, ok := err.(*CheckSkippedError); !ok {
+		t.Fatalf("all-skipped roster must map to CheckSkippedError (exit 3), got %T", err)
+	}
+}
+
+// TestAggregateRoster_SkipPlusPass: a skip alongside a pass is a normal PASS.
+func TestAggregateRoster_SkipPlusPass(t *testing.T) {
+	outs := []rosterBedOutcome{
+		{Bed: "a", OK: true},
+		{Bed: "b", Skipped: true},
+	}
+	if err := aggregateRoster("r", outs); err != nil {
+		t.Fatalf("pass+skip roster should PASS, got %v", err)
+	}
+}
