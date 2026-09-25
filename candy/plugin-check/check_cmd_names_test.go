@@ -52,3 +52,25 @@ func TestCheckCmdFeatureBoxHidden(t *testing.T) {
 	}
 	t.Fatal("__feature-box not declared at all")
 }
+
+// TestIterateRunLocalArgs_ForwardsRenamedLeaf locks the rename's RUNTIME behavior:
+// the iterate re-entry argv's leading tokens are `check __run-local <entity>
+// --run-id <id>`. TestCheckCmdDeclaredNames covers the Kong catalog; THIS covers
+// the argv the runner forwards, so a leaf rename cannot drift from its consumer.
+func TestIterateRunLocalArgs_ForwardsRenamedLeaf(t *testing.T) {
+	c := &CheckRunCmd{Name: "check-scratch"}
+	got := iterateRunLocalArgs(c, "run-42")
+	want := []string{"check", "__run-local", "check-scratch", "--run-id", "run-42"}
+	if len(got) != len(want) {
+		t.Fatalf("iterateRunLocalArgs = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("iterateRunLocalArgs[%d] = %q, want %q (full: %v)", i, got[i], want[i], got)
+		}
+	}
+	// The pre-rename leaf must never reappear (R5).
+	if got[1] == "run-local" {
+		t.Fatal("argv forwards the pre-rename leaf 'run-local'")
+	}
+}

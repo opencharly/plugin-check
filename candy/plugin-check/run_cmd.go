@@ -160,18 +160,12 @@ func checkRunBedOpts(c *CheckRunCmd) (bedRunOpts, error) {
 	}, nil
 }
 
-// runIterateEntity drives the iterate: AI iteration loop for the named entity: it
-// resolves the sandbox target (from the check projection), generates a run ID,
-// builds the __run-local argv, performs the disposable-pod preflight, and dispatches to
-// the host / pod / VM runner. The seams it drives (preflight check-run, cred sync,
-// self-reentry) use the package cmdExec/cmdCtx, so no executor is threaded here.
-func (c *CheckRunCmd) runIterateEntity(reply checkProjection, cwd string) error {
-	if !reply.HasNode || !reply.HasIterate {
-		return fmt.Errorf("charly check run %s: no iterate: block and no check bed by that name", c.Name)
-	}
-	tk, tn := reply.SandboxKind, reply.SandboxName
-
-	runID := GenerateRunID()
+// iterateRunLocalArgs builds the self-reentry argv for an iterate entity: the
+// `check __run-local <entity> …` leaf (the hidden in-target harness driver) plus
+// every set knob. `__run-local` is the internal-only leaf (the `__` prefix marks
+// it hidden-but-reachable, matching `__feature-box`); this is the ONE producer of
+// that argv, so a rename cannot drift from its consumer.
+func iterateRunLocalArgs(c *CheckRunCmd, runID string) []string {
 	args := []string{"check", "__run-local", c.Name, "--run-id", runID}
 	if c.Agent != "" {
 		args = append(args, "--agent", c.Agent)
@@ -197,6 +191,22 @@ func (c *CheckRunCmd) runIterateEntity(reply checkProjection, cwd string) error 
 	if c.Format != "" {
 		args = append(args, "--format", c.Format)
 	}
+	return args
+}
+
+// runIterateEntity drives the iterate: AI iteration loop for the named entity: it
+// resolves the sandbox target (from the check projection), generates a run ID,
+// builds the __run-local argv, performs the disposable-pod preflight, and dispatches to
+// the host / pod / VM runner. The seams it drives (preflight check-run, cred sync,
+// self-reentry) use the package cmdExec/cmdCtx, so no executor is threaded here.
+func (c *CheckRunCmd) runIterateEntity(reply checkProjection, cwd string) error {
+	if !reply.HasNode || !reply.HasIterate {
+		return fmt.Errorf("charly check run %s: no iterate: block and no check bed by that name", c.Name)
+	}
+	tk, tn := reply.SandboxKind, reply.SandboxName
+
+	runID := GenerateRunID()
+	args := iterateRunLocalArgs(c, runID)
 
 	// Per-run freshness for pod targets: if the harness sandbox is disposable,
 	// restart its systemd quadlet so the container is destroyed (`--rm`) and recreated
