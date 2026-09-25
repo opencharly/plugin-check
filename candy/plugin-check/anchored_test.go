@@ -147,3 +147,22 @@ func TestWithRunVars_MergesIntoCheckRunEnv(t *testing.T) {
 		t.Errorf("withRunVars mutated the caller's env: %v", env)
 	}
 }
+
+// TestBedNodeShapeSeedsVmCreate: a bed's OWN cpu:/ram: (authored on the bed deploy)
+// is seeded into bedRunOpts so it reaches `charly vm create --cpus/--ram`. `vm create`
+// targets the TEMPLATE entity, so plugin-vm's vmShapeOverride (which walks the template
+// from: chain) never sees the BED's own declaration — without this, the cap is a
+// silent no-op (the domain booted at template size).
+func TestBedNodeShapeSeedsVmCreate(t *testing.T) {
+	seeded := seedBedVmShape(bedRunOpts{}, spec.DeployNode{Cpus: 2, Ram: "2G"})
+	args := vmCreateArgs(vmBedReply(), seeded)
+	want := []string{"vm", "create", "omarchy-vm", "--domain", "check-omarchy-vm", "--cpus", "2", "--ram", "2G"}
+	if !equalArgs(args, want) {
+		t.Fatalf("bed-node shape not seeded: %v, want %v", args, want)
+	}
+	// A roster-supplied cap wins over the bed node.
+	roster := seedBedVmShape(bedRunOpts{Cpus: 4, Ram: "8G"}, spec.DeployNode{Cpus: 2, Ram: "2G"})
+	if roster.Cpus != 4 || roster.Ram != "8G" {
+		t.Fatalf("roster cap must win over the bed node, got Cpus=%d Ram=%q", roster.Cpus, roster.Ram)
+	}
+}
