@@ -303,6 +303,18 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	var bedNode spec.DeployNode
 	_ = json.Unmarshal(d.NodeJSON, &bedNode)
 
+	// The bed's OWN VM shape (`cpu:`/`ram:` authored on the bed deploy) reaches
+	// `charly vm create --cpus/--ram`: `vm create` targets the TEMPLATE entity, so
+	// plugin-vm's vmShapeOverride (which walks the template chain) never sees the
+	// BED's own declaration. A roster-supplied cap (opts.Cpus/Ram) wins as the
+	// operator override.
+	if opts.Cpus == 0 && bedNode.Cpus > 0 {
+		opts.Cpus = bedNode.Cpus
+	}
+	if opts.Ram == "" && string(bedNode.Ram) != "" {
+		opts.Ram = string(bedNode.Ram)
+	}
+
 	// The bed's snapshot: policy keep_venue: true forces --keep: a batch loop keeps
 	// this VM between runs (the golden snapshot + venue survive for the anchored
 	// lanes); teardown happens only at batch end. The policy is the validated
