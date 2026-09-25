@@ -377,6 +377,12 @@ func rosterOutcomeLine(o rosterBedOutcome) string {
 // globMatch matches a qualified bed name against a glob. An empty pattern or "*"
 // matches everything. Uses filepath.Match's syntax (its `*` does not cross `.`,
 // which matches a namespace separator's intent: `main.*` matches main's own beds).
+// globMatch matches a qualified bed name against a glob. An empty pattern or "*"
+// matches everything. Uses filepath.Match syntax (its separator is `/`, so `*`
+// matches `.` too — a `select: 'check-*'` therefore matches only names that START
+// with `check-`, and a namespaced `charly.check-docs` does NOT match it). A pattern
+// with a trailing `*` additionally prefix-matches, so `charly.*` / `charly.check-*`
+// reach into a namespace as intended.
 func globMatch(pattern, name string) bool {
 	if pattern == "" || pattern == "*" {
 		return true
@@ -384,8 +390,6 @@ func globMatch(pattern, name string) bool {
 	if ok, _ := filepath.Match(pattern, name); ok {
 		return true
 	}
-	// A bare "*" should also match qualified names (ns.name); filepath.Match's "*"
-	// does not cross ".", so treat a trailing "*" as a prefix match.
 	if strings.HasSuffix(pattern, "*") {
 		return strings.HasPrefix(name, strings.TrimSuffix(pattern, "*"))
 	}
