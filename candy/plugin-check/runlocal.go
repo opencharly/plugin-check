@@ -97,15 +97,15 @@ func (c *CheckRunLocalCmd) Run() error {
 		return fmt.Errorf("load harness config from %s: %w", projectDir, err)
 	}
 	if !reply.HasNode {
-		return fmt.Errorf("charly check run-local: no charly.yml in %s", projectDir)
+		return fmt.Errorf("charly check __run-local: no charly.yml in %s", projectDir)
 	}
 	if !reply.HasIterate {
-		return fmt.Errorf("charly check run-local: entity %q has no iterate: block", c.Score)
+		return fmt.Errorf("charly check __run-local: entity %q has no iterate: block", c.Score)
 	}
 	var iterate spec.Iterate
 	if len(reply.IterateJSON) > 0 {
 		if err := json.Unmarshal(reply.IterateJSON, &iterate); err != nil {
-			return fmt.Errorf("charly check run-local: decode iterate: %w", err)
+			return fmt.Errorf("charly check __run-local: decode iterate: %w", err)
 		}
 	}
 	tk, tn := reply.SandboxKind, reply.SandboxName

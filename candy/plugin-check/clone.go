@@ -33,7 +33,7 @@ import (
 // hand.
 //
 // Same RunLayout shape applies to host / pod / vm targets — the only difference is
-// which executor walks the tree. For pod targets the in-pod run-local writes under
+// which executor walks the tree. For pod targets the in-pod __run-local writes under
 // /workspace/.check/ (the bind-mounted project), so the host's mirrored copy is
 // automatic.
 type RunLayout struct {

@@ -69,8 +69,4 @@ func TestIterateRunLocalArgs_ForwardsRenamedLeaf(t *testing.T) {
 			t.Fatalf("iterateRunLocalArgs[%d] = %q, want %q (full: %v)", i, got[i], want[i], got)
 		}
 	}
-	// The pre-rename leaf must never reappear (R5).
-	if got[1] == "run-local" {
-		t.Fatal("argv forwards the pre-rename leaf 'run-local'")
-	}
 }
