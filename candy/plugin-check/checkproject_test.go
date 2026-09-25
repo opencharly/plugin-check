@@ -112,3 +112,40 @@ func TestResolveIterateSandbox(t *testing.T) {
 		}
 	}
 }
+
+// TestClassifyCheckProjection_QualifiedBedClassifiesAsBed is the regression for the namespaced
+// bed classification defect (plan RCA issue #3): a QUALIFIED bed (`ns.check-foo`) lives in an
+// imported namespace, so `rp.Deploy[entity]` (root-scope only) misses it and the CLI reported
+// "no entity". classifyCheckProjection resolves it via the ONE namespace-aware loader resolver
+// (uf.ResolveBed) instead.
+func TestClassifyCheckProjection_QualifiedBedClassifiesAsBed(t *testing.T) {
+	disp := true
+	ns := &spec.UnifiedFile{
+		Deploy: map[string]spec.DeployNode{
+			"check-qualified": {Image: "x", Disposable: &disp},
+		},
+	}
+	uf := &spec.UnifiedFile{Namespaces: map[string]*spec.UnifiedFile{"ns": ns}}
+	// The envelope's rp.Deploy is ROOT-scope only — deliberately WITHOUT the qualified bed,
+	// proving the loader resolver is what classifies it.
+	rp := &spec.ResolvedProject{Deploy: map[string]*spec.Deploy{}}
+
+	node, hasNode, isBed, hasIterate := classifyCheckProjection(uf, rp, "ns.check-qualified")
+	if !hasNode || !isBed || hasIterate {
+		t.Fatalf("qualified bed classification = (hasNode=%v isBed=%v hasIterate=%v), want (true true false)", hasNode, isBed, hasIterate)
+	}
+	if node.Image != "x" {
+		t.Fatalf("resolved node Image = %q, want x", node.Image)
+	}
+
+	// A non-disposable root entity still classifies via the envelope fallback (not a bed).
+	if _, hasNode, isBed, _ := classifyCheckProjection(nil, &spec.ResolvedProject{Deploy: map[string]*spec.Deploy{
+		"plain": {Image: "y"},
+	}}, "plain"); !hasNode || isBed {
+		t.Fatalf("non-bed root entity = (hasNode=%v isBed=%v), want (true false)", hasNode, isBed)
+	}
+	// Absent everywhere → unresolved.
+	if _, hasNode, _, _ := classifyCheckProjection(uf, rp, "missing"); hasNode {
+		t.Fatal("absent entity should be unresolved")
+	}
+}

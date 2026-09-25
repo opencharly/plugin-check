@@ -89,7 +89,7 @@ func persistBedDeployOverridePluginSide(ctx context.Context, ex *sdk.Executor, n
 	// Root persist — guarded !IsVM (a VM bed runs no `charly config`); the deploykit func self-skips
 	// local/external-in-place.
 	if !d.IsVM {
-		deploykit.PersistBedDeployOverrides(name, deploykit.DeployNode(root), d.IsExternal, marshalNode, reader)
+		deploykit.PersistBedDeployOverrides(ctx, name, deploykit.DeployNode(root), d.IsExternal, marshalNode, reader)
 	}
 	// Member persist — each deploy-level (alongside) member of the root's ordered member tree,
 	// BEFORE members-up runs the member's `charly config`/`charly start`. A member's externalInPlace
@@ -100,6 +100,6 @@ func persistBedDeployOverridePluginSide(ctx context.Context, ex *sdk.Executor, n
 		if m.Node == nil {
 			continue
 		}
-		deploykit.PersistBedDeployOverrides(m.Name, *m.Node, deploy.ExternalInPlaceVenue(m.Node), marshalNode, reader)
+		deploykit.PersistBedDeployOverrides(ctx, m.Name, *m.Node, deploy.ExternalInPlaceVenue(m.Node), marshalNode, reader)
 	}
 }

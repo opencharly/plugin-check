@@ -9,9 +9,10 @@ package check
 //   - the preempt lease: candy/plugin-vm/vm_arbiter_shim.go already proves a plugin reaches
 //     verb:arbiter directly via InvokeProvider, bypassing core's former arbiterProxy entirely —
 //     mirrored here (arbiterAcquire/arbiterRelease).
-//   - the repo-override / deploy-config env vars: this plugin is COMPILED-IN, so os.Setenv here
-//     lands in the SAME process env hostBuildCli's cli-reentry children fork from — the ONE
-//     genuine placement constraint this session carries (see the header note below).
+//   - the repo-override / deploy-config / preempt-lease vars: carried as EXPLICIT per-invocation
+//     data on a spec.RunEnv threaded through ctx (and to forked children via spec.CliRequest.Env),
+//     never via os.Setenv — so the session is placement-invariant AND safe under a concurrent
+//     in-process roster (plan §4.2 / F8).
 //
 // No package-level session MAP is needed (unlike the former core session, which had to survive
 // separate HostBuild round-trips across a process-reentry boundary): the whole bed run is now ONE
@@ -19,21 +20,6 @@ package check
 // returns in a local variable for the run's whole lifetime, threading it explicitly into
 // bedTeardown at the end. Members-up/-down call sdk/deploykit.BringUpMembers/TearDownMembers
 // directly (#55 W3 A4) using data already in the caller's *spec.CheckBedReply — no session lookup.
-//
-// PLACEMENT CLASS: compiled-in-REQUIRED. This is not incidental to today's placement — it is a
-// structural requirement, the SAME documented class as a bootstrap plugin. hostBuildCli (the
-// generic "cli" HostBuild seam every `charly <verb>` cli-reentry step rides) ALWAYS forks its
-// child in the CORE process; spec.CliRequest carries no per-call Env field to thread the 3
-// process-global vars (CHARLY_REPO_OVERRIDE/CHARLY_DEPLOY_CONFIG/CHARLY_PREEMPT_LEASE) explicitly
-// instead. If this plugin were EVER placed out-of-process, its os.Setenv calls would land in the
-// WRONG process and every cli-reentry step in a bed run would silently lose the override/isolation
-// — this is why the check-bed session specifically (not command:check as a whole) requires
-// compiled-in placement. The de-coupling path is REGISTERED, not implemented: extending
-// spec.CliRequest with an optional Env map (a field-extension of an EXISTING wire input, the SAME
-// class of change A2 used for the arbiter's implied-GPU field) would let a future out-of-process
-// bed runner thread these vars per-call instead of relying on shared process env — explicit data
-// over ambient env is the better end-state, but implementing it is not required for THIS
-// dissolution and is deferred as a named IOU.
 
 import (
 	"context"
@@ -42,7 +28,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/opencharly/sdk"
 	"github.com/opencharly/sdk/loaderkit"
@@ -64,6 +49,11 @@ const envPreemptLeaseHeld = "CHARLY_PREEMPT_LEASE"
 
 // bedSession holds the live host handles ONE bed run owns across its lifecycle — from bedSetup's
 // return to bedTeardown's call, all within the SAME in-process Go call graph.
+//
+// The per-bed deploy-config dir and repo override are NOT session fields that get
+// os.Setenv/os.Unsetenv'd: they live in the run's spec.RunEnv (bedSetup builds it, threads it on
+// ctx, and hands children via spec.CliRequest.Env). The session keeps only what teardown must
+// physically undo (temp-dir removal) plus the verdict-surfacing override pair.
 type bedSession struct {
 	bedUnlock func() error
 	domUnlock []func() error
@@ -71,13 +61,11 @@ type bedSession struct {
 	leaseClaimant string // "" ⇒ acquireLease never ran (a GPU-prereq skip returns before it)
 	leaseActive   bool
 
-	repoOvSet  bool   // this session set CHARLY_REPO_OVERRIDE
-	hadRepoOv  bool   // it was already set (restore old) vs unset (Unsetenv)
-	oldRepoOv  string // the pre-existing value to restore
+	// runEnv is the bed's per-invocation env map (shared by reference with the run ctx); the
+	// preempt-lease marker is set/cleared on it as the lease is acquired/released.
+	runEnv     spec.RunEnv
+	cfgDir     string // per-bed temp config dir; teardown RemoveAll ("" when an outer override is honored)
 	repoOvPair string // the auto-added `<repo>=<dir>` pair, surfaced in the verdict
-
-	cfgSet bool   // this session set CHARLY_DEPLOY_CONFIG (owns the temp dir)
-	cfgDir string // MkdirTemp; teardown RemoveAll
 }
 
 // release unwinds a session's acquired handles in REVERSE order (lease → env → domain locks →
@@ -93,16 +81,9 @@ func (s *bedSession) release(ctx context.Context, ex *sdk.Executor, ok bool) {
 		// already held it, or the claimant declared no requires_exclusive/requires_shared) needs
 		// no release call.
 		_ = arbiterRelease(ctx, ex, s.leaseClaimant, ok)
-		_ = os.Unsetenv(envPreemptLeaseHeld)
+		delete(s.runEnv, envPreemptLeaseHeld)
 	}
-	if s.repoOvSet {
-		if s.hadRepoOv {
-			_ = os.Setenv(proc.RepoOverrideEnv, s.oldRepoOv)
-		} else {
-			_ = os.Unsetenv(proc.RepoOverrideEnv)
-		}
-	}
-	if s.cfgSet {
+	if s.cfgDir != "" {
 		// An ephemeral registration is TWO artifacts — the state in this overlay and an armed
 		// systemd TTL timer — and this teardown used to destroy only the first. The timer then
 		// fired later against an overlay that no longer held the entity: it could neither resolve
@@ -113,7 +94,6 @@ func (s *bedSession) release(ctx context.Context, ex *sdk.Executor, ok bool) {
 		// Cancel BEFORE removing the state, so a cancellation failure leaves the overlay intact and
 		// the timer still able to work — the safe ordering of two operations that must both happen.
 		cancelBedEphemeralTimers(ctx, ex)
-		_ = os.Unsetenv(spec.DeployConfigEnv)
 		_ = os.RemoveAll(s.cfgDir)
 	}
 	for i := len(s.domUnlock) - 1; i >= 0; i-- {
@@ -127,7 +107,10 @@ func (s *bedSession) release(ctx context.Context, ex *sdk.Executor, ok bool) {
 // arbiterInvoke resolves verb:arbiter and Invokes it with an action-tagged input — the SAME
 // direct-InvokeProvider(verb,"arbiter") pattern candy/plugin-vm/vm_arbiter_shim.go already proves
 // bypasses core's former arbiterProxy entirely.
-func arbiterInvoke(ctx context.Context, ex *sdk.Executor, in spec.ArbiterInvokeInput) (spec.ArbiterInvokeReply, error) {
+//
+// It is a package var so a test can drive arbiterAcquire/arbiterRelease without a live provider
+// (the arbiterAcquire lease-marker path is otherwise only reachable through a real provider).
+var arbiterInvoke = func(ctx context.Context, ex *sdk.Executor, in spec.ArbiterInvokeInput) (spec.ArbiterInvokeReply, error) {
 	params, err := json.Marshal(in)
 	if err != nil {
 		return spec.ArbiterInvokeReply{}, err
@@ -164,8 +147,10 @@ func arbiterInvoke(ctx context.Context, ex *sdk.Executor, in spec.ArbiterInvokeI
 // the same shapes). is_group is left Go-zero since the group-kind cutover (spec #105): a bed
 // claimant is always a primary substrate node now — the former targetless group shape cannot
 // exist, and the wire field itself is a spec#105 residual kept for plugin-preempt.
-func arbiterAcquire(ctx context.Context, ex *sdk.Executor, claimant string, node spec.DeployNode, transient bool) (active bool, err error) {
-	if os.Getenv(envPreemptLeaseHeld) != "" {
+func arbiterAcquire(ctx context.Context, ex *sdk.Executor, claimant string, node spec.DeployNode, transient bool, env spec.RunEnv) (active bool, err error) {
+	// The lease-held marker is per-invocation data (env), never process env: a roster running
+	// many beds in one process must not let bed A's claim suppress bed B's acquire.
+	if env[envPreemptLeaseHeld] != "" {
 		return false, nil
 	}
 	action := spec.ArbiterActionAcquireShared
@@ -191,7 +176,7 @@ func arbiterAcquire(ctx context.Context, ex *sdk.Executor, claimant string, node
 		return false, ierr
 	}
 	if r.Active {
-		_ = os.Setenv(envPreemptLeaseHeld, claimant)
+		env[envPreemptLeaseHeld] = claimant
 	}
 	return r.Active, nil
 }
@@ -304,54 +289,91 @@ func memberNames(members []*spec.Member) []string {
 // BedDescriptor runCheckBed drives the sequence from. Transactional: any acquire failure rolls
 // back every handle taken so far via the returned session's release (the caller must call it on
 // any non-nil-session error path too — see bed_run.go's runCheckBed).
-func bedSetup(ctx context.Context, ex *sdk.Executor, bed, dir string) (spec.CheckBedReply, *bedSession, error) {
+// bedSetup opens the bed session — mirroring the former host_build_check_bed.go's
+// bedSessionSetup acquire order (GPU-prereq fail-fast, bed flock, per-domain flocks,
+// repo-override env, deploy-config isolation, preempt lease, libvirt) — then returns the
+// BedDescriptor runCheckBed drives the sequence from. Transactional: any acquire failure rolls
+// back every handle taken so far via the returned session's release (the caller must call it on
+// any non-nil-session error path too — see bed_run.go's runCheckBed).
+//
+// ISOLATION IS EXPLICIT DATA, NOT PROCESS ENV (plan §4.2 / F8). The per-bed deploy-config path,
+// repo override, and preempt-lease marker are carried on a spec.RunEnv threaded through ctx (and
+// to forked children via spec.CliRequest.Env) — NEVER via os.Setenv. os.Setenv is process-global,
+// so a roster running many beds as goroutines in one process would let bed A's value be read by
+// bed B (and by bed B's children): two concurrent beds then contend on each other's deploy-config
+// lock and HANG. The returned ctx is the isolated one; runCheckBed adopts it for the whole run.
+func bedSetup(ctx context.Context, ex *sdk.Executor, bed, dir string) (spec.CheckBedReply, *bedSession, context.Context, error) {
 	if dir == "" {
 		if cwd, err := os.Getwd(); err == nil {
 			dir = cwd
 		}
 	}
-	// The bed must resolve against the parent superproject's in-development candies on its very
-	// first load (matching the former host's own comment verbatim — the override must be live
-	// BEFORE the self-load below, on a fresh cache the pinned @github refs have already failed by
-	// the time a later override would apply).
+	// Build this bed's per-invocation RunEnv. The repo override must be live BEFORE the
+	// self-load below (on a fresh cache the pinned @github refs have already failed by the time a
+	// later override would apply) — so it is threaded on the load ctx, not set in the process env.
+	env := spec.RunEnv{}
+	var cfgDir string
 	pair := proc.SelfSuperprojectOverridePair(dir)
-	oldRepoOverride, hadRepoOverride := os.LookupEnv(proc.RepoOverrideEnv)
-	overrideSet := pair != ""
-	overrideTransferred := false
-	if overrideSet {
-		_ = os.Setenv(proc.RepoOverrideEnv, proc.MergeRepoOverrides(oldRepoOverride, pair))
-	}
-	defer func() {
-		if !overrideSet || overrideTransferred {
-			return
+	if pair != "" {
+		// A pre-existing outer override (an operator RDD override) is preserved as the base; the
+		// auto superproject pair is merged on top (matching the legacy os.Setenv merge).
+		existing := ""
+		if v, ok := os.LookupEnv(proc.RepoOverrideEnv); ok {
+			existing = v
 		}
-		if hadRepoOverride {
-			_ = os.Setenv(proc.RepoOverrideEnv, oldRepoOverride)
-		} else {
-			_ = os.Unsetenv(proc.RepoOverrideEnv)
+		env[proc.RepoOverrideEnv] = proc.MergeRepoOverrides(existing, pair)
+	}
+	// Per-bed deploy-config isolation: a private temp overlay so a disposable run never touches
+	// the operator's real ~/.config/charly/charly.yml, and two concurrent beds never share one.
+	// An OUTER operator override in the process env (an explicit CHARLY_DEPLOY_CONFIG) is honored
+	// as-is — it cannot be a sibling bed's value any more, because beds no longer os.Setenv, so
+	// this reads only the operator's own intent. Otherwise this bed gets its own temp overlay.
+	if outer, ok := os.LookupEnv(spec.DeployConfigEnv); ok && outer != "" {
+		env[spec.DeployConfigEnv] = outer
+		cfgDir = "" // no temp dir to own/remove; teardown must not delete the operator's overlay
+	} else {
+		d, mkErr := os.MkdirTemp("", "charly-bed-cfg-"+bed+"-")
+		if mkErr != nil {
+			return spec.CheckBedReply{}, nil, nil, fmt.Errorf("check-bed setup: creating per-bed config dir: %w", mkErr)
+		}
+		cfgDir = d
+		env[spec.DeployConfigEnv] = filepath.Join(cfgDir, "charly.yml")
+	}
+	// The temp dir is created BEFORE the session exists, so every pre-session early return below
+	// (a load error, no charly.yml, not-a-bed, a GPU-prereq skip) would leak it: only the session's
+	// release (and the bedSession's own cfgDir) removes it. Guard those paths with a cleanup that
+	// the session ADOPTS once it owns cfgDir — after that, teardown is the sole remover.
+	cfgOwned := false
+	defer func() {
+		if !cfgOwned && cfgDir != "" {
+			_ = os.RemoveAll(cfgDir)
 		}
 	}()
 
-	uf, ok, err := loaderkit.LoadUnifiedViaExecutor(ctx, ex, dir)
+	// The isolated load ctx: every in-process loader/deploy-config read below resolves THIS bed's
+	// values from the ctx RunEnv (spec.DefaultDeployConfigPath(ctx) / spec.RunEnvGet(ctx, …)).
+	bedCtx := spec.WithRunEnv(ctx, env)
+
+	uf, ok, err := loaderkit.LoadUnifiedViaExecutor(bedCtx, ex, dir)
 	if err != nil {
-		return spec.CheckBedReply{}, nil, err
+		return spec.CheckBedReply{}, nil, nil, err
 	}
 	if !ok || uf == nil {
-		return spec.CheckBedReply{}, nil, fmt.Errorf("check-bed setup: no charly.yml in %s", dir)
+		return spec.CheckBedReply{}, nil, nil, fmt.Errorf("check-bed setup: no charly.yml in %s", dir)
 	}
-	node, isBed := uf.ResolveBed(bed)
+	// Resolve the bed with every namespace-LOCAL cross-ref (from:/image:, and the
+	// same on each member, recursively) rewritten to the ROOT-qualified form. A
+	// namespaced bed (`ns.check-foo`) lives in its own namespace, where its bare
+	// `image:`/`from:` resolves; the run sequence drives `charly box build <image>`,
+	// `charly deploy add <name> <image>`, and `charly vm build <from>` from the
+	// project ROOT, where a bare namespaced ref does NOT resolve (measured:
+	// `charly.check-sidecar-pod` failed `box build` with `unknown box
+	// "check-k8s-deploy-app"`). ResolveBedForRoot is the ONE qualifier — a local bed
+	// (no namespace) is returned unchanged. The copy leaves the stored tree intact,
+	// so `charly box validate` still reads the authored refs.
+	node, isBed := uf.ResolveBedForRoot(bed)
 	if !isBed {
-		return spec.CheckBedReply{}, nil, fmt.Errorf("check-bed setup: %q is not a disposable check bed", bed)
-	}
-	// Namespace qualification: a namespaced bed (`ns.check-foo`) resolves to the node
-	// in its OWN namespace, where its bare `from:`/`box:` resolves. The run sequence
-	// passes the cross-ref to deploy/vm verbs that resolve against the ROOT fold, so
-	// qualify a bare `from:` with the bed's dotted namespace prefix (`ns.template`) —
-	// the form that resolves from the root. A local bed is unchanged (prefix "").
-	if scope, leaf := uf.BedScope(bed); scope != nil && scope != uf {
-		if node.From != "" && !strings.Contains(node.From, ".") {
-			node.From = bed[:len(bed)-len(leaf)] + node.From
-		}
+		return spec.CheckBedReply{}, nil, nil, fmt.Errorf("check-bed setup: %q is not a disposable check bed", bed)
 	}
 
 	// CalVer and logDir are single-sourced for both normal runs and prerequisite skips.
@@ -363,7 +385,7 @@ func bedSetup(ctx context.Context, ex *sdk.Executor, bed, dir string) (spec.Chec
 	tokens := append(append([]string{}, node.RequiredExclusive()...), node.RequiredShared()...)
 	if missing, tok, vendor, gerr := bedGpuPrereqCheck(ctx, ex, tokens); gerr == nil && missing {
 		if err := os.MkdirAll(logDir, 0o755); err != nil {
-			return spec.CheckBedReply{}, nil, fmt.Errorf("creating %s: %w", logDir, err)
+			return spec.CheckBedReply{}, nil, nil, fmt.Errorf("creating %s: %w", logDir, err)
 		}
 		return spec.CheckBedReply{
 			Calver: calver,
@@ -373,18 +395,15 @@ func bedSetup(ctx context.Context, ex *sdk.Executor, bed, dir string) (spec.Chec
 				Vendor: vendor,
 				Reason: fmt.Sprintf("no GPU matching vendor %s on this host (bed requires resource %q)", vendor, tok),
 			},
-		}, nil, nil
+		}, nil, bedCtx, nil
 	}
 
 	bedDomain := spec.VmDomainIdentity(bed)
 	imageTag := bedRunImageTag(bed, calver)
-	s := &bedSession{}
-	if overrideSet {
-		s.repoOvSet = true
-		s.hadRepoOv = hadRepoOverride
-		s.oldRepoOv = oldRepoOverride
+	s := &bedSession{runEnv: env, cfgDir: cfgDir}
+	cfgOwned = true // the session now owns the temp dir; its release removes it
+	if pair != "" {
 		s.repoOvPair = pair
-		overrideTransferred = true
 		fmt.Fprintf(os.Stderr, "charly check run %s: testing LOCAL candies (%s += %s)\n", bed, proc.RepoOverrideEnv, pair)
 	}
 	rolledBack := false
@@ -406,20 +425,20 @@ func bedSetup(ctx context.Context, ex *sdk.Executor, bed, dir string) (spec.Chec
 	bedLock, bedLockErr := bedRunLockPath(bed)
 	if bedLockErr != nil {
 		rollback()
-		return spec.CheckBedReply{}, nil, fmt.Errorf("resolving the check bed lock for %q: %w", bed, bedLockErr)
+		return spec.CheckBedReply{}, nil, nil, fmt.Errorf("resolving the check bed lock for %q: %w", bed, bedLockErr)
 	}
 	bedUnlock, lockErr := lock.AcquireFileLock(bedLock, false)
 	if lockErr != nil {
 		rollback()
 		if errors.Is(lockErr, lock.ErrLockBusy) {
-			return spec.CheckBedReply{}, nil, fmt.Errorf("check bed %q is already running — refusing a concurrent run: another charly process holds the bed lock %s. Two runs of one bed share the container/volume names of its deploy identity in the podman store, so the second would reclaim the first run's containers and volumes instead of testing them. Wait for that run to finish, or stop it: charly check stop %s", bed, bedLock, bed)
+			return spec.CheckBedReply{}, nil, nil, fmt.Errorf("check bed %q is already running — refusing a concurrent run: another charly process holds the bed lock %s. Two runs of one bed share the container/volume names of its deploy identity in the podman store, so the second would reclaim the first run's containers and volumes instead of testing them. Wait for that run to finish, or stop it: charly check stop %s", bed, bedLock, bed)
 		}
-		return spec.CheckBedReply{}, nil, fmt.Errorf("locking check bed %q: %w", bed, lockErr)
+		return spec.CheckBedReply{}, nil, nil, fmt.Errorf("locking check bed %q: %w", bed, lockErr)
 	}
 	s.bedUnlock = bedUnlock
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		rollback()
-		return spec.CheckBedReply{}, nil, fmt.Errorf("creating %s: %w", logDir, err)
+		return spec.CheckBedReply{}, nil, nil, fmt.Errorf("creating %s: %w", logDir, err)
 	}
 
 	// Per-DOMAIN serialization for VM beds (sorted → no deadlock across a multi-domain bed).
@@ -428,27 +447,21 @@ func bedSetup(ctx context.Context, ex *sdk.Executor, bed, dir string) (spec.Chec
 		du, derr := lock.AcquireVmDomainLock(domain)
 		if derr != nil {
 			rollback()
-			return spec.CheckBedReply{}, nil, fmt.Errorf("locking vm domain %s for bed %q: %w", domain, bed, derr)
+			return spec.CheckBedReply{}, nil, nil, fmt.Errorf("locking vm domain %s for bed %q: %w", domain, bed, derr)
 		}
 		s.domUnlock = append(s.domUnlock, du)
 	}
 
-	// Isolate this bed's EPHEMERAL deploy state to a PER-BED config file so CONCURRENT beds never
-	// share the operator's ~/.config/charly/charly.yml. Only set (and own cleanup) when not already set.
-	if _, already := os.LookupEnv(spec.DeployConfigEnv); !already {
-		if cfgDir, mkErr := os.MkdirTemp("", "charly-bed-cfg-"+bed+"-"); mkErr == nil {
-			_ = os.Setenv(spec.DeployConfigEnv, filepath.Join(cfgDir, "charly.yml"))
-			s.cfgSet = true
-			s.cfgDir = cfgDir
-		}
-	}
+	// Isolate this bed's EPHEMERAL deploy state to its per-bed config file (cfgDir, created up
+	// front and threaded on the run env/ctx) so CONCURRENT beds never share the operator's
+	// ~/.config/charly/charly.yml, nor one another's overlay.
 
 	// Resource arbitration (the preemptible axis): acquire a lease for the bed's requires_exclusive
 	// / requires_shared claim.
-	active, lerr := arbiterAcquire(ctx, ex, bed, node, true)
+	active, lerr := arbiterAcquire(bedCtx, ex, bed, node, true, env)
 	if lerr != nil {
 		rollback()
-		return spec.CheckBedReply{}, nil, fmt.Errorf("acquiring resources for %s: %w", bed, lerr)
+		return spec.CheckBedReply{}, nil, nil, fmt.Errorf("acquiring resources for %s: %w", bed, lerr)
 	}
 	s.leaseClaimant = bed
 	s.leaseActive = active
@@ -488,7 +501,7 @@ func bedSetup(ctx context.Context, ex *sdk.Executor, bed, dir string) (spec.Chec
 		RunBuild:       spec.CheckLevelReaches(level, spec.CheckLevelBuild),
 		RunRuntime:     spec.CheckLevelReaches(level, spec.CheckLevelNoAgent),
 		RunAgent:       spec.CheckLevelReaches(level, spec.CheckLevelAgent),
-	}, s, nil
+	}, s, bedCtx, nil
 }
 
 // bedTeardown closes the bed session — releasing every handle in reverse order. Idempotent-safe

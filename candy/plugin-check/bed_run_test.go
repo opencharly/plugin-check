@@ -24,6 +24,28 @@ func TestRunTaggedImageRefPinsArtifactCheckToBedBuild(t *testing.T) {
 	}
 }
 
+// TestBedArtifactRef_MapsConfigRefToArtifactSpace pins the two-reference-space
+// mapping `charly check box` needs: `box build`/`deploy add` take the config ref,
+// but the built OCI artifact is named by the box LEAF. A namespaced pod bed
+// otherwise dies at `check box ns.image:<tag>` with `not available locally`
+// (measured live: charly.check-sidecar-pod).
+func TestBedArtifactRef_MapsConfigRefToArtifactSpace(t *testing.T) {
+	cases := map[string]string{
+		"check-k8s-deploy-app":        "check-k8s-deploy-app",   // local box: unchanged
+		"charly.check-k8s-deploy-app": "check-k8s-deploy-app",   // namespaced: leaf
+		"a.b.c":                       "c",                      // nested namespace: leaf
+		"ghcr.io/opencharly/app":      "ghcr.io/opencharly/app", // full OCI ref: verbatim
+		"github.com/x/y/box":          "github.com/x/y/box",     // remote path ref: verbatim
+		"@github.com/org/repo/box:v1": "box",                    // remote @ref: box leaf
+		"":                            "",                       // empty: unchanged
+	}
+	for in, want := range cases {
+		if got := bedArtifactRef(in); got != want {
+			t.Errorf("bedArtifactRef(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // TestConfigStartArgs_AddCandyOmitsTag proves the K5-A item 2 overlay-plans-fix companion bug fix
 // (bug 3 of 3, check-pod-overlay's R10): an add_candy: overlay bed's config/start steps must NOT
 // pass --tag <base-build-tag> — doing so forces config/start to deploy the un-overlaid base image

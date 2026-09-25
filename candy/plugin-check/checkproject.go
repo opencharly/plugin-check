@@ -61,12 +61,20 @@ func resolveCheckProjection(ex *sdk.Executor, ctx context.Context, entity, dir s
 		return proj, nil
 	}
 
-	// IsBed: a bed is a disposable, non-member deploy (the former uf.CheckBeds() predicate, pure
-	// over the Deploy tree). An iterate entity IS also a bed — HasIterate is the discriminator.
-	node, hasNode := rp.Deploy[entity]
-	proj.HasNode = hasNode && node != nil
-	proj.IsBed = proj.HasNode && node.IsDisposable() && node.MemberOf == ""
-	proj.HasIterate = proj.HasNode && node.Iterate != nil
+	// Bed resolution via the ONE namespace-aware resolver (spec.UnifiedFile.ResolveBed,
+	// sdk#281) — NOT rp.Deploy[entity], which projects ROOT-scope deploys only and made a
+	// qualified bed (`ns.check-foo`) validate-but-not-run ("no entity"; plan RCA issue #3).
+	// The loader is reachable plugin-side (the same path bedSetup/isRosterEntity use), so
+	// validate = resolve = run share one lookup. A load failure degrades to an unresolved
+	// entity (the caller reports "no entity"), never a wrong root-scope match.
+	var uf *spec.UnifiedFile
+	if loaded, ufOK, ufErr := loaderkit.LoadUnifiedViaExecutor(ctx, ex, dir); ufErr == nil && ufOK {
+		uf = loaded
+	}
+	node, hasNode, isBed, hasIterate := classifyCheckProjection(uf, rp, entity)
+	proj.HasNode = hasNode
+	proj.IsBed = isBed
+	proj.HasIterate = hasIterate
 	if !proj.HasIterate {
 		return proj, nil
 	}
@@ -90,6 +98,28 @@ func resolveCheckProjection(ex *sdk.Executor, ctx context.Context, entity, dir s
 		proj.Plan = plan
 	}
 	return proj, nil
+}
+
+// classifyCheckProjection resolves entity to its bed node and classification. The loader's ONE
+// namespace-aware resolver (uf.ResolveBed) wins — it reaches a QUALIFIED bed (`ns.check-foo`) that
+// rp.Deploy (root-scope only) cannot, which is what makes a namespaced bed classify as a bed
+// instead of "no entity" (plan RCA issue #3). rp.Deploy is a fallback for a NON-bed root entity
+// (an iterate entity that is not disposable, or the legacy projection). Pure, so the qualified-bed
+// branch is unit-testable without a live executor.
+func classifyCheckProjection(uf *spec.UnifiedFile, rp *spec.ResolvedProject, entity string) (node spec.DeployNode, hasNode, isBed, hasIterate bool) {
+	if uf != nil {
+		if n, ok := uf.ResolveBed(entity); ok {
+			node, hasNode = n, true
+		}
+	}
+	if !hasNode {
+		if rn, ok := rp.Deploy[entity]; ok && rn != nil {
+			node, hasNode = *rn, true
+		}
+	}
+	isBed = hasNode && node.IsDisposable() && node.MemberOf == ""
+	hasIterate = hasNode && node.Iterate != nil
+	return node, hasNode, isBed, hasIterate
 }
 
 // resolvedProject fetches + decodes the generic resolved-project envelope over the reverse channel.

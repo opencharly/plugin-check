@@ -24,7 +24,7 @@ func TestDebugRetentionNotice_VMHintsUseDeployDomain(t *testing.T) {
 		IsVM:       true,
 		VMTemplate: "omarchy-vm",
 		BedDomain:  "check-omarchy-desktop-vm",
-	})
+	}, "")
 	_ = w.Close()
 	buf := make([]byte, 4096)
 	n, _ := r.Read(buf)
