@@ -61,12 +61,31 @@ func resolveCheckProjection(ex *sdk.Executor, ctx context.Context, entity, dir s
 		return proj, nil
 	}
 
-	// IsBed: a bed is a disposable, non-member deploy (the former uf.CheckBeds() predicate, pure
-	// over the Deploy tree). An iterate entity IS also a bed — HasIterate is the discriminator.
-	node, hasNode := rp.Deploy[entity]
-	proj.HasNode = hasNode && node != nil
-	proj.IsBed = proj.HasNode && node.IsDisposable() && node.MemberOf == ""
-	proj.HasIterate = proj.HasNode && node.Iterate != nil
+	// Bed resolution via the ONE namespace-aware resolver (spec.UnifiedFile.ResolveBed,
+	// sdk#281) — NOT rp.Deploy[entity], which projects ROOT-scope deploys only and made a
+	// qualified bed (`ns.check-foo`) validate-but-not-run ("no entity"; plan RCA issue #3).
+	// The loader is reachable plugin-side (the same path bedSetup/isRosterEntity use), so
+	// validate = resolve = run share one lookup. A load failure degrades to an unresolved
+	// entity (the caller reports "no entity"), never a wrong root-scope match.
+	uf, ufOK, ufErr := loaderkit.LoadUnifiedViaExecutor(ctx, ex, dir)
+	node, hasNode := spec.DeployNode{}, false
+	if ufErr == nil && ufOK && uf != nil {
+		node, hasNode = uf.ResolveBed(entity)
+	}
+	if !hasNode {
+		// Fall back to the envelope's root-scope Deploy tree: a NON-bed entity (e.g. an
+		// iterate: entity that is not itself disposable, or the legacy projection) is still
+		// classified off it.
+		if rn, ok := rp.Deploy[entity]; ok && rn != nil {
+			node, hasNode = *rn, true
+		}
+	}
+
+	// IsBed: a bed is a disposable, non-member deploy (the ResolveBed predicate). An iterate
+	// entity IS also a bed — HasIterate is the discriminator.
+	proj.HasNode = hasNode
+	proj.IsBed = hasNode && node.IsDisposable() && node.MemberOf == ""
+	proj.HasIterate = hasNode && node.Iterate != nil
 	if !proj.HasIterate {
 		return proj, nil
 	}

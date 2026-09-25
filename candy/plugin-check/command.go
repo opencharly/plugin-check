@@ -165,7 +165,14 @@ func bedCliCombined(ex *sdk.Executor, ctx context.Context, argv ...string) (spec
 }
 
 // bedCliReq is the shared cli-seam marshal/dispatch/decode (R3 — one body for bedCli/bedCliCombined).
+//
+// The forked child gets the invocation's per-bed env explicitly via CliRequest.Env (never via
+// inherited process env): the bed run carries its RunEnv on ctx (spec.RunEnvFrom), and this
+// threads the same values to the child, so a concurrent in-process roster never lets one bed's
+// deploy-config path / repo override reach another bed's child. The explicit env OVERRIDES any
+// inherited value and — unlike os.Setenv — is scoped to THIS call.
 func bedCliReq(ex *sdk.Executor, ctx context.Context, req spec.CliRequest) (spec.CliReply, error) {
+	req.Env = childEnvForReq(ctx, req.Env)
 	reqJSON, err := json.Marshal(req)
 	if err != nil {
 		return spec.CliReply{}, err
@@ -179,6 +186,20 @@ func bedCliReq(ex *sdk.Executor, ctx context.Context, req spec.CliRequest) (spec
 		return spec.CliReply{}, fmt.Errorf("cli: decode reply: %w", err)
 	}
 	return reply, nil
+}
+
+// childEnvForReq resolves the per-call env map a bed's forked child receives. A caller-supplied
+// map is authoritative; otherwise the invocation's RunEnv on ctx (spec.RunEnvFrom) is threaded
+// verbatim. Pure, so the isolation contract — a concurrent roster never lets one bed's values
+// reach another bed's child — is unit-testable without a live executor.
+func childEnvForReq(ctx context.Context, explicit map[string]string) map[string]string {
+	if explicit != nil {
+		return explicit
+	}
+	if env := spec.RunEnvFrom(ctx); len(env) > 0 {
+		return map[string]string(env)
+	}
+	return nil
 }
 
 // hostRetention runs the SHARED check-run prune engine, now owned by candy/plugin-clean

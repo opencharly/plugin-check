@@ -208,6 +208,30 @@ func runTaggedImageRef(image, tag string) string {
 	return image + ":" + tag
 }
 
+// bedArtifactRef maps a bed node's `image:` (a CONFIG ref) to the ARTIFACT-space
+// name `charly check box` resolves against local storage. These are two distinct
+// reference spaces: `charly box build`/`charly deploy add` take the namespace-
+// QUALIFIED config ref (`charly.check-k8s-deploy-app`), while the built OCI
+// artifact is named by the box's LEAF (`ghcr.io/opencharly/check-k8s-deploy-app`,
+// labelled `ai.opencharly.box: check-k8s-deploy-app`). A full OCI ref (a
+// `registry/name` path) is already artifact-space and passes through verbatim; a
+// remote `@…` ref reduces to its box leaf.
+//
+// Without this, a namespaced pod bed dies at `check box
+// charly.check-k8s-deploy-app:<tag>` with `image ... is not available locally`
+// (measured live: charly.check-sidecar-pod).
+func bedArtifactRef(image string) string {
+	if image == "" {
+		return image
+	}
+	// A full OCI ref (registry/repo path, not a remote `@` candy ref) is already
+	// artifact-space.
+	if strings.Contains(image, "/") && !strings.HasPrefix(image, "@") {
+		return image
+	}
+	return spec.LeafName(spec.ResolveBoxName(image))
+}
+
 // checkRunVars returns the per-run var passthrough for ONE bed run's check-live
 // steps: the operator's --var map (a fresh map when nil — never mutated
 // in the caller), overlaid with the run's authoritative runtime vars:
@@ -255,10 +279,14 @@ func bedShortName(bed string) string {
 func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRunOpts) (*bedRunResult, error) {
 	// setup — opens the session (locks/lease/env/GPU-prereq) plugin-side and returns the
 	// BedDescriptor the sequence drives from (#55 W3 B2-full: no more HostBuild round-trip).
-	d, sess, err := bedSetup(ctx, ex, name, "")
+	// bedSetup also returns the run's ISOLATED ctx (its per-bed spec.RunEnv), which runCheckBed
+	// adopts for the whole run so every in-process read and every forked child sees THIS bed's
+	// values, never a sibling's (plan §4.2).
+	d, sess, runCtx, err := bedSetup(ctx, ex, name, "")
 	if err != nil {
 		return nil, err
 	}
+	ctx = runCtx
 
 	// Connect the out-of-process check-verb plugins (spice/record/wl/vnc/cdp/adb/appium) the
 	// bed's INSTRUMENT entries reference — the SAME check-load-plugins seam `charly check live`
@@ -379,7 +407,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		} else {
 			bestEffort("remove", name, "--purge")
 		}
-		_ = deploykit.TearDownMembers(&bedNode)
+		_ = deploykit.TearDownMembers(ctx, &bedNode)
 	}
 
 	// Seed the per-host overlay with the bed ROOT's + each MEMBER's project-declared deploy-shaped
@@ -406,7 +434,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// instead of chasing each purge site with its own ad hoc re-persist call (R3 — one shared shape).
 	bringUpMembersFresh := func() error {
 		persistBedDeployOverridePluginSide(ctx, ex, name, d)
-		return deploykit.BringUpMembers(&bedNode, d.ImageTag)
+		return deploykit.BringUpMembers(ctx, &bedNode, d.ImageTag)
 	}
 
 	// Acceptance-depth gating comes from the descriptor (the box's check_level rung,
@@ -574,7 +602,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 			targetErr = step("cleanup", "remove", name, "--purge")
 		}
 		membersErr := phase("cleanup-members", func() error {
-			return deploykit.TearDownMembers(&bedNode)
+			return deploykit.TearDownMembers(ctx, &bedNode)
 		})
 		if targetErr != nil {
 			return targetErr
@@ -593,7 +621,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		}
 		writeBedSummary(d.LogDir, res)
 		if deployed {
-			printDebugRetentionNotice(os.Stderr, name, d)
+			printDebugRetentionNotice(os.Stderr, name, d, res.RepoOverride)
 		}
 		return res, fmt.Errorf(format, args...)
 	}
@@ -632,7 +660,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 				return fail("image build member %s (%s): %w", m.Key, m.Image, err)
 			}
 			if d.RunBuild {
-				if err := step("check-image-"+m.Key, "check", "box", runTaggedImageRef(m.Image, d.ImageTag)); err != nil {
+				if err := step("check-image-"+m.Key, "check", "box", runTaggedImageRef(bedArtifactRef(m.Image), d.ImageTag)); err != nil {
 					return fail("check box member %s (%s): %w", m.Key, m.Image, err)
 				}
 			}
@@ -653,7 +681,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 			return fail("image build %s: %w", d.Image, err)
 		}
 		if d.RunBuild {
-			if err := step("check-image", "check", "box", runTaggedImageRef(d.Image, d.ImageTag)); err != nil {
+			if err := step("check-image", "check", "box", runTaggedImageRef(bedArtifactRef(d.Image), d.ImageTag)); err != nil {
 				return fail("check box %s: %w", d.Image, err)
 			}
 		}
@@ -881,7 +909,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		}
 		if len(d.Members) > 0 {
 			if err := phase("rebuild-members-down", func() error {
-				return deploykit.TearDownMembers(&bedNode)
+				return deploykit.TearDownMembers(ctx, &bedNode)
 			}); err != nil {
 				return fail("tear down members for fresh rebuild of %s: %w", name, err)
 			}
@@ -1069,14 +1097,14 @@ func checkStepCommandSummary(argv []string) string {
 }
 
 // printDebugRetentionNotice tells the operator that a FAILED bed was left running for
-// inspection, with the target-appropriate inspect + destroy commands.
-func printDebugRetentionNotice(w *os.File, name string, d spec.CheckBedReply) {
-	// The bed ran with CHARLY_REPO_OVERRIDE set (testing the LOCAL checkout's candies
-	// + plugins), so carry the same override in the inspect hint (still active here —
-	// the session set it) so the command reproduces the bed's actual state.
+// inspection, with the target-appropriate inspect + destroy commands. repoOverride is the
+// bed's own auto-superproject `<repo>=<dir>` pair (res.RepoOverride, captured from the
+// session — not process env, which the roster no longer mutates): it is carried in the
+// inspect hint so the command reproduces the bed's actual LOCAL-candy state.
+func printDebugRetentionNotice(w *os.File, name string, d spec.CheckBedReply, repoOverride string) {
 	live := "charly check live " + name
-	if ov := os.Getenv(proc.RepoOverrideEnv); ov != "" {
-		live = proc.RepoOverrideEnv + "='" + ov + "' " + live
+	if repoOverride != "" {
+		live = proc.RepoOverrideEnv + "='" + repoOverride + "' " + live
 	}
 	switch {
 	case d.IsVM:
