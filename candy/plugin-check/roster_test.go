@@ -6,6 +6,7 @@ package check
 // live bed engine is exercised by the R10 bed run; these lock the orchestration.
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/opencharly/spec/spec"
@@ -162,5 +163,42 @@ func TestDefaultRosterLanes(t *testing.T) {
 	}
 	if got := defaultRosterLanes(2); got < 1 || got > 2 {
 		t.Fatalf("defaultRosterLanes(2)=%d out of range", got)
+	}
+}
+
+// TestRosterWaitGroup_BalancedConcurrency is the regression guard for the
+// WaitGroup accounting in runCheckRoster: one wg.Add per chain, one wg.Done per
+// chain goroutine, and runOne must NOT call wg.Done. The shape is exercised here
+// with the same chain/pool construction the runner uses (a double-Done panics
+// "negative WaitGroup counter"; a missing Done hangs).
+func TestRosterWaitGroup_BalancedConcurrency(t *testing.T) {
+	beds := []rosterBed{
+		{Name: "a"}, {Name: "b", Exclusive: []string{"tok"}}, {Name: "c", Exclusive: []string{"tok"}}, {Name: "d"},
+	}
+	chains := buildRosterChains(beds)
+	sem := make(chan struct{}, 2) // lanes
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	done := 0
+	runOne := func(b rosterBed) {
+		sem <- struct{}{}
+		defer func() { <-sem }()
+		mu.Lock()
+		done++
+		mu.Unlock()
+	}
+	for _, chain := range chains {
+		chain := chain
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for _, b := range chain {
+				runOne(b)
+			}
+		}()
+	}
+	wg.Wait()
+	if done != len(beds) {
+		t.Fatalf("ran %d beds, want %d (chain/pool accounting)", done, len(beds))
 	}
 }

@@ -122,8 +122,9 @@ func (c *CheckRunCmd) runCheckRoster(ex *sdk.Executor, ctx context.Context, name
 	var mu sync.Mutex
 	var outcomes []rosterBedOutcome
 
+	// runOne runs ONE bed under the lane semaphore. The per-chain goroutine owns
+	// the single wg.Done; runOne must not touch wg.
 	runOne := func(b rosterBed) {
-		defer wg.Done()
 		sem <- struct{}{}
 		defer func() { <-sem }()
 		o := runRosterBed(ex, ctx, b, &roster)
