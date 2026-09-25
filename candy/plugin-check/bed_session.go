@@ -339,6 +339,16 @@ func bedSetup(ctx context.Context, ex *sdk.Executor, bed, dir string) (spec.Chec
 		cfgDir = d
 		env[spec.DeployConfigEnv] = filepath.Join(cfgDir, "charly.yml")
 	}
+	// The temp dir is created BEFORE the session exists, so every pre-session early return below
+	// (a load error, no charly.yml, not-a-bed, a GPU-prereq skip) would leak it: only the session's
+	// release (and the bedSession's own cfgDir) removes it. Guard those paths with a cleanup that
+	// the session ADOPTS once it owns cfgDir — after that, teardown is the sole remover.
+	cfgOwned := false
+	defer func() {
+		if !cfgOwned && cfgDir != "" {
+			_ = os.RemoveAll(cfgDir)
+		}
+	}()
 
 	// The isolated load ctx: every in-process loader/deploy-config read below resolves THIS bed's
 	// values from the ctx RunEnv (spec.DefaultDeployConfigPath(ctx) / spec.RunEnvGet(ctx, …)).
@@ -391,6 +401,7 @@ func bedSetup(ctx context.Context, ex *sdk.Executor, bed, dir string) (spec.Chec
 	bedDomain := spec.VmDomainIdentity(bed)
 	imageTag := bedRunImageTag(bed, calver)
 	s := &bedSession{runEnv: env, cfgDir: cfgDir}
+	cfgOwned = true // the session now owns the temp dir; its release removes it
 	if pair != "" {
 		s.repoOvPair = pair
 		fmt.Fprintf(os.Stderr, "charly check run %s: testing LOCAL candies (%s += %s)\n", bed, proc.RepoOverrideEnv, pair)
