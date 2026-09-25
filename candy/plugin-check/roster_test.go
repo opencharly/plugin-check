@@ -36,7 +36,7 @@ func rosterFold() *spec.UnifiedFile {
 func TestSelectRosterBeds_Default(t *testing.T) {
 	uf := rosterFold()
 	var r checkRoster
-	sel, refused := selectRosterBeds(uf, &r, uf.Beds())
+	sel, refused := selectRosterBeds(&r, uf.Beds())
 	gotSel := map[string]bool{}
 	for _, b := range sel {
 		gotSel[b.Name] = true
@@ -63,7 +63,7 @@ func TestSelectRosterBeds_HostLocalOptInAndSelect(t *testing.T) {
 	uf := rosterFold()
 	no := false
 	r := checkRoster{Select: "check-*", RefuseHostLocal: &no, Exclude: []string{"check-iterate"}}
-	sel, refused := selectRosterBeds(uf, &r, uf.Beds())
+	sel, refused := selectRosterBeds(&r, uf.Beds())
 	if len(refused) != 0 {
 		t.Fatalf("refuse_host_local=false still refused %v", refused)
 	}

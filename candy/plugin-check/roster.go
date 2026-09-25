@@ -99,7 +99,7 @@ func (c *CheckRunCmd) runCheckRoster(ex *sdk.Executor, ctx context.Context, name
 	}
 
 	beds := uf.Beds()
-	selected, refused := selectRosterBeds(uf, &roster, beds)
+	selected, refused := selectRosterBeds(&roster, beds)
 
 	fmt.Fprintf(os.Stderr, "charly check run %s: roster — %d bed(s) selected, %d refused (host-local)\n",
 		name, len(selected), len(refused))
@@ -151,7 +151,7 @@ func (c *CheckRunCmd) runCheckRoster(ex *sdk.Executor, ctx context.Context, name
 
 // selectRosterBeds classifies every bed against the roster's select/exclude and
 // the host-local refusal policy. Returns (selected, refused-host-local).
-func selectRosterBeds(uf *spec.UnifiedFile, r *checkRoster, beds map[string]spec.DeployNode) ([]rosterBed, []rosterBed) {
+func selectRosterBeds(r *checkRoster, beds map[string]spec.DeployNode) ([]rosterBed, []rosterBed) {
 	refuseHL := true
 	if r.RefuseHostLocal != nil {
 		refuseHL = *r.RefuseHostLocal
@@ -195,9 +195,6 @@ func selectRosterBeds(uf *spec.UnifiedFile, r *checkRoster, beds map[string]spec
 	return selected, refused
 }
 
-// buildRosterChains groups beds into serial chains: a bed joins the first chain
-// already holding one of its exclusive/shared tokens, else starts a new chain.
-// Distinct chains are disjoint in tokens and run in parallel.
 // buildRosterChains groups beds into serial chains: any two beds sharing an
 // exclusive/shared token are in the SAME chain (a bed's token set UNION-merges
 // every chain it touches, so two chains never share a token). Distinct chains are
@@ -374,9 +371,6 @@ func rosterOutcomeLine(o rosterBedOutcome) string {
 	return fmt.Sprintf("  %s %s (exit=%d)%s", status, o.Bed, o.ExitCode, extra)
 }
 
-// globMatch matches a qualified bed name against a glob. An empty pattern or "*"
-// matches everything. Uses filepath.Match's syntax (its `*` does not cross `.`,
-// which matches a namespace separator's intent: `main.*` matches main's own beds).
 // globMatch matches a qualified bed name against a glob. An empty pattern or "*"
 // matches everything. Uses filepath.Match syntax (its separator is `/`, so `*`
 // matches `.` too — a `select: 'check-*'` therefore matches only names that START
