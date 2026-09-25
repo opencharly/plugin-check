@@ -46,7 +46,7 @@ func (e *CheckSkippedError) Error() string { return e.Msg }
 
 // CheckCmd is the unified `charly check` command tree. The box/live/feature leaves gather their
 // config + resolve their plan, then forward a run to hostCheckRun (this package's own per-mode
-// dispatch) and format the returned []StepResult. The Wave-2 additions (run / run-local / the AI-facing + management leaves)
+// dispatch) and format the returned []StepResult. The Wave-2 additions (run / __run-local / the AI-facing + management leaves)
 // drive the R10 bed sequence + the AI-iteration harness over HostBuild("cli") + the "check-bed"
 // session seam; each leaf's IMPLEMENTATION lives in its own file (run_cmd.go / runlocal.go /
 // synccreds.go / ai_helpers.go / note_cmd.go / report_cmd.go / list_agent_cmd.go) so the leaf
@@ -74,7 +74,7 @@ type CheckCmd struct {
 
 	// — Wave-2 additions (leaf implementations in their own files) —
 	Run            CheckRunCmd       `cmd:"" name:"run" help:"Run a disposable check bed (R10 sequence) or an iterate: entity (AI loop)."`
-	RunLocal       CheckRunLocalCmd  `cmd:"" name:"run-local" hidden:"" help:"In-target harness driver (set by the host)."`
+	RunLocal       CheckRunLocalCmd  `cmd:"" name:"__run-local" hidden:"" help:"In-target harness driver (set by the host)."`
 	SyncCredential CheckSyncCredCmd  `cmd:"" name:"sync-credential" help:"Copy AI credentials into a score's target."`
 	Scope          CheckScopeCmd     `cmd:"" name:"scope" help:"AI-facing: print the active iteration's scope.yml."`
 	LastTag        CheckLastTagCmd   `cmd:"" name:"last-tag" help:"AI-facing: print the prior iteration's image tag."`

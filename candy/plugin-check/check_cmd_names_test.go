@@ -24,7 +24,7 @@ func TestCheckCmdDeclaredNames(t *testing.T) {
 	for _, want := range []string{
 		"__feature-box",
 		"box", "live", "feature", "run",
-		"run-local", "sync-credential", "scope", "last-tag", "self-evaluate",
+		"__run-local", "sync-credential", "scope", "last-tag", "self-evaluate",
 		"list", "report", "note", "list-agent",
 	} {
 		if !got[want] {

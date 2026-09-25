@@ -162,7 +162,7 @@ func checkRunBedOpts(c *CheckRunCmd) (bedRunOpts, error) {
 
 // runIterateEntity drives the iterate: AI iteration loop for the named entity: it
 // resolves the sandbox target (from the check projection), generates a run ID,
-// builds the run-local argv, performs the disposable-pod preflight, and dispatches to
+// builds the __run-local argv, performs the disposable-pod preflight, and dispatches to
 // the host / pod / VM runner. The seams it drives (preflight check-run, cred sync,
 // self-reentry) use the package cmdExec/cmdCtx, so no executor is threaded here.
 func (c *CheckRunCmd) runIterateEntity(reply checkProjection, cwd string) error {
@@ -172,7 +172,7 @@ func (c *CheckRunCmd) runIterateEntity(reply checkProjection, cwd string) error 
 	tk, tn := reply.SandboxKind, reply.SandboxName
 
 	runID := GenerateRunID()
-	args := []string{"check", "run-local", c.Name, "--run-id", runID}
+	args := []string{"check", "__run-local", c.Name, "--run-id", runID}
 	if c.Agent != "" {
 		args = append(args, "--agent", c.Agent)
 	}
