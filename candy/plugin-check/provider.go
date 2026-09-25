@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/opencharly/sdk"
 	pb "github.com/opencharly/spec/proto"
@@ -18,11 +19,45 @@ import (
 
 type provider struct{ pb.UnimplementedProviderServer }
 
+// rosterCache holds each `check-roster` entity body captured at OpLoad (the plugin
+// itself received the RESOLVED, schema-validated body), keyed by entity name — the
+// pipeline `entityCache` precedent. The roster runner reads it here rather than
+// re-deriving from the opaque uf.PluginKinds fold. Same process: OpLoad runs at the
+// project load preceding the `charly check run <roster>` dispatch. Mutex-guarded —
+// OpLoad may run across goroutines under a concurrent load.
+var (
+	rosterCacheMu sync.RWMutex
+	rosterCache   = map[string]json.RawMessage{}
+)
+
+// putRosterBody stores an entity body captured at OpLoad.
+func putRosterBody(name string, body json.RawMessage) {
+	rosterCacheMu.Lock()
+	rosterCache[name] = append(json.RawMessage(nil), body...)
+	rosterCacheMu.Unlock()
+}
+
+// getRosterBody returns a captured entity body (nil when absent).
+func getRosterBody(name string) (json.RawMessage, bool) {
+	rosterCacheMu.RLock()
+	defer rosterCacheMu.RUnlock()
+	b, ok := rosterCache[name]
+	return b, ok
+}
+
 // Invoke runs `charly check …` in-process for the compiled-in command:check placement: it decodes the
 // pass-through args, recovers the reverse-channel executor from the ctx (threaded by the host command
 // dispatch), stashes it for the deep CLI handlers (setCommandContext), and kong-parses + runs the
 // CheckCmd tree. It RETURNS the error so a non-zero / check-fail exit propagates.
 func (provider) Invoke(ctx context.Context, req *pb.InvokeRequest) (*pb.InvokeReply, error) {
+	// kind:check-roster OpLoad — the host validates the authored `check-roster:` body
+	// against #CheckRosterInput, then dispatches OpLoad. Cache the body here (the
+	// pipeline precedent) so the roster runner reads the RESOLVED body the plugin
+	// itself received, independent of the opaque PluginKinds fold.
+	if req.GetOp() == sdk.OpLoad {
+		putRosterBody(req.GetReserved(), req.GetParamsJson())
+		return &pb.InvokeReply{ResultJson: req.GetParamsJson()}, nil
+	}
 	// verb:check-resolve (OpResolve) — the internal venue-classification capability the host's
 	// floor reverse-legs call (#118 check broker-envelope-out); routed here, never the command path.
 	if req.GetOp() == sdk.OpResolve {

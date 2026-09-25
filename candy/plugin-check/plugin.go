@@ -23,9 +23,14 @@ import (
 	"fmt"
 	"os"
 
+	"embed"
+
 	"github.com/opencharly/sdk"
 	pb "github.com/opencharly/spec/proto"
 )
+
+//go:embed schema/*.cue
+var schemaFS embed.FS
 
 // NewProvider returns the check provider (command:check).
 func NewProvider() pb.ProviderServer { return &provider{} }
@@ -54,8 +59,13 @@ func NewMeta() pb.PluginMetaServer {
 			// (session_seam.go). Internal-only dispatch (no CLI surface), so no schema — the
 			// verb:check-resolve precedent.
 			{Class: "verb", Word: "session"},
+			// kind:check-roster — a declared set of disposable check beds run together as one
+			// gate (see schema/checkroster.cue + roster.go). FLAT kind: the host validates an
+			// authored `check-roster:` body against #CheckRosterInput and lands it opaquely;
+			// the roster runner reads it back via the project loader.
+			{Class: "kind", Word: "check-roster", InputDef: "#CheckRosterInput"},
 		},
-		nil)
+		schemaFS)
 }
 
 // CliMain is the out-of-process CLI entrypoint (only reached when check is NOT compiled in). check

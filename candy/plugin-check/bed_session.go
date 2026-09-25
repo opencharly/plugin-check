@@ -42,6 +42,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/opencharly/sdk"
 	"github.com/opencharly/sdk/loaderkit"
@@ -338,9 +339,19 @@ func bedSetup(ctx context.Context, ex *sdk.Executor, bed, dir string) (spec.Chec
 	if !ok || uf == nil {
 		return spec.CheckBedReply{}, nil, fmt.Errorf("check-bed setup: no charly.yml in %s", dir)
 	}
-	node, isBed := uf.CheckBeds()[bed]
+	node, isBed := uf.ResolveBed(bed)
 	if !isBed {
 		return spec.CheckBedReply{}, nil, fmt.Errorf("check-bed setup: %q is not a disposable check bed", bed)
+	}
+	// Namespace qualification: a namespaced bed (`ns.check-foo`) resolves to the node
+	// in its OWN namespace, where its bare `from:`/`box:` resolves. The run sequence
+	// passes the cross-ref to deploy/vm verbs that resolve against the ROOT fold, so
+	// qualify a bare `from:` with the bed's dotted namespace prefix (`ns.template`) —
+	// the form that resolves from the root. A local bed is unchanged (prefix "").
+	if scope, leaf := uf.BedScope(bed); scope != nil && scope != uf {
+		if node.From != "" && !strings.Contains(node.From, ".") {
+			node.From = bed[:len(bed)-len(leaf)] + node.From
+		}
 	}
 
 	// CalVer and logDir are single-sourced for both normal runs and prerequisite skips.

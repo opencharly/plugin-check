@@ -113,8 +113,13 @@ func TestAnchoredPreCheckStep_IssuesSnapshotRevert(t *testing.T) {
 
 func TestVmCreateArgs_BuildsCreateArgv(t *testing.T) {
 	want := []string{"vm", "create", "omarchy-vm", "--domain", "check-omarchy-vm"}
-	if got := vmCreateArgs(vmBedReply()); !equalArgs(got, want) {
+	if got := vmCreateArgs(vmBedReply(), bedRunOpts{}); !equalArgs(got, want) {
 		t.Errorf("vmCreateArgs() = %v, want %v", got, want)
+	}
+	// The roster's cpu/ram cap threads through as --cpus/--ram.
+	wantCapped := []string{"vm", "create", "omarchy-vm", "--domain", "check-omarchy-vm", "--cpus", "2", "--ram", "2G"}
+	if got := vmCreateArgs(vmBedReply(), bedRunOpts{Cpus: 2, Ram: "2G"}); !equalArgs(got, wantCapped) {
+		t.Errorf("vmCreateArgs(capped) = %v, want %v", got, wantCapped)
 	}
 }
 

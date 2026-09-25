@@ -83,9 +83,15 @@ func (c *CheckRunCmd) Run() error {
 	}()
 
 	if c.Name == "" {
-		// Run a whole roster by fanning beds out at the AGENT layer — one
-		// `charly check run <bed>` per agent (the /verify-beds workflow / an agent team).
-		return fmt.Errorf("charly check run: provide an iterate: entity or a check bed name (run a full roster concurrently via the /verify-beds workflow)")
+		// A whole roster is declared by a `check-roster` entity and run by name; a
+		// bare invocation names neither a bed nor a roster.
+		return fmt.Errorf("charly check run: provide a check bed name, an iterate: entity, or a check-roster entity name")
+	}
+
+	// A `check-roster` entity drives many beds as one gate; a plain bed / iterate
+	// entity drives one. Resolve which the name is.
+	if isRosterEntity(ex, ctx, c.Name, cwd) {
+		return c.runCheckRoster(ex, ctx, c.Name, cwd)
 	}
 
 	reply, err := resolveCheckProjection(ex, ctx, c.Name, cwd)

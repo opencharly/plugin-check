@@ -87,8 +87,15 @@ func anchoredPreCheckStep(d spec.CheckBedReply, opts bedRunOpts) []string {
 }
 
 // vmCreateArgs builds the `charly vm create` argv for a bed's VM arm.
-func vmCreateArgs(d spec.CheckBedReply) []string {
-	return []string{"vm", "create", d.VMTemplate, "--domain", d.BedDomain}
+func vmCreateArgs(d spec.CheckBedReply, opts bedRunOpts) []string {
+	args := []string{"vm", "create", d.VMTemplate, "--domain", d.BedDomain}
+	if opts.Cpus > 0 {
+		args = append(args, "--cpus", fmt.Sprintf("%d", opts.Cpus))
+	}
+	if opts.Ram != "" {
+		args = append(args, "--ram", opts.Ram)
+	}
+	return args
 }
 
 // update_gate change-class values — the bed plan's declarative R10 fresh-update
