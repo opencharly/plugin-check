@@ -86,7 +86,7 @@ func (c *CheckRunCmd) runCheckRoster(ex *sdk.Executor, ctx context.Context, name
 	}
 	// The authored body is cached by the plugin at OpLoad (provider.go rosterCache);
 	// fall back to the opaque uf.PluginKinds fold if OpLoad ran in a prior process.
-	raw, ok := rosterCache[name]
+	raw, ok := getRosterBody(name)
 	if !ok {
 		raw, ok = uf.PluginKinds["check-roster"][name]
 	}
