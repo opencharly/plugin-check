@@ -244,3 +244,29 @@ func TestAggregateRoster_SkipPlusPass(t *testing.T) {
 		t.Fatalf("pass+skip roster should PASS, got %v", err)
 	}
 }
+
+// TestClampRosterLanes_HostMemoryCeiling pins the RCA-I fix: an over-large
+// requested lane count is clamped by host RAM (total/rosterLaneMemBudget), the CPU
+// count, and the bed count. It must never exceed the memory ceiling.
+func TestClampRosterLanes_HostMemoryCeiling(t *testing.T) {
+	total, ok := memTotalBytes()
+	if !ok {
+		t.Skip("no /proc/meminfo (non-Linux)")
+	}
+	memCeil := int(total / rosterLaneMemBudget)
+	// A wildly over-large request must be clamped to at most the memory ceiling.
+	if got := clampRosterLanes(100000, 100000); got > memCeil || got != memCeil {
+		t.Fatalf("clampRosterLanes(100000,100000)=%d, want the memory ceiling %d", got, memCeil)
+	}
+	// Below the ceiling, the CPU/bed bounds win.
+	if got := clampRosterLanes(2, 10); got != 2 {
+		t.Fatalf("clampRosterLanes(2,10)=%d, want 2 (under every ceiling)", got)
+	}
+	if got := clampRosterLanes(16, 3); got != 3 {
+		t.Fatalf("clampRosterLanes(16,3)=%d, want 3 (bed-count bound)", got)
+	}
+	// Never below 1.
+	if got := clampRosterLanes(0, 0); got != 1 {
+		t.Fatalf("clampRosterLanes(0,0)=%d, want 1", got)
+	}
+}
