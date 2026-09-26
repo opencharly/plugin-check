@@ -238,6 +238,17 @@ func checkLocalTarget(tree map[string]spec.DeployNode, name string) (spec.Deploy
 // former Children map walk). Ported from charly/check_cmd.go (pure, no core-only dependency).
 func resolveDeployNodeByPath(tree map[string]spec.DeployNode, name string) (*spec.DeployNode, bool) {
 	name, _ = vmshared.SplitVmAddress(name)
+	// EXACT full-key match FIRST: a NAMESPACE-QUALIFIED deploy key (`charly.check-charly-vm`)
+	// contains dots that are namespace separators, not member-path separators, so the dotted
+	// split below would look up a root named `charly` and miss the real entry — checkVmTarget
+	// then failed to see the SSH venue and the bed fell through to a CONTAINER lookup
+	// (`container charly-charly.check-charly-vm is not running`). The same fix charly#678
+	// applied to the core resolver, mirrored here for the plugin-side relocated copy.
+	// Mirrors spec.ResolveNodePath's exact-key-first contract (spec#164). A member path
+	// (`openclaw-stack.web.db`) only applies when the full key is absent.
+	if node, ok := tree[name]; ok {
+		return &node, true
+	}
 	parts := strings.Split(name, ".")
 	root, ok := tree[parts[0]]
 	if !ok {
