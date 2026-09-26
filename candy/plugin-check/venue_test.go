@@ -15,7 +15,27 @@ import (
 // resolved-project deploy tree, so the fixtures set Descent.Venue directly (ssh=vm, shell=local,
 // container=pod) rather than the core original's Target:/uf.VM() shape.
 
-func desc(v string) *spec.DescentDescriptor { return &spec.DescentDescriptor{Venue: v} }
+// desc builds a Descent for a venue WORD through the REAL derivation
+// (spec.DescentFromTraits) with the SAME #DeployTraits the substrate provider declares — so a
+// fixture's stamped transport/venue/exclusive_venue match what the loader produces live, and a
+// predicate that reads any of them is exercised against real data (not a hand-built stub).
+//
+//	"ssh"       → the vm row (ExclusiveVenue: the host libvirt domain).
+//	"kubevirt"  → the kubevirt row (ssh transport, NO ExclusiveVenue — the plugin-owned CR).
+//	"shell"     → the local row.
+//	"container" → the pod row.
+func desc(venue string) *spec.DescentDescriptor {
+	switch venue {
+	case "ssh":
+		return spec.DescentFromTraits(&spec.DeployTraits{Venue: "ssh", MachineVenue: true, ExclusiveVenue: true, BedTarget: true})
+	case "kubevirt":
+		return spec.DescentFromTraits(&spec.DeployTraits{Venue: "kubevirt", ImageBacked: true, BedTarget: true})
+	case "shell":
+		return spec.DescentFromTraits(&spec.DeployTraits{Venue: "shell", MachineVenue: true, BedTarget: true})
+	default: // container / pod
+		return spec.DescentFromTraits(&spec.DeployTraits{Venue: venue, ImageBacked: true, BedTarget: true})
+	}
+}
 
 // newVenueTestTree covers every venue class the classifier must distinguish, off the stamped
 // Descent.Venue trait every loader-stamped node carries.

@@ -45,6 +45,9 @@ import (
 // feature-live path was container-only (deploykit.ResolveContainer directly) and
 // a VM target failed with "container ... is not running".
 func featureLiveArm(tree map[string]spec.DeployNode, name string) string {
+	// The vm and kubevirt arms are the SAME ssh-venue gather (pluginCheckRunFeatureLiveVM
+	// resolves the managed ssh alias), so a kubevirt root routes there too: checkVmTarget
+	// matches ANY ssh-transport venue now. Only a non-ssh venue is the pod arm.
 	if _, isVM := checkVmTarget(tree, name); isVM {
 		return "vm"
 	}

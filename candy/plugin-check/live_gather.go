@@ -72,6 +72,9 @@ func pluginCheckRunLive(ex *sdk.Executor, ctx context.Context, req spec.CheckRun
 	// local) has them connected (task #62; the M-mechanism seam, args uniform across arms; the
 	// former group arm is gone with the group kind — spec #105).
 	checkLoadPlugins(ex, ctx, req.Name, dir)
+	if isKubeVirtNode(tree, req.Name) {
+		return pluginCheckLiveKubeVirt(ex, ctx, rp, tree, dir, req)
+	}
 	if _, isVM := checkVmTarget(tree, req.Name); isVM {
 		return pluginCheckLiveVM(ex, ctx, rp, tree, dir, req)
 	}

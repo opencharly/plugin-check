@@ -31,6 +31,7 @@ import (
 	"github.com/opencharly/sdk/deploykit"
 	"github.com/opencharly/sdk/kit"
 	"github.com/opencharly/sdk/vmshared"
+	"github.com/opencharly/spec/deploy"
 	"github.com/opencharly/spec/spec"
 )
 
@@ -159,23 +160,53 @@ func resolveLeafVenue(tree map[string]spec.DeployNode, name string) (node spec.D
 	return *n, nodeTraits(n).Venue, true
 }
 
-// checkVmTarget reports whether `name` resolves to a VM venue and, if so, the per-deploy domain
-// identity to SSH into.
+// checkVmTarget reports whether `name` resolves to an SSH-TRANSPORT venue (the host-libvirt vm
+// OR kubevirt — both reach the guest over ssh with the SAME managed alias scheme) and, if so,
+// the per-deploy domain identity to SSH into. The test is the DERIVED transport, not the venue
+// token, so a kubevirt node (venue "kubevirt") resolves the same way a vm does — its guest is
+// behind the plugin-kubevirt-managed `virtctl port-forward` stanza, written under the identical
+// `VmSshAlias(VmDomainIdentity(name))` alias. A pod/local/kubernetes node does not match.
 func checkVmTarget(tree map[string]spec.DeployNode, name string) (domainID string, ok bool) {
 	if idx := strings.Index(name, "."); idx > 0 {
-		if _, venue, ok := resolveLeafVenue(tree, name); ok && venue == "ssh" {
+		if leaf, _, ok := resolveLeafVenue(tree, name); ok && deploy.SshVenue(&leaf) {
 			return vmshared.VmDomainIdentity(name), true
 		}
 		root := name[:idx]
-		if entry, present := tree[root]; present && nodeTraits(&entry).Venue == "ssh" {
+		if entry, present := tree[root]; present && deploy.SshVenue(&entry) {
 			return vmshared.VmDomainIdentity(root), true
 		}
 		return "", false
 	}
-	if entry, present := tree[name]; present && nodeTraits(&entry).Venue == "ssh" {
+	if entry, present := tree[name]; present && deploy.SshVenue(&entry) {
 		return vmshared.VmDomainIdentity(name), true
 	}
 	return "", false
+}
+
+// isKubeVirtNode reports whether `name` (or its dotted LEAF/root segment) is a KUBEVIRT deploy
+// — an ssh-transport venue that is NOT the host-libvirt vm (no ExclusiveVenue host-lease
+// trait). Both predicates are the shared spec ones (deploy.SshVenue / deploy.IsVmVenue), so no
+// new surface is needed; a kubevirt ROOT takes the dedicated live-gather arm (its lifecycle is
+// plugin-kubevirt's, its plan comes off the kubevirt deploy node).
+func isKubeVirtNode(tree map[string]spec.DeployNode, name string) bool {
+	classify := func(n *spec.DeployNode) bool { return isKubeVirtDeployNode(n) }
+	if leaf, _, ok := resolveLeafVenue(tree, name); ok && classify(&leaf) {
+		return true
+	}
+	root := name
+	if idx := strings.Index(name, "."); idx > 0 {
+		root = name[:idx]
+	}
+	if entry, present := tree[root]; present && classify(&entry) {
+		return true
+	}
+	return false
+}
+
+// isKubeVirtDeployNode is the substrate classifier both the bed runner and the live-gather
+// share: an ssh-transport venue that is not the ExclusiveVenue host-libvirt vm.
+func isKubeVirtDeployNode(node *spec.DeployNode) bool {
+	return deploy.SshVenue(node) && !deploy.IsVmVenue(node)
 }
 
 // checkLocalTarget reports whether `name` (or its dotted LEAF, or its dotted root segment) is a
