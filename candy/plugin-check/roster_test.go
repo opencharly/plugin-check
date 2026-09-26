@@ -254,9 +254,18 @@ func TestClampRosterLanes_HostMemoryCeiling(t *testing.T) {
 		t.Skip("no /proc/meminfo (non-Linux)")
 	}
 	memCeil := int(total / rosterLaneMemBudget)
-	// A wildly over-large request must be clamped to at most the memory ceiling.
-	if got := clampRosterLanes(100000, 100000); got > memCeil || got != memCeil {
-		t.Fatalf("clampRosterLanes(100000,100000)=%d, want the memory ceiling %d", got, memCeil)
+	// A wildly over-large request must be clamped to AT MOST the memory ceiling — but the
+	// CPU count is an independent, tighter bound, so the result is min(memCeil, NumCPU) (and,
+	// for this request, also min with the bed count 100000, which never binds). Assert the
+	// upper bound, not equality: equality would fail spuriously on a high-RAM/low-core host
+	// where NumCPU < memCeil (the CPU bound, not memory, is what clamps).
+	cpu := numCPU()
+	wantCeil := memCeil
+	if cpu < wantCeil {
+		wantCeil = cpu
+	}
+	if got := clampRosterLanes(100000, 100000); got > memCeil || got != wantCeil {
+		t.Fatalf("clampRosterLanes(100000,100000)=%d, want %d (min of memory ceiling %d and CPU %d)", got, wantCeil, memCeil, cpu)
 	}
 	// Below the ceiling, the CPU/bed bounds win.
 	if got := clampRosterLanes(2, 10); got != 2 {
