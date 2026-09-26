@@ -244,3 +244,77 @@ func TestAggregateRoster_SkipPlusPass(t *testing.T) {
 		t.Fatalf("pass+skip roster should PASS, got %v", err)
 	}
 }
+
+// TestClampRosterLanesTo pins the RCA-I sizing contract with the host inputs
+// injected, so the assertions are deterministic on any host. Each bound (CPU,
+// memory, bed count) is an independent UPPER bound; a zero memCeil means the
+// memory bound is unknown and must be skipped. The memory-ceiling case is the
+// regression guard: it fails if the memory branch is removed.
+func TestClampRosterLanesTo(t *testing.T) {
+	cases := []struct {
+		name                      string
+		requested, beds, cpu, mem int
+		want                      int
+	}{
+		{"memory ceiling binds", 100000, 100000, 16, 10, 10},
+		{"cpu binds tighter than memory", 100000, 100000, 4, 10, 4},
+		{"bed count binds", 16, 3, 16, 10, 3},
+		{"requested under every ceiling", 2, 10, 16, 10, 2},
+		{"unknown memory falls back to cpu", 100000, 100000, 8, 0, 8},
+		{"unknown memory, small request", 2, 10, 8, 0, 2},
+		{"never below 1 (zero request, zero beds)", 0, 0, 4, 10, 1},
+		{"zero beds floors to 1", 5, 0, 4, 10, 1},
+	}
+	for _, c := range cases {
+		if got := clampRosterLanesTo(c.requested, c.beds, c.cpu, c.mem); got != c.want {
+			t.Errorf("%s: clampRosterLanesTo(%d,%d,%d,%d)=%d, want %d", c.name, c.requested, c.beds, c.cpu, c.mem, got, c.want)
+		}
+	}
+}
+
+// TestRosterMemCeiling pins the readable-vs-unknown distinction the clamp depends
+// on: unreadable/absent meminfo yields 0 (the injected core then SKIPS the memory
+// bound), but a READABLE total under one rosterLaneMemBudget floors to 1 rather
+// than 0 — a low-RAM host must still be bounded, not allowed to over-commit into
+// the OOM the clamp exists to prevent. Fails if the floor is removed (the 4 GiB
+// case returns 0, want 1).
+func TestRosterMemCeiling(t *testing.T) {
+	cases := []struct {
+		name     string
+		total    uint64
+		readable bool
+		wantCeil int
+	}{
+		{"unreadable meminfo -> no bound", 0, false, 0},
+		{"zero total -> no bound", 0, true, 0},
+		{"4 GiB host floors to 1", 4 << 30, true, 1},
+		{"just under 6 GiB floors to 1", (6 << 30) - 1, true, 1},
+		{"exactly 6 GiB -> 1", 6 << 30, true, 1},
+		{"12 GiB -> 2", 12 << 30, true, 2},
+		{"61 GiB -> 10", 61 << 30, true, 10},
+	}
+	for _, c := range cases {
+		if got := rosterMemCeiling(c.total, c.readable); got != c.wantCeil {
+			t.Errorf("%s: rosterMemCeiling(%d,%v)=%d, want %d", c.name, c.total, c.readable, got, c.wantCeil)
+		}
+	}
+}
+
+// TestClampRosterLanes_HostBounds pins the wiring of clampRosterLanes to the real
+// host: whatever the host, an over-large request never exceeds the CPU, memory, or
+// bed bounds (any of which may be the binding one), and never drops below 1.
+func TestClampRosterLanes_HostBounds(t *testing.T) {
+	maxLanes := numCPU()
+	if total, ok := memTotalBytes(); ok && total > 0 {
+		if byMem := int(total / rosterLaneMemBudget); byMem > 0 && byMem < maxLanes {
+			maxLanes = byMem
+		}
+	}
+	got := clampRosterLanes(1<<30, 1<<30)
+	if got > maxLanes {
+		t.Fatalf("clampRosterLanes(over-large)=%d exceeds host ceiling %d", got, maxLanes)
+	}
+	if got < 1 {
+		t.Fatalf("clampRosterLanes(over-large)=%d < 1", got)
+	}
+}
