@@ -66,7 +66,7 @@ func pluginCheckRunLive(ex *sdk.Executor, ctx context.Context, req spec.CheckRun
 	if err != nil {
 		return kit.CheckRunReply{}, err
 	}
-	tree := derefDeployTree(rp.Deploy)
+	tree := checkClassificationTree(ctx, ex, dir, rp)
 	// Connect the out-of-process check-verb plugins (mcp/cdp/vnc/dbus/spice/…) the live plan
 	// references — ONCE, at command scope, before the per-kind dispatch, so every arm (pod/vm/
 	// local) has them connected (task #62; the M-mechanism seam, args uniform across arms; the
