@@ -72,6 +72,9 @@ func pluginCheckRunLive(ex *sdk.Executor, ctx context.Context, req spec.CheckRun
 	// local) has them connected (task #62; the M-mechanism seam, args uniform across arms; the
 	// former group arm is gone with the group kind — spec #105).
 	checkLoadPlugins(ex, ctx, req.Name, dir)
+	if isKubeVirtNode(tree, req.Name) {
+		return pluginCheckLiveKubeVirt(ex, ctx, rp, tree, dir, req)
+	}
 	if _, isVM := checkVmTarget(tree, req.Name); isVM {
 		return pluginCheckLiveVM(ex, ctx, rp, tree, dir, req)
 	}
@@ -81,8 +84,7 @@ func pluginCheckRunLive(ex *sdk.Executor, ctx context.Context, req spec.CheckRun
 	return pluginCheckLivePod(ex, ctx, rp, tree, dir, req)
 }
 
-// pluginVenueResolver adapts members.go's liveTargetResolver into the kit.VenueResolver shape a
-// live RunnerConfig.TargetResolver needs — the plugin-side counterpart of
+// pluginVenueResolver adapts members.go's liveTargetResolver into the kit.VenueResolver shape a// live RunnerConfig.TargetResolver needs — the plugin-side counterpart of
 // charly/planrun_adapter.go's venueResolver.
 func pluginVenueResolver(ex *sdk.Executor, ctx context.Context, dir, instance string) kit.VenueResolver {
 	resolve := liveTargetResolver(ex, ctx, dir, instance)

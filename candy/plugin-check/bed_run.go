@@ -331,6 +331,15 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	var bedNode spec.DeployNode
 	_ = json.Unmarshal(d.NodeJSON, &bedNode)
 
+	// isKubeVirt classifies a bed ROOT that is a `kubevirt:` deploy — a cluster-managed
+	// VirtualMachine CR whose lifecycle candy/plugin-kubevirt owns. Computed from the bed-root
+	// node's stamped Descent (the descriptor the host already carries in NodeJSON), NOT a host
+	// reply field: a kubevirt root descends over the ssh transport (the guest IS reached over
+	// ssh) yet is NOT the host-libvirt vm (the vm carries the ExclusiveVenue host-lease trait a
+	// kubevirt CR does not). Both are existing shared predicates — no new spec surface.
+	// Defined once here, before every arm that branches on it.
+	isKubeVirt := isKubeVirtDeployNode(&bedNode)
+
 	// The bed's OWN VM shape (`cpu:`/`ram:` authored on the bed deploy) reaches
 	// `charly vm create --cpus/--ram`: `vm create` targets the TEMPLATE entity, so
 	// plugin-vm's vmShapeOverride (which walks the template chain) never sees the
@@ -401,6 +410,11 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		if opts.Anchor == "" {
 			bestEffort("vm", "destroy", d.VMTemplate, "--domain", d.BedDomain, "--if-exists")
 		}
+	case isKubeVirt:
+		// A kubevirt bed's teardown is `charly deploy del` — candy/plugin-kubevirt's
+		// OpPostTeardown removes the VirtualMachine CR and stops the managed port-forward
+		// (the libvirt-domain teardown does not apply). Same in-place external shape.
+		bestEffort("deploy", "del", name)
 	default:
 		if d.IsExternal {
 			bestEffort("deploy", "del", name)
@@ -454,9 +468,11 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// spec/exec's readiness gates are pure process-driving pollers with no session/registry
 	// coupling (spec/exec/venue_wait.go's own header). Best-effort, matching the former op.
 	waitReady := func() {
-		if d.IsVM {
-			// Wait on the per-deploy DOMAIN IDENTITY (charly-<BedDomain> is the live domain +
-			// managed ssh alias, post-P33), NOT the shared kind:vm entity (d.VMTemplate).
+		if d.IsVM || isKubeVirt {
+			// Wait on the per-deploy DOMAIN IDENTITY (charly-<BedDomain> is the live domain /
+			// managed ssh alias, post-P33), NOT the shared entity. For a kubevirt root the
+			// alias is written by candy/plugin-kubevirt's PrepareVenue under the SAME
+			// VmSshAlias(BedDomain) scheme, so the identical readiness gate works.
 			specexec.WaitForVmSshReady(d.BedDomain)
 		} else {
 			specexec.WaitForContainerReady(name)
@@ -596,6 +612,8 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		switch {
 		case d.IsVM:
 			targetErr = step("cleanup", "vm", "destroy", d.VMTemplate, "--domain", d.BedDomain, "--if-exists")
+		case isKubeVirt:
+			targetErr = step("cleanup", "deploy", "del", name)
 		case d.IsExternal:
 			targetErr = step("cleanup", "deploy", "del", name)
 		default:
@@ -672,9 +690,9 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// start`, teardown via `charly deploy del`).
 	isInPlace := d.IsLocal || d.IsExternal
 
-	// Steps 1+2: image build + check box (pod beds only; VM substrate is a
-	// cloud_image and kind:local/external have no image to build/check).
-	if !d.IsVM && !d.IsLocal && !d.IsExternal && d.Image != "" {
+	// Steps 1+2: image build + check box (pod beds only; VM/kubevirt substrate is an
+	// image-backed CR and kind:local/external have no image to build/check).
+	if !d.IsVM && !isKubeVirt && !d.IsLocal && !d.IsExternal && d.Image != "" {
 		// Disposable check beds ALWAYS bake the IN-DEVELOPMENT charly toolchain via
 		// --dev-local-pkg — so a bed tests the code under development.
 		if err := step("image-build", withRunTag([]string{"box", "build", d.Image, "--dev-local-pkg"}, d.ImageTag)...); err != nil {
@@ -739,6 +757,26 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 				if err := step("deploy-"+childKey, bedAdd(name+"."+childKey)...); err != nil {
 					return fail("deploy nested local child %s.%s: %w", name, childKey, err)
 				}
+			}
+		}
+	case isKubeVirt:
+		// KubeVirt root: a cluster-managed VirtualMachine CR. candy/plugin-kubevirt's
+		// deploy lifecycle owns EVERYTHING — ensure the DataVolume, apply the VM CR, wait
+		// VMI Ready + AgentConnected, open the managed `virtctl port-forward`, publish the
+		// ssh stanza. So bring-up is a single `charly deploy add <bed>` (the plugin's
+		// OpPrepareVenue/OpApply), then wait on the managed ssh alias (the plugin writes it
+		// under VmSshAlias(VmDomainIdentity(name)) — identical to the vm path). No
+		// `charly vm build`/`create`; no libvirt domain; no `charly config`/`start`.
+		if err := step("deploy-add", bedAdd(name)...); err != nil {
+			return fail("deploy add %s: %w", name, err)
+		}
+		deployed = true // CR registered — keep it on any later failure
+		waitReady()
+		// Nested HOST-ROOTED (kind:local) children deploy host-side after the root;
+		// the kubevirt plugin's own PostApply handles in-guest children.
+		for _, childKey := range d.ChildKeys {
+			if err := step("deploy-"+childKey, bedAdd(name+"."+childKey)...); err != nil {
+				return fail("deploy nested child %s.%s: %w", name, childKey, err)
 			}
 		}
 	default:
