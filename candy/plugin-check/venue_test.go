@@ -105,6 +105,36 @@ func TestCheckVmTargetEmptyTree(t *testing.T) {
 	}
 }
 
+// TestMergeBedsIntoTree pins the classification-only bed fold: namespace-qualified
+// beds (uf.Beds()) are added so a qualified bed can be venue-classified from the
+// umbrella root, while an existing ROOT-level entry is never clobbered. This is the
+// narrow seam that replaces folding into the build-validated rp.Deploy (which
+// surfaced cross-namespace validation errors).
+func TestMergeBedsIntoTree(t *testing.T) {
+	root := spec.DeployNode{Descent: desc("shell")}
+	bed := spec.DeployNode{Descent: desc("ssh")}
+
+	// A nil (empty-envelope) tree plus the beds fold yields the qualified bed.
+	if got := mergeBedsIntoTree(nil, map[string]spec.DeployNode{"charly.check-x-vm": bed}); func() bool {
+		_, ok := got["charly.check-x-vm"]
+		return !ok
+	}() {
+		t.Fatalf("namespaced bed absent after fold")
+	}
+
+	// A root-level entry wins a key collision; the bed still lands.
+	got := mergeBedsIntoTree(
+		map[string]spec.DeployNode{"root-pod": root},
+		map[string]spec.DeployNode{"root-pod": bed, "charly.check-x-vm": bed},
+	)
+	if n, ok := got["root-pod"]; !ok || n.Descent == nil || n.Descent.Venue != "shell" {
+		t.Errorf("root entry clobbered by the fold: %+v", n)
+	}
+	if _, ok := got["charly.check-x-vm"]; !ok {
+		t.Errorf("namespaced bed absent after fold: %v", got)
+	}
+}
+
 func TestCheckLocalTarget(t *testing.T) {
 	tree := newVenueTestTree()
 	cases := []struct {
