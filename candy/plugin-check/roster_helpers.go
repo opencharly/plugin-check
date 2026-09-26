@@ -62,20 +62,32 @@ func memTotalBytes() (uint64, bool) {
 // (peak 59 GB, oom_kill 14), while lanes:2 was stable at ~15 GB. Sizing by memory,
 // not just CPUs, is what makes "run all beds" safe on a real workstation.
 func clampRosterLanes(requested, bedCount int) int {
+	cpus := numCPU()
+	memCeil := 0
+	if total, ok := memTotalBytes(); ok && total > 0 {
+		memCeil = int(total / rosterLaneMemBudget)
+	}
+	return clampRosterLanesTo(requested, bedCount, cpus, memCeil)
+}
+
+// clampRosterLanesTo is clampRosterLanes with the host inputs injected, so the
+// sizing contract is unit-testable off any particular host. `cpus` is the CPU
+// bound; `memCeil` is the memory ceiling (MemTotal/rosterLaneMemBudget), where 0
+// means "no memory bound known" (non-Linux / unreadable meminfo) and is skipped.
+// Every bound is an independent UPPER bound; the result is at least 1.
+func clampRosterLanesTo(requested, bedCount, cpus, memCeil int) int {
 	lanes := requested
 	if lanes < 1 {
 		lanes = defaultRosterLanes(bedCount)
 	}
-	if cpus := numCPU(); lanes > cpus {
+	if cpus > 0 && lanes > cpus {
 		lanes = cpus
 	}
 	if lanes > bedCount {
 		lanes = bedCount
 	}
-	if total, ok := memTotalBytes(); ok && total > 0 {
-		if byMem := int(total / rosterLaneMemBudget); byMem > 0 && lanes > byMem {
-			lanes = byMem
-		}
+	if memCeil > 0 && lanes > memCeil {
+		lanes = memCeil
 	}
 	if lanes < 1 {
 		lanes = 1
