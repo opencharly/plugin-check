@@ -84,7 +84,8 @@ func pluginCheckRunLive(ex *sdk.Executor, ctx context.Context, req spec.CheckRun
 	return pluginCheckLivePod(ex, ctx, rp, tree, dir, req)
 }
 
-// pluginVenueResolver adapts members.go's liveTargetResolver into the kit.VenueResolver shape a// live RunnerConfig.TargetResolver needs — the plugin-side counterpart of
+// pluginVenueResolver adapts members.go's liveTargetResolver into the kit.VenueResolver shape a
+// live RunnerConfig.TargetResolver needs — the plugin-side counterpart of
 // charly/planrun_adapter.go's venueResolver.
 func pluginVenueResolver(ex *sdk.Executor, ctx context.Context, dir, instance string) kit.VenueResolver {
 	resolve := liveTargetResolver(ex, ctx, dir, instance)

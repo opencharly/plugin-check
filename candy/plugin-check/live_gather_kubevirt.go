@@ -33,7 +33,6 @@ func pluginCheckLiveKubeVirt(ex *sdk.Executor, ctx context.Context, rp *spec.Res
 	if len(plan) == 0 && len(req.Plan) == 0 {
 		return kit.CheckRunReply{NoSteps: true}, nil
 	}
-
 	// The guest ssh executor: the managed alias carries User/Port/IdentityFile, so no
 	// VmSpec/lvm-state lookup is needed (that is the whole point of the managed stanza).
 	var executor deploykit.DeployExecutor = &kit.SSHExecutor{Host: kit.VmSshAlias(domainID), ConnectTimeout: 10}
@@ -57,9 +56,6 @@ func pluginCheckLiveKubeVirt(ex *sdk.Executor, ctx context.Context, rp *spec.Res
 	}
 	resolver := newPluginRuntimeCheckVarResolver(env)
 
-	if len(plan) == 0 && len(req.Plan) == 0 {
-		return kit.CheckRunReply{NoSteps: true}, nil
-	}
 	set := &kit.LabelDescriptionSet{Deploy: []kit.LabeledDescription{{Origin: "kubevirt:" + domainID, Plan: plan}}}
 	set = wrapStepsFileSet(set, req.Plan, "kubevirt:"+domainID)
 
