@@ -63,11 +63,26 @@ func memTotalBytes() (uint64, bool) {
 // not just CPUs, is what makes "run all beds" safe on a real workstation.
 func clampRosterLanes(requested, bedCount int) int {
 	cpus := numCPU()
-	memCeil := 0
-	if total, ok := memTotalBytes(); ok && total > 0 {
-		memCeil = int(total / rosterLaneMemBudget)
+	total, ok := memTotalBytes()
+	return clampRosterLanesTo(requested, bedCount, cpus, rosterMemCeiling(total, ok))
+}
+
+// rosterMemCeiling maps a host's total RAM to its per-host lane ceiling. 0 means
+// "no memory bound known" — meminfo is unreadable, or the host reports no RAM — so
+// the caller SKIPS the memory bound (CPU/bed bounds still apply). A readable total
+// that holds LESS than one rosterLaneMemBudget (total/rosterLaneMemBudget == 0,
+// i.e. a host under 6 GiB) is NOT "unknown": it floors the ceiling to 1 rather
+// than 0, so a low-RAM host — the one MOST at risk — is still bounded instead of
+// being allowed to over-commit into the OOM this clamp exists to prevent.
+func rosterMemCeiling(total uint64, readable bool) int {
+	if !readable || total == 0 {
+		return 0
 	}
-	return clampRosterLanesTo(requested, bedCount, cpus, memCeil)
+	ceil := int(total / rosterLaneMemBudget)
+	if ceil < 1 {
+		ceil = 1
+	}
+	return ceil
 }
 
 // clampRosterLanesTo is clampRosterLanes with the host inputs injected, so the
