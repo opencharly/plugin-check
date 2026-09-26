@@ -112,9 +112,12 @@ func (c *CheckRunCmd) runCheckRoster(ex *sdk.Executor, ctx context.Context, name
 	// serial chain per token-group; independent groups run in parallel.
 	chains := buildRosterChains(selected)
 
-	lanes := roster.Lanes
-	if lanes < 1 {
-		lanes = defaultRosterLanes(len(selected))
+	// Bound concurrency by host MEMORY as well as CPUs/bed-count: an over-large
+	// `lanes:` OOM-kills the host mid-roster (plan RCA-I). clampRosterLanes treats
+	// the authored value as an upper bound and never exceeds what RAM can hold.
+	lanes := clampRosterLanes(roster.Lanes, len(selected))
+	if lanes != roster.Lanes && roster.Lanes > 0 {
+		fmt.Fprintf(os.Stderr, "charly check run %s: lanes %d -> %d (host-memory-aware cap)\n", name, roster.Lanes, lanes)
 	}
 
 	sem := make(chan struct{}, lanes)
