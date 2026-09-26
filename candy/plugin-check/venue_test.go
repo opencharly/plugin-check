@@ -54,8 +54,12 @@ func newVenueTestTree() map[string]spec.DeployNode {
 			{Name: "inner-app", Position: spec.PositionInSubstrate, Node: &spec.DeployNode{Descent: desc("shell")}},
 		}},
 		"bare-vm-dep": {Descent: desc("ssh")},
-		"my-local":    {Descent: desc("shell")},
-		"remote-host": {Descent: desc("shell"), Host: "user@box"},
+		// A NAMESPACE-QUALIFIED top-level deploy key (the umbrella-root form): the dots are
+		// namespace separators, NOT member-path separators. tree["charly"] does NOT exist, so the
+		// dotted-path walk missed it and checkVmTarget fell through to a container lookup.
+		"charly.check-charly-vm": {Descent: desc("ssh")},
+		"my-local":               {Descent: desc("shell")},
+		"remote-host":            {Descent: desc("shell"), Host: "user@box"},
 	}
 }
 
@@ -70,6 +74,11 @@ func TestCheckVmTarget(t *testing.T) {
 		{"k3s-vm", "k3s-vm", true},           // vm deploy → the DEPLOY key
 		{"bare-vm-dep", "bare-vm-dep", true},
 		{"k3s-vm.inner", "k3s-vm", true}, // dotted root is the vm deploy, leaf unresolvable → root fallback
+		// A namespace-qualified top-level key: the EXACT full key must resolve FIRST (its dots are
+		// namespace separators, not a member path). Without the exact-key-first fix this is
+		// ("", false) — the regression that made a qualified VM bed's check-live look for a
+		// container instead of the SSH venue.
+		{"charly.check-charly-vm", "charly-check-charly-vm", true},
 		// RCA #12: leaf-vm-under-pod — the pod ROOT is not a vm, but the LEAF is. domainID keys
 		// off the FULL dotted path, sanitized by VmDomainIdentity ("." → "-").
 		{"web-pod.web-pod-vm", "web-pod-web-pod-vm", true},
