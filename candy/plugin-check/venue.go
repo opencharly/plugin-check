@@ -30,6 +30,7 @@ import (
 	"github.com/opencharly/sdk"
 	"github.com/opencharly/sdk/deploykit"
 	"github.com/opencharly/sdk/kit"
+	"github.com/opencharly/sdk/loaderkit"
 	"github.com/opencharly/sdk/vmshared"
 	"github.com/opencharly/spec/deploy"
 	"github.com/opencharly/spec/spec"
@@ -72,7 +73,7 @@ func resolveCheckVenue(ex *sdk.Executor, ctx context.Context, dir, name, instanc
 
 	rp, err := resolvedProject(ex, ctx, dir)
 	if err == nil && rp != nil {
-		tree := derefDeployTree(rp.Deploy)
+		tree := checkClassificationTree(ctx, ex, dir, rp)
 		if domainID, isVM := checkVmTarget(tree, name); isVM {
 			var vexec deploykit.DeployExecutor = &kit.SSHExecutor{Host: kit.VmSshAlias(domainID), ConnectTimeout: 10}
 			if strings.Contains(name, ".") {
@@ -133,6 +134,39 @@ func derefDeployTree(m map[string]*spec.DeployNode) map[string]spec.DeployNode {
 		}
 	}
 	return out
+}
+
+// checkClassificationTree is the deploy tree the CHECK venue classifier reads: the
+// resolved-project envelope's Deploy, PLUS the namespace-qualified beds (uf.Beds()) folded in
+// LOCALLY for classification only. The envelope's Deploy holds only ROOT-level deploys, so at a
+// superproject whose beds live in an imported namespace (the umbrella root importing `charly/`) it
+// is EMPTY and a namespace-qualified bed cannot be classified — it falls through to a container
+// lookup (`container charly-charly.check-charly-vm is not running`). uf.Beds() folds every namespace
+// (`ns.name`, `nsA.nsB.name`). The envelope's Deploy is NOT mutated: the build's validate step
+// iterates it, and folding beds there made a foreign build context validate another namespace's
+// beds (`charly.check-task: kind:local template "check-task-app" not found`).
+func checkClassificationTree(ctx context.Context, ex *sdk.Executor, dir string, rp *spec.ResolvedProject) map[string]spec.DeployNode {
+	tree := derefDeployTree(rp.Deploy)
+	uf, ok, err := loaderkit.LoadUnifiedViaExecutor(ctx, ex, dir)
+	if err != nil || !ok || uf == nil {
+		return tree
+	}
+	return mergeBedsIntoTree(tree, uf.Beds())
+}
+
+// mergeBedsIntoTree folds the namespace-qualified beds (uf.Beds()) into the classification tree
+// without clobbering an existing ROOT-level entry (the root file's own deploy wins a key
+// collision). Pure, so the fold is unit-testable.
+func mergeBedsIntoTree(tree, beds map[string]spec.DeployNode) map[string]spec.DeployNode {
+	if tree == nil {
+		tree = make(map[string]spec.DeployNode)
+	}
+	for k, v := range beds {
+		if _, exists := tree[k]; !exists {
+			tree[k] = v
+		}
+	}
+	return tree
 }
 
 // nodeTraits returns the node's stamped deploy-descent descriptor. Every node reachable off the
