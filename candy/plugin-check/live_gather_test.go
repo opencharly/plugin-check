@@ -144,10 +144,10 @@ func TestPluginGuestNestedCheckCmd(t *testing.T) {
 // is not running" — there was no dispatch at all, so this test fails without
 // the fix (featureLiveArm does not exist).
 func TestPluginCheckRunFeatureLive_VmDispatch(t *testing.T) {
-	sshDescent := &spec.DescentDescriptor{Venue: "ssh"}
+	sshDescent := desc("ssh")
 	tree := map[string]spec.DeployNode{
 		"check-omarchy-pr-vm":     {Target: "vm", From: "omarchy-vm", Descent: sshDescent},
-		"check-omarchy-suite-pod": {Target: "pod", Descent: &spec.DescentDescriptor{Venue: "container"}},
+		"check-omarchy-suite-pod": {Target: "pod", Descent: desc("container")},
 	}
 	if arm := featureLiveArm(tree, "check-omarchy-pr-vm"); arm != "vm" {
 		t.Fatalf("feature-live VM dispatch: want the VM arm, got %q", arm)
