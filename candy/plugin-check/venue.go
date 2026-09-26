@@ -168,29 +168,19 @@ func resolveLeafVenue(tree map[string]spec.DeployNode, name string) (node spec.D
 // `VmSshAlias(VmDomainIdentity(name))` alias. A pod/local/kubernetes node does not match.
 func checkVmTarget(tree map[string]spec.DeployNode, name string) (domainID string, ok bool) {
 	if idx := strings.Index(name, "."); idx > 0 {
-		if leaf, _, ok := resolveLeafVenue(tree, name); ok && sshTransport(&leaf) {
+		if leaf, _, ok := resolveLeafVenue(tree, name); ok && deploy.SshVenue(&leaf) {
 			return vmshared.VmDomainIdentity(name), true
 		}
 		root := name[:idx]
-		if entry, present := tree[root]; present && sshTransport(&entry) {
+		if entry, present := tree[root]; present && deploy.SshVenue(&entry) {
 			return vmshared.VmDomainIdentity(root), true
 		}
 		return "", false
 	}
-	if entry, present := tree[name]; present && sshTransport(&entry) {
+	if entry, present := tree[name]; present && deploy.SshVenue(&entry) {
 		return vmshared.VmDomainIdentity(name), true
 	}
 	return "", false
-}
-
-// sshTransport reports whether a node descends over the SSH transport — true for the
-// host-libvirt vm AND kubevirt (both venue values map to transport "ssh" in
-// spec.DescentFromTraits). It is the venue-RESOLUTION counterpart of the spec transport
-// predicate: the executor construction (a managed-alias SSHExecutor) is identical for both, so
-// a probe resolver keys on the transport, while the LIFECYCLE classifier keys on the substrate
-// (deploy.IsVmVenue — host-libvirt only; a kubevirt deploy has no libvirt domain).
-func sshTransport(node *spec.DeployNode) bool {
-	return nodeTraits(node).Transport == "ssh"
 }
 
 // isKubeVirtNode reports whether `name` (or its dotted LEAF/root segment) is a KUBEVIRT deploy
@@ -216,7 +206,7 @@ func isKubeVirtNode(tree map[string]spec.DeployNode, name string) bool {
 // isKubeVirtDeployNode is the substrate classifier both the bed runner and the live-gather
 // share: an ssh-transport venue that is not the ExclusiveVenue host-libvirt vm.
 func isKubeVirtDeployNode(node *spec.DeployNode) bool {
-	return sshTransport(node) && !deploy.IsVmVenue(node)
+	return deploy.SshVenue(node) && !deploy.IsVmVenue(node)
 }
 
 // checkLocalTarget reports whether `name` (or its dotted LEAF, or its dotted root segment) is a
