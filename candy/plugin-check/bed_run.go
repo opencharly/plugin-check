@@ -690,9 +690,15 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// start`, teardown via `charly deploy del`).
 	isInPlace := d.IsLocal || d.IsExternal
 
-	// Steps 1+2: image build + check box (pod beds only; VM/kubevirt substrate is an
-	// image-backed CR and kind:local/external have no image to build/check).
-	if !d.IsVM && !isKubeVirt && !d.IsLocal && !d.IsExternal && d.Image != "" {
+	// Steps 1+2: image build + check box. A VM/kubevirt substrate is an image-backed
+	// CR (no box build); a kind:local deploy carries no image. An EXTERNAL-IN-PLACE
+	// deploy MAY carry a workload image: the `kindcluster` substrate's deploy
+	// provisions a cluster AND applies an optional workload image
+	// (resolveWorkloadImage + materializeKustomize), whose ref it pins as
+	// `<image>:<deploy>-<calver>` — so the build must run BEFORE `deploy add` or the
+	// preresolve fails with "pinned image … not present in local storage". See
+	// bedBuildsImage (bed_session.go) for the predicate + its unit test.
+	if bedBuildsImage(d.IsVM, isKubeVirt, d.IsLocal, d.Image) {
 		// Disposable check beds ALWAYS bake the IN-DEVELOPMENT charly toolchain via
 		// --dev-local-pkg — so a bed tests the code under development.
 		if err := step("image-build", withRunTag([]string{"box", "build", d.Image, "--dev-local-pkg"}, d.ImageTag)...); err != nil {
