@@ -36,3 +36,31 @@ func TestBedRunImageTag(t *testing.T) {
 		t.Fatalf("distinct beds produced the SAME bed-scoped tag %q — the #75 collision is not prevented", a)
 	}
 }
+
+// TestBedBuildsImage pins the image-build predicate. A bed carrying a workload image
+// MUST build it before `deploy add` — including an EXTERNAL-IN-PLACE deploy (the
+// `kindcluster` substrate's deploy pins `<image>:<deploy>-<calver>` and applies it, so
+// the pre-fix guard that excluded external-in-place made the preresolve fail with
+// "pinned image … not present in local storage"). A kind:local deploy (no image) and a
+// VM/kubevirt substrate (an image-backed CR) must not build. Would FAIL if the
+// predicate regressed to excluding external-in-place.
+func TestBedBuildsImage(t *testing.T) {
+	cases := []struct {
+		name                      string
+		isVM, isKubeVirt, isLocal bool
+		image                     string
+		want                      bool
+	}{
+		{"pod bed with image", false, false, false, "app", true},
+		{"external-in-place workload image (kindcluster)", false, false, false, "check-k8s-deploy-app", true},
+		{"kind:local (no image)", false, false, true, "", false},
+		{"vm bed", true, false, false, "app", false},
+		{"kubevirt bed", false, true, false, "app", false},
+		{"pod bed without image", false, false, false, "", false},
+	}
+	for _, c := range cases {
+		if got := bedBuildsImage(c.isVM, c.isKubeVirt, c.isLocal, c.image); got != c.want {
+			t.Errorf("%s: bedBuildsImage = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

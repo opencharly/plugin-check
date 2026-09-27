@@ -259,6 +259,18 @@ func bedRunImageTag(bed, calver string) string {
 	return bed + "-" + calver
 }
 
+// bedBuildsImage reports whether the bed's own fixture image must be built (the
+// image-build step) BEFORE `deploy add`. A VM/kubevirt substrate is an image-backed CR
+// (no box build); a kind:local deploy carries no image. An EXTERNAL-IN-PLACE deploy
+// MAY carry a workload image — the `kindcluster` substrate's deploy provisions a
+// cluster AND applies an optional workload image, whose ref it pins as
+// `<image>:<deploy>-<calver>` — so the guard keys on a non-empty Image rather than
+// excluding external-in-place: kind:local (no image) stays skipped, a kindcluster
+// workload is built. Unit-tested (TestBedBuildsImage).
+func bedBuildsImage(isVM, isKubeVirt, isLocal bool, image string) bool {
+	return !isVM && !isKubeVirt && !isLocal && image != ""
+}
+
 // bedLocalChildKeys is the HOST-ROOTED (kind:local) subset of a node's in-substrate members, in
 // authored tree order (the ordered member tree replaces the former sorted map keys) — the set a
 // VM root deploys host-side. Ported from charly/host_build_check_bed.go, using deploy.HostRooted
