@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 
 	"github.com/opencharly/sdk"
@@ -219,6 +220,28 @@ func bedGpuPrereqCheck(ctx context.Context, ex *sdk.Executor, tokens []string) (
 	return reply.Missing, reply.Token, reply.Vendor, nil
 }
 
+// bedEnginePrereqSkip returns a non-nil prerequisite skip when the bed pins a concrete
+// container engine (`engine:`) whose CLI binary is absent on this host. The engine word IS
+// the binary name (#EngineName = podman|docker|nerdctl — the 1:1 KIND_EXPERIMENTAL_PROVIDER
+// mapping), so a LookPath miss is the gate. A bed declaring no `engine:` declares no engine
+// requirement and is never skipped by this gate. Pure (node in, verdict out) so it unit-tests
+// hermetically without a project load. This is the plan's live-or-skip (R7a): an absent engine
+// is a VISIBLE skip, never a silent pass, and never a deploy-add failure.
+func bedEnginePrereqSkip(node spec.Deploy) *spec.CheckBedPrereqSkip {
+	eng := string(node.Engine)
+	if eng == "" {
+		return nil
+	}
+	if _, err := osexec.LookPath(eng); err != nil {
+		return &spec.CheckBedPrereqSkip{
+			Token:  "engine",
+			Vendor: eng,
+			Reason: fmt.Sprintf("container engine %s is not present on this host (bed requires engine %q)", eng, eng),
+		}
+	}
+	return nil
+}
+
 // bedCheckLevel resolves the acceptance-depth rung for a bed from its box's authored check_level
 // (none → DefaultCheckLevel). VM/local beds carry no box image, so they always run at the default
 // rung. Ported from charly/check_bed_run.go — uf.ProjectConfig() is a plain spec.UnifiedFile
@@ -408,6 +431,17 @@ func bedSetup(ctx context.Context, ex *sdk.Executor, bed, dir string) (spec.Chec
 				Reason: fmt.Sprintf("no GPU matching vendor %s on this host (bed requires resource %q)", vendor, tok),
 			},
 		}, nil, bedCtx, nil
+	}
+
+	// Container-engine prerequisite fail-fast (BEFORE any acquire), the sibling of the GPU gate
+	// above: a bed that pins a concrete `engine:` (the kindcluster R10 beds) is a clean SKIP when
+	// that engine's CLI is absent on the host — never a deploy-add failure. This is the plan's
+	// live-or-skip (R7a): an absent engine is a VISIBLE skip, never a silent pass.
+	if eskip := bedEnginePrereqSkip(node); eskip != nil {
+		if err := os.MkdirAll(logDir, 0o755); err != nil {
+			return spec.CheckBedReply{}, nil, nil, fmt.Errorf("creating %s: %w", logDir, err)
+		}
+		return spec.CheckBedReply{Calver: calver, LogDir: logDir, PrereqSkip: eskip}, nil, bedCtx, nil
 	}
 
 	bedDomain := spec.VmDomainIdentity(bed)
