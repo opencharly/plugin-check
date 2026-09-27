@@ -101,6 +101,17 @@ func summaryStatus(ok bool) string {
 	return "FAIL"
 }
 
+// prereqSkipStepName names the lone summary step a prerequisite skip records. The GPU gate
+// keeps its long-standing `prereq-gpu-skipped` name (the docs' canonical example); the engine
+// gate (token "engine", set by bedEnginePrereqSkip) records `prereq-engine-skipped`. Both are
+// members of the documented `prereq-*-skipped` family.
+func prereqSkipStepName(token string) string {
+	if token == "engine" {
+		return "prereq-engine-skipped"
+	}
+	return "prereq-gpu-skipped"
+}
+
 // withRunTag appends `--tag <tag>` to a step argv when tag is non-empty — the bed's
 // per-run image tag (#75) every box build + pod deploy in the run passes so
 // concurrent beds building the same fixture image name never collide.
@@ -313,7 +324,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	if d.PrereqSkip != nil {
 		res.SkippedPrereq = true
 		res.SkipReason = d.PrereqSkip.Reason
-		res.Step = append(res.Step, stepResult{Name: "prereq-gpu-skipped", OK: true})
+		res.Step = append(res.Step, stepResult{Name: prereqSkipStepName(d.PrereqSkip.Token), OK: true})
 		writeBedSummary(d.LogDir, res)
 		return res, &CheckSkippedError{Msg: fmt.Sprintf("charly check run %s: skipped (%s)", name, res.SkipReason)}
 	}
