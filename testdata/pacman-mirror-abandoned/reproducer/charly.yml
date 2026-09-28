@@ -1,8 +1,6 @@
-version: 2026.249.2125
 
 cachyos:
     candy:
-        version: 2026.255.2200
         base: docker.io/cachyos/cachyos-v3@sha256:2f87e702822dc3bc1c527215ace3f7b1b20c5d9d4171bb78e012557be477d487
         build:
             - pac
@@ -11,7 +9,6 @@ cachyos:
 
 pacman-mirror-repro:
     candy:
-        version: 2026.255.2200
         description: >-
             Deterministic reproducer for the pacman mirror-abandonment class. It reaches
             pacman's own sentence "warning: too many errors from <host>, skipping for the
@@ -53,7 +50,6 @@ pacman-mirror-repro:
 
 mirror-repro:
     candy:
-        version: 2026.255.2200
         base: cachyos
         candy:
             - pacman-mirror-repro
