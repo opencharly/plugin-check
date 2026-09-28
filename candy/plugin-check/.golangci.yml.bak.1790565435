@@ -11,6 +11,7 @@
 # deliberate), so a blanket Close exclusion suppressed NOTHING (removing it leaves the run at
 # "0 issues") while standing ready to absorb the next genuinely unchecked Close. Keeps the
 # standard set (errcheck, govet, ineffassign, staticcheck, unused).
+version: "2"
 
 linters:
   settings:
