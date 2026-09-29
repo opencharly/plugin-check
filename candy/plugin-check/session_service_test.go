@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -185,6 +186,50 @@ func TestSessionStateDirShape(t *testing.T) {
 	want := filepath.Join("/a/.check/b/2026.1.2", "capture", "b.vm.screen")
 	if got != want {
 		t.Fatalf("state dir = %q, want %q", got, want)
+	}
+}
+
+// TestSessionSystemdRunArgsPinsWorkingDirectory is the regression test for the
+// appium/check-android-emulator-pod evidence-row split (RCA: opencharly/pod-android-emulator-layer#10):
+// the recorder's state_dir / artifact_dir are the run's RELATIVE `.check/<bed>/<calver>/...` paths,
+// but a `systemd-run --user` transient unit's ExecStart runs under the user manager's default
+// WorkingDirectory (the caller's home), so without `--working-directory=` the recorder wrote under
+// `$HOME/.check/...` while the runner polled the worktree-relative `.check/...` — a silent
+// evidence-row-missing split. The flag must ALWAYS be present, pinned to the runner's own cwd when no
+// explicit Dir is given.
+func TestSessionSystemdRunArgsPinsWorkingDirectory(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := sessionSystemdRunArgs("charly-capture-bed.vm.appium-screen", sessionSpawnOpts{
+		SessionID: "bed.vm.appium-screen",
+		Command:   []string{"/usr/local/bin/charly-appium", "__dummy-arg"},
+		Env:       map[string]string{"CHARLY_APPIUM_STATE_DIR": ".check/bed/2026.1.1/capture/bed.vm.appium-screen"},
+	})
+	if err != nil {
+		t.Fatalf("sessionSystemdRunArgs: %v", err)
+	}
+	// Invariants, not an exact argv: a real regression (the flag dropped or retargeted) is
+	// distinguishable from a benign addition, exactly as the plugin-fleet precedent test asserts.
+	if !slices.Contains(got, "--working-directory="+wd) {
+		t.Errorf("systemd-run argv MUST pin --working-directory=%s (the caller's cwd); got %v", wd, got)
+	}
+	// The command must stay contiguous AND last: systemd-run treats the first non-flag word as
+	// the command, so any flag appended after it is handed to the recorder, not to systemd-run.
+	tail := []string{"/usr/local/bin/charly-appium", "__dummy-arg"}
+	for i, w := range tail {
+		if g := got[len(got)-len(tail)+i]; g != w {
+			t.Errorf("tail[%d] = %q, want %q (recorder argv must be contiguous and last)", i, g, w)
+		}
+	}
+	// An explicit Dir is honoured and absolutized (a relative Dir would re-introduce the split).
+	got2, err := sessionSystemdRunArgs("u", sessionSpawnOpts{Dir: ".", Command: []string{"x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got2, "--working-directory="+wd) {
+		t.Errorf("relative Dir must be absolutized; got %v", got2)
 	}
 }
 

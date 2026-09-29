@@ -161,23 +161,55 @@ func spawnSession(ctx context.Context, opts sessionSpawnOpts) (*sessionHandle, e
 	return h, nil
 }
 
-// spawnSystemdUnit starts the recorder as a transient user service: systemd-run --user
-// --collect --unit charly-capture-<id> -- <argv...>. --collect makes the unit disappear on
-// exit, so the UNIT NAME is the liveness key; the recorder traps SIGTERM (systemctl stop)
-// and emits its end-of-stream marker. The service inherits the caller env; Env pairs ride
-// --setenv.
-func spawnSystemdUnit(ctx context.Context, h *sessionHandle, opts sessionSpawnOpts) error {
-	unit := sessionUnitPrefix + deploykit.SanitizeUnitName(opts.SessionID)
-	argv := []string{"systemd-run", "--user", "--collect", "--unit", unit}
+// sessionSystemdRunArgs builds the systemd-run argv for ONE recorder spawn. `--working-directory=`
+// is LOAD-BEARING, not cosmetic. The recorder's state_dir / artifact_dir (and the appium provider's
+// CHARLY_APPIUM_STATE_DIR / CHARLY_APPIUM_ARTIFACT_DIR) are the run's RELATIVE `.check/<bed>/<calver>/...`
+// paths, so the recorder resolves them against its CWD. A `systemd-run --user` transient unit's
+// ExecStart runs under the user systemd manager's OWN default WorkingDirectory — the user's home —
+// never the caller's project cwd, even though the caller's `cmd.Dir` may be set (cmd.Dir moves the
+// systemd-run CLIENT, which exits immediately; the detached unit's cwd is controlled ONLY by
+// WorkingDirectory=). Without this flag the recorder wrote under `$HOME/.check/...` while the runner
+// polled the worktree-relative `.check/...` — a silent evidence-row-missing split, band-aided with a
+// `.check` symlink in the field (RCA: opencharly/pod-android-emulator-layer#10; the same bug class the
+// TTL timer closes with the identical `--working-directory=` primitive in
+// plugin-fleet/candy/plugin-fleet/ephemeral.go). The runner's cwd is the root every relative `.check/`
+// path resolves against (main.go's `os.Chdir(cli.Dir)` has already run), so pin the unit there.
+func sessionSystemdRunArgs(unit string, opts sessionSpawnOpts) ([]string, error) {
+	wd := opts.Dir
+	if wd == "" {
+		resolved, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("resolving recorder working directory: %w", err)
+		}
+		wd = resolved
+	} else {
+		resolved, err := filepath.Abs(wd)
+		if err != nil {
+			return nil, fmt.Errorf("resolving recorder working directory %q: %w", opts.Dir, err)
+		}
+		wd = resolved
+	}
+	argv := []string{"systemd-run", "--user", "--collect", "--unit", unit, "--working-directory=" + wd}
 	for k, v := range opts.Env {
 		argv = append(argv, "--setenv", k+"="+v)
 	}
 	argv = append(argv, "--")
-	argv = append(argv, opts.Command...)
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	if opts.Dir != "" {
-		cmd.Dir = opts.Dir
+	return append(argv, opts.Command...), nil
+}
+
+// spawnSystemdUnit starts the recorder as a transient user service: systemd-run --user
+// --collect --unit charly-capture-<id> --working-directory=<project cwd> -- <argv...>. --collect
+// makes the unit disappear on exit, so the UNIT NAME is the liveness key; the recorder traps SIGTERM
+// (systemctl stop) and emits its end-of-stream marker. The service inherits the caller env; Env pairs
+// ride --setenv. The --working-directory= pin (see sessionSystemdRunArgs) makes the recorder's
+// relative .check paths agree with the runner's.
+func spawnSystemdUnit(ctx context.Context, h *sessionHandle, opts sessionSpawnOpts) error {
+	unit := sessionUnitPrefix + deploykit.SanitizeUnitName(opts.SessionID)
+	argv, err := sessionSystemdRunArgs(unit, opts)
+	if err != nil {
+		return fmt.Errorf("systemd-run (unit %s): %w", unit, err)
 	}
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	// The service is detached by systemd; systemd-run's own stdout is only its
 	// "Running as unit:" line, which must not leak into the bed's step logs.
 	if out, err := cmd.CombinedOutput(); err != nil {
