@@ -1,6 +1,7 @@
 package check
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -292,7 +293,7 @@ func TestResolveContainerDeclared(t *testing.T) {
 	kit.ContainerRunning = func(engine, name string) bool { runningCalls++; return false }
 
 	t.Run("stopped-but-existing holder resolves WITHOUT the running gate", func(t *testing.T) {
-		engine, name, err := resolveContainerDeclared("holder-bed", "")
+		engine, name, err := resolveContainerDeclared(context.Background(), "holder-bed", "")
 		if err != nil {
 			t.Fatalf("resolveContainerDeclared(holder-bed) = %v, want nil (the container EXISTS — stopped is the declared state)", err)
 		}
@@ -307,7 +308,7 @@ func TestResolveContainerDeclared(t *testing.T) {
 		}
 	})
 	t.Run("a container that does not exist stays a hard error", func(t *testing.T) {
-		_, _, err := resolveContainerDeclared("ghost-bed", "")
+		_, _, err := resolveContainerDeclared(context.Background(), "ghost-bed", "")
 		if err == nil || !strings.Contains(err.Error(), "does not exist") {
 			t.Fatalf("resolveContainerDeclared(ghost-bed) = %v, want a does-not-exist error (a missing container is never a declared state)", err)
 		}

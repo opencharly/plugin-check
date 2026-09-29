@@ -75,7 +75,7 @@ func pluginCheckRunFeatureLive(ex *sdk.Executor, ctx context.Context, req spec.C
 // agent grader (agent.go's resolveAgentSpec) unless req.NoAgent. The port of the former core
 // hostFeatureLive, mirroring live_gather.go's pluginCheckLivePod's pod-venue construction.
 func pluginCheckRunFeatureLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, tree map[string]spec.DeployNode, dir string, req spec.CheckRunRequest) (kit.CheckRunReply, error) {
-	engine, containerName, err := deploykit.ResolveContainer(req.Name, req.Instance)
+	engine, containerName, err := deploykit.ResolveContainer(ctx, req.Name, req.Instance)
 	if err != nil {
 		return kit.CheckRunReply{}, err
 	}
@@ -152,7 +152,7 @@ func pluginCheckRunFeatureLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec
 	sp := pluginResolveVmSpec(rp, vmName)
 
 	user := vmshared.ResolveCloudInitSSHUser(sp)
-	port, err := deploykit.ResolveVmSshPort(sp, domainID)
+	port, err := deploykit.ResolveVmSshPort(ctx, sp, domainID)
 	if err != nil {
 		return kit.CheckRunReply{}, err
 	}
