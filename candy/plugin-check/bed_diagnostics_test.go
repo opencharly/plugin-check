@@ -690,12 +690,14 @@ func TestPromotedWarningTierGoesRed(t *testing.T) {
 		t.Fatalf("fixture must produce exactly one non-allowlisted warning and no error; got %+v", d)
 	}
 
-	staged := diagnosticPolicy{ErrorsFatal: true, WarningsFatal: false}
+	// The default keeps WarningsFatal staged OFF; the advisory tier is gated ON (#739), so the
+	// default is the staged warning policy PLUS AdvisoriesFatal.
+	staged := diagnosticPolicy{ErrorsFatal: true, WarningsFatal: false, AdvisoriesFatal: true}
 	if d.fails(staged) {
 		t.Errorf("the STAGED policy must not fail on a warning — that is what makes it staged")
 	}
 	if got := defaultDiagnosticPolicy(); got != staged {
-		t.Errorf("defaultDiagnosticPolicy() = %+v, want %+v — the header claims the stage is one field", got, staged)
+		t.Errorf("defaultDiagnosticPolicy() = %+v, want %+v — warnings staged off, advisories gated on", got, staged)
 	}
 
 	promoted := diagnosticPolicy{ErrorsFatal: true, WarningsFatal: true}
