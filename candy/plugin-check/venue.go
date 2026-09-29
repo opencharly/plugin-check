@@ -106,7 +106,7 @@ func resolveCheckVenue(ex *sdk.Executor, ctx context.Context, dir, name, instanc
 		}
 	}
 
-	engine, containerName, cerr := deploykit.ResolveContainer(name, instance)
+	engine, containerName, cerr := deploykit.ResolveContainer(ctx, name, instance)
 	if cerr != nil {
 		return nil, cerr
 	}

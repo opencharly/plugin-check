@@ -408,7 +408,7 @@ func instrumentRunnerFor(ctx context.Context, ex *sdk.Executor, d *spec.CheckBed
 		case d.IsVM:
 			exec = &kit.SSHExecutor{Host: kit.VmSshAlias(d.BedDomain), ConnectTimeout: 10}
 		default:
-			engine, containerName, cerr := deploykit.ResolveContainer(venue, "")
+			engine, containerName, cerr := deploykit.ResolveContainer(ctx, venue, "")
 			if cerr != nil {
 				return nil, cerr
 			}
