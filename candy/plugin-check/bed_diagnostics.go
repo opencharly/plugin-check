@@ -784,11 +784,17 @@ type diagnosticPolicy struct {
 	// WarningsFatal fails the step on any non-allowlisted warning-tier line. Staged off —
 	// see the file header for the promotion condition and why the stage is bounded.
 	WarningsFatal bool
+	// AdvisoriesFatal fails the step on any non-allowlisted ADVISORY-tier line. ON — a
+	// non-zero advisory count is a DEFECT, not a pass: the advisory tier was reclassified
+	// (opencharly/charly#739) so it can no longer launder a broken resolver. An advisory that
+	// is genuinely expected must be allowlisted (see the allowlist entry contract), which makes
+	// the exemption explicit and re-read on every run instead of silently non-fatal.
+	AdvisoriesFatal bool
 }
 
 // defaultDiagnosticPolicy is the disposition every bed run uses.
 func defaultDiagnosticPolicy() diagnosticPolicy {
-	return diagnosticPolicy{ErrorsFatal: true, WarningsFatal: false}
+	return diagnosticPolicy{ErrorsFatal: true, WarningsFatal: false, AdvisoriesFatal: true}
 }
 
 var (
@@ -891,7 +897,8 @@ func scanStepDiagnostics(log string) stepDiagnostics {
 
 // fails reports whether this scan result fails its step under the given policy.
 func (d stepDiagnostics) fails(p diagnosticPolicy) bool {
-	return (p.ErrorsFatal && d.Errors > 0) || (p.WarningsFatal && d.Warnings > 0)
+	return (p.ErrorsFatal && d.Errors > 0) || (p.WarningsFatal && d.Warnings > 0) ||
+		(p.AdvisoriesFatal && d.Advisories > 0)
 }
 
 // failure renders the one-line reason a step failed the diagnostic gate, or "" when it did
@@ -904,6 +911,9 @@ func (d stepDiagnostics) failure(p diagnosticPolicy, stepName, logPath string) s
 	var parts []string
 	if p.ErrorsFatal && d.Errors > 0 {
 		parts = append(parts, fmt.Sprintf("%d error line(s)", d.Errors))
+	}
+	if p.AdvisoriesFatal && d.Advisories > 0 {
+		parts = append(parts, fmt.Sprintf("%d advisory line(s)", d.Advisories))
 	}
 	if p.WarningsFatal && d.Warnings > 0 {
 		parts = append(parts, fmt.Sprintf("%d warning line(s)", d.Warnings))
@@ -1076,13 +1086,13 @@ func writeRunDiagnostics(w io.Writer, run stepDiagnostics) {
 	fmt.Fprintln(w, "diagnostics:")
 	fmt.Fprintf(w, "  errors: %d\n", run.Errors)
 	fmt.Fprintf(w, "  warnings: %d\n", run.Warnings)
-	// The advisory tier is REPORTED and explicitly NOT fatal: a performance-degradation
-	// advisory must stay visible without ever failing a step (see severityAdvisory).
+	// The advisory tier is REPORTED and GATED (opencharly/charly#739): a non-zero count is a
+	// defect, so the disposition comes from the policy, never a hardcoded literal.
 	fmt.Fprintf(w, "  advisories: %d\n", run.Advisories)
 	fmt.Fprintf(w, "  allowlisted: %d\n", run.Allowlisted)
 	fmt.Fprintf(w, "  errors_fatal: %t\n", policy.ErrorsFatal)
 	fmt.Fprintf(w, "  warnings_fatal: %t\n", policy.WarningsFatal)
-	fmt.Fprintf(w, "  advisories_fatal: false\n")
+	fmt.Fprintf(w, "  advisories_fatal: %t\n", policy.AdvisoriesFatal)
 	if run.CacheSteps > 0 {
 		fmt.Fprintf(w, "  cache_hits: %d\n", run.CacheHits)
 		fmt.Fprintf(w, "  cache_steps: %d\n", run.CacheSteps)
