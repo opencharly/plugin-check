@@ -1103,13 +1103,13 @@ func writeStepDiagnostics(w io.Writer, indent string, d stepDiagnostics) {
 // ratio, the CURRENT disposition of each tier, and every allowlist entry this run actually
 // used — with its justification printed verbatim, so an exemption is re-read on every run
 // instead of being reviewed once and then inherited forever.
-func writeRunDiagnostics(w io.Writer, run stepDiagnostics) {
-	policy := defaultDiagnosticPolicy()
+func writeRunDiagnostics(w io.Writer, run stepDiagnostics, policy diagnosticPolicy) {
 	fmt.Fprintln(w, "diagnostics:")
 	fmt.Fprintf(w, "  errors: %d\n", run.Errors)
 	fmt.Fprintf(w, "  warnings: %d\n", run.Warnings)
-	// The advisory tier is REPORTED and GATED (opencharly/charly#739): a non-zero count is a
-	// defect, so the disposition comes from the policy, never a hardcoded literal.
+	// The advisory tier is REPORTED and its DISPOSITION is read from the policy: the former
+	// hardcoded `advisories_fatal: false` literal is gone (the divergence class), so the printed
+	// flag always matches the policy that governs `fails()`.
 	fmt.Fprintf(w, "  advisories: %d\n", run.Advisories)
 	fmt.Fprintf(w, "  allowlisted: %d\n", run.Allowlisted)
 	fmt.Fprintf(w, "  errors_fatal: %t\n", policy.ErrorsFatal)

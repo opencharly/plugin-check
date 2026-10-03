@@ -66,15 +66,23 @@ func TestAdvisoryCountReachesTheRunRollup(t *testing.T) {
 		t.Fatalf("run rollup lost a tier: warnings=%d errors=%d allowlisted=%d cache=%d/%d",
 			run.Warnings, run.Errors, run.Allowlisted, run.CacheHits, run.CacheSteps)
 	}
-	// The run summary must PRINT the count AND state the policy's fatality — which is NOT
-	// fatal by default (reported-only, measured promotion order).
+	// The run summary must state the disposition — and it must come FROM THE POLICY, not a
+	// hardcoded literal. Under the default the advisory tier is reported-only.
 	var buf strings.Builder
-	writeRunDiagnostics(&buf, run)
+	writeRunDiagnostics(&buf, run, defaultDiagnosticPolicy())
 	if !strings.Contains(buf.String(), "advisories: 5") {
 		t.Fatalf("the run diagnostics block must print the advisory count, got:\n%s", buf.String())
 	}
 	if !strings.Contains(buf.String(), "advisories_fatal: false") {
 		t.Fatalf("the run diagnostics block must state the policy's advisories_fatal (false by default), got:\n%s", buf.String())
+	}
+	// The discriminating assertion (block #3): a NON-default policy that stages the advisory tier
+	// fatal MUST print `advisories_fatal: true`. A hardcoded literal would print `false` here and
+	// fail — so this test fails if the code ever returns to a literal.
+	var staged strings.Builder
+	writeRunDiagnostics(&staged, run, diagnosticPolicy{ErrorsFatal: true, WarningsFatal: false, AdvisoriesFatal: true})
+	if !strings.Contains(staged.String(), "advisories_fatal: true") {
+		t.Fatalf("with AdvisoriesFatal staged ON the summary must print `advisories_fatal: true` (the printed value must follow the policy, not a literal), got:\n%s", staged.String())
 	}
 	// And the per-step console suffix must carry it: a PASS must not be able to hide an advisory.
 	if n := diagNotice(stepDiagnostics{Advisories: 1, Allowlisted: 1}); !strings.Contains(n, "advisories=1") {

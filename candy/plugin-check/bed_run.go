@@ -1261,7 +1261,7 @@ func writeBedSummary(dir string, res *bedRunResult) {
 	}
 	run := rollupStepDiagnostics(res.Step)
 	fmt.Fprintf(&buf, "total_seconds: %d\n", int(total.Round(time.Second)/time.Second))
-	writeRunDiagnostics(&buf, run)
+	writeRunDiagnostics(&buf, run, defaultDiagnosticPolicy())
 	fmt.Fprintf(&buf, "ok: %t\n", res.OK)
 
 	path := filepath.Join(dir, "summary.yml")
