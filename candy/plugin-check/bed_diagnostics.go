@@ -708,6 +708,19 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"`error: failed to commit transaction …`, both error-tier and fatal, so the step " +
 			"still fails on its own line.",
 	},
+	{
+		ID:       "kubectl-node-role-master-deprecation",
+		Severity: severityWarning,
+		Match:    regexp.MustCompile(`^Warning: spec\.template\.spec\.affinity\.nodeAffinity\.requiredDuringSchedulingIgnoredDuringExecution\.nodeSelectorTerms\[[0-9]+\]\.matchExpressions\[[0-9]+\]\.key: node-role\.kubernetes\.io/master is use "node-role\.kubernetes\.io/control-plane" instead$`),
+		Why: "kubectl prints this API-deprecation warning when applying the stock k3s addon manifests " +
+			"(Traefik / local-path-provisioner), which still select the legacy " +
+			"`node-role.kubernetes.io/master` node label. The manifests are k3s's, not charly's, so " +
+			"charly cannot fix it at the source without forking the k3s addon set; the apply exits 0. " +
+			"Measured as the single un-allowlisted warning (`warnings=1`, `allowlisted=7`) on the " +
+			"deploy-add step of check-kubevirt-operator runs 2026.276.0239 / .0810 / .0904 " +
+			"(opencharly/plugin-check#71). Narrowly scoped to the exact kubectl sentence so a real " +
+			"manifest warning is still counted.",
+	},
 }
 
 // allowanceRecovered reports whether a claimed line really is exempt. An unconditional entry
