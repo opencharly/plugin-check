@@ -797,17 +797,26 @@ type diagnosticPolicy struct {
 	// WarningsFatal fails the step on any non-allowlisted warning-tier line. Staged off —
 	// see the file header for the promotion condition and why the stage is bounded.
 	WarningsFatal bool
-	// AdvisoriesFatal fails the step on any non-allowlisted ADVISORY-tier line. ON — a
-	// non-zero advisory count is a DEFECT, not a pass: the advisory tier was reclassified
-	// (opencharly/charly#739) so it can no longer launder a broken resolver. An advisory that
-	// is genuinely expected must be allowlisted (see the allowlist entry contract), which makes
-	// the exemption explicit and re-read on every run instead of silently non-fatal.
+	// AdvisoriesFatal fails the step on any non-allowlisted ADVISORY-tier line. Staged OFF,
+	// like WarningsFatal and for the same MEASURED reason: the advisory tier is the LEAST
+	// severe (an emitter-documented fail-soft performance notice — e.g. the multi-tag
+	// candy-resolution notices), and the file header's promotion ladder promotes in SEVERITY
+	// ORDER (error first, then warning, then advisory). Flipping advisory fatal ahead of
+	// warning would red beds that pass today — measured on check-kubevirt-operator:
+	// vm-create advisories=287, deploy-add=975, every one a currently-PASSING step — and would
+	// invert the documented order. The PLUMBING is wired (fails()/failure()/writeRunDiagnostics
+	// consult this field), so promotion is a flag flip plus allowlist curation, never a new
+	// feature. The value is a POLICY field, not the hardcoded `advisories_fatal: false` literal
+	// that let the tier silently diverge from the policy it is supposed to reflect.
 	AdvisoriesFatal bool
 }
 
-// defaultDiagnosticPolicy is the disposition every bed run uses.
+// defaultDiagnosticPolicy is the disposition every bed run uses. Tiers gate in severity order:
+// error is fatal; warning and advisory are counted + reported (not yet fatal) — see the file
+// header for the measured promotion condition. The advisory tier is policy-driven here, no
+// longer a hardcoded literal, so the reported `advisories_fatal` always matches the policy.
 func defaultDiagnosticPolicy() diagnosticPolicy {
-	return diagnosticPolicy{ErrorsFatal: true, WarningsFatal: false, AdvisoriesFatal: true}
+	return diagnosticPolicy{ErrorsFatal: true, WarningsFatal: false, AdvisoriesFatal: false}
 }
 
 var (

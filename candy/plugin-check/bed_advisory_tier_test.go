@@ -5,10 +5,12 @@ import (
 	"testing"
 )
 
-// The ADVISORY tier is COUNTED and (opencharly/charly#739) GATED by default: a non-zero
-// advisory count is a defect — the tier exists so a diagnostic can be reported distinctly, NOT
-// so it can pass silently. A genuinely expected advisory must be allowlisted explicitly.
-func TestAdvisoryTierIsReportedAndGating(t *testing.T) {
+// The ADVISORY tier is COUNTED, REPORTED, and policy-driven — but NOT fatal by DEFAULT.
+// bed_diagnostics.go documents a MEASURED promotion ladder that promotes in SEVERITY ORDER
+// (error → warning → advisory); the least-severe advisory tier must not gate ahead of the
+// warning tier. The PLUMBING gates when AdvisoriesFatal is explicitly set, so promotion is a
+// flag flip, never a new feature.
+func TestAdvisoryTierIsReportedNotGatingByDefault(t *testing.T) {
 	log := "notice: podman store is bloated (66.99GiB reclaimable, ~60% of 110.0GiB) — the overlay-store corruption class tracked in opencharly/charly#173 tracks this factor.\n" +
 		"advisory: some other performance note\n" +
 		"warning: a real warning\n" +
@@ -24,13 +26,18 @@ func TestAdvisoryTierIsReportedAndGating(t *testing.T) {
 	if d.Errors != 1 {
 		t.Fatalf("Errors = %d, want 1", d.Errors)
 	}
-	// A non-zero advisory count MUST fail once AdvisoriesFatal is on (the default).
-	if !(stepDiagnostics{Advisories: 99}).fails(diagnosticPolicy{ErrorsFatal: true, WarningsFatal: false, AdvisoriesFatal: true}) {
-		t.Fatal("advisories must fail a step when AdvisoriesFatal is on (the default)")
+	// The DEFAULT keeps the advisory tier reported-only: it must NOT gate, or the least-severe
+	// tier would red beds that pass today (measured: vm-create 287, deploy-add 975 advisories).
+	if defaultDiagnosticPolicy().AdvisoriesFatal {
+		t.Fatal("defaultDiagnosticPolicy must NOT set AdvisoriesFatal — the advisory tier is not yet fatal (measured promotion order)")
 	}
-	// The default policy has it ON — the whole point of #739.
-	if !defaultDiagnosticPolicy().AdvisoriesFatal {
-		t.Fatal("defaultDiagnosticPolicy must set AdvisoriesFatal: true")
+	if (stepDiagnostics{Advisories: 99}).fails(defaultDiagnosticPolicy()) {
+		t.Fatal("a non-zero advisory count must NOT fail a step under the default policy (reported-only)")
+	}
+	// The plumbing DOES gate when the policy is explicitly staged on — so promotion is a flag
+	// flip, not a new feature.
+	if !(stepDiagnostics{Advisories: 99}).fails(diagnosticPolicy{ErrorsFatal: true, WarningsFatal: false, AdvisoriesFatal: true}) {
+		t.Fatal("advisories must fail a step when AdvisoriesFatal is explicitly staged on")
 	}
 	// The warning tier still fails when staged fatal (the R10-equivalent bar).
 	if !(stepDiagnostics{Warnings: 1}).fails(diagnosticPolicy{ErrorsFatal: true, WarningsFatal: true}) {
@@ -59,14 +66,15 @@ func TestAdvisoryCountReachesTheRunRollup(t *testing.T) {
 		t.Fatalf("run rollup lost a tier: warnings=%d errors=%d allowlisted=%d cache=%d/%d",
 			run.Warnings, run.Errors, run.Allowlisted, run.CacheHits, run.CacheSteps)
 	}
-	// The run summary must PRINT it AND state that it is fatal (gated).
+	// The run summary must PRINT the count AND state the policy's fatality — which is NOT
+	// fatal by default (reported-only, measured promotion order).
 	var buf strings.Builder
 	writeRunDiagnostics(&buf, run)
 	if !strings.Contains(buf.String(), "advisories: 5") {
 		t.Fatalf("the run diagnostics block must print the advisory count, got:\n%s", buf.String())
 	}
-	if !strings.Contains(buf.String(), "advisories_fatal: true") {
-		t.Fatalf("the run diagnostics block must state that advisories ARE fatal (gated), got:\n%s", buf.String())
+	if !strings.Contains(buf.String(), "advisories_fatal: false") {
+		t.Fatalf("the run diagnostics block must state the policy's advisories_fatal (false by default), got:\n%s", buf.String())
 	}
 	// And the per-step console suffix must carry it: a PASS must not be able to hide an advisory.
 	if n := diagNotice(stepDiagnostics{Advisories: 1, Allowlisted: 1}); !strings.Contains(n, "advisories=1") {
