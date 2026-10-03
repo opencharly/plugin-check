@@ -1,6 +1,7 @@
 package check
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -44,5 +45,24 @@ func TestKubectlDeprecationWarningGoesToZero(t *testing.T) {
 	d := scanStepDiagnostics(log)
 	if d.Warnings != 0 {
 		t.Errorf("the kubectl deprecation warning must be allowlisted; un-allowlisted warnings = %d (want 0)", d.Warnings)
+	}
+}
+
+// TestKubectlDeprecationRetainedExcerpt proves the anchored regex matches the BYTE-FOR-BYTE
+// line a real k3s bed emitted — not a string typed into the test. The excerpt is the verbatim
+// line from .check/check-kubevirt-operator/2026.276.0239/deploy-add.log:1199, whose summary.yml
+// reported deploy-add `warnings=1` (this line the single un-allowlisted finding). With the entry
+// the same bytes classify as allowlisted; without it they are the counted warning.
+func TestKubectlDeprecationRetainedExcerpt(t *testing.T) {
+	b, err := os.ReadFile("testdata/kubectl-deprecation/deploy-add-excerpt.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := scanStepDiagnostics(string(b))
+	if d.Warnings != 0 {
+		t.Errorf("the retained deploy-add excerpt must scan to 0 un-allowlisted warnings (the entry must match the real bytes); got warnings=%d", d.Warnings)
+	}
+	if d.Errors != 0 {
+		t.Errorf("retained excerpt: want 0 errors, got %d", d.Errors)
 	}
 }
