@@ -55,7 +55,7 @@ func resolveHostVars(ex *sdk.Executor, ctx context.Context, dir string, refs []s
 		}
 		dep, portStr, hasPort := strings.Cut(arg, ":")
 		if !hasPort {
-			if _, ctr, err := deploykit.ResolveContainer(arg, instance); err == nil {
+			if _, ctr, err := deploykit.ResolveContainer(ctx, arg, instance); err == nil {
 				vars[key] = ctr
 			} else {
 				fmt.Fprintf(os.Stderr, "check: ${%s} — %v\n", key, err)

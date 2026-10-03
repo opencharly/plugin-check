@@ -52,6 +52,77 @@ func TestCapturesGolden_NonVMAndNoPolicy(t *testing.T) {
 	}
 }
 
+// TestBedReclaimsVmStateDir pins the #73 predicate: only a PLAIN disposable VM bed reclaims
+// its per-domain state dir at teardown. Golden-capturing, keep-venue, and anchored runs must
+// NOT — their state dir holds the captured golden / kept venue that later lanes depend on.
+func TestBedReclaimsVmStateDir(t *testing.T) {
+	vm := spec.CheckBedReply{IsVM: true}
+	golden := &spec.VmSnapshotPolicy{OnFinalize: "golden"}
+
+	// The #73 case: a plain disposable VM bed → reclaim.
+	if !bedReclaimsVmStateDir(vm, bedRunOpts{}, nil) {
+		t.Error("a plain disposable VM bed must reclaim its state dir (plugin-check#73)")
+	}
+	// Golden capture — the golden lives in <state>/snapshots/<name>/ → keep.
+	if bedReclaimsVmStateDir(vm, bedRunOpts{}, golden) {
+		t.Error("a golden-capturing run must NOT reclaim the state dir (throws the golden away)")
+	}
+	// --keep / --keep-venue → keep the venue.
+	if bedReclaimsVmStateDir(vm, bedRunOpts{Keep: true}, nil) {
+		t.Error("a --keep run must NOT reclaim the state dir")
+	}
+	// Anchored lane → reverts to the golden → keep.
+	if bedReclaimsVmStateDir(vm, bedRunOpts{Anchor: "golden"}, nil) {
+		t.Error("an anchored run must NOT reclaim the state dir")
+	}
+	// Non-VM → no per-domain VM state dir.
+	if bedReclaimsVmStateDir(spec.CheckBedReply{IsVM: false}, bedRunOpts{}, nil) {
+		t.Error("a non-VM bed has no VM state dir to reclaim")
+	}
+}
+
+// TestVmBedDestroyArgs pins the EMITTED argv, not merely the predicate: only the plain
+// disposable VM bed's final teardown carries --disk. Deleting the condition (or dropping
+// --disk) fails here.
+func TestVmBedDestroyArgs(t *testing.T) {
+	vm := spec.CheckBedReply{IsVM: true, VMTemplate: "r10-vm", BedDomain: "check-r10-two-vm"}
+	golden := &spec.VmSnapshotPolicy{OnFinalize: "golden"}
+
+	plain := vmBedDestroyArgs(vm, bedRunOpts{}, nil)
+	if !contains(plain, "--disk") {
+		t.Errorf("plain VM bed teardown must pass --disk (plugin-check#73): %v", plain)
+	}
+	// The base argv is unchanged; --disk is appended.
+	want := []string{"vm", "destroy", "r10-vm", "--domain", "check-r10-two-vm", "--if-exists", "--disk"}
+	if len(plain) != len(want) {
+		t.Fatalf("plain argv = %v, want %v", plain, want)
+	}
+	for i := range want {
+		if plain[i] != want[i] {
+			t.Fatalf("plain argv = %v, want %v", plain, want)
+		}
+	}
+
+	if contains(vmBedDestroyArgs(vm, bedRunOpts{}, golden), "--disk") {
+		t.Error("a golden-capturing run's teardown must NOT pass --disk")
+	}
+	if contains(vmBedDestroyArgs(vm, bedRunOpts{Keep: true}, nil), "--disk") {
+		t.Error("a --keep run's teardown must NOT pass --disk")
+	}
+	if contains(vmBedDestroyArgs(vm, bedRunOpts{Anchor: "golden"}, nil), "--disk") {
+		t.Error("an anchored run's teardown must NOT pass --disk")
+	}
+}
+
+func contains(argv []string, want string) bool {
+	for _, a := range argv {
+		if a == want {
+			return true
+		}
+	}
+	return false
+}
+
 // TestGoldenCaptureSteps pins the EMITTED STEP SEQUENCE, not merely the predicate: the
 // capture step (§5.3) AND the keeper-stop step (§5.3.2) are both returned by the ONE
 // goldenCaptureSteps function the runner executes, so deleting the keeper-stop fails here

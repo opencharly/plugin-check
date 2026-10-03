@@ -135,7 +135,7 @@ func pluginCheckLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.Resolved
 		overlayPlan = expanded
 	}
 
-	engine, containerName, err := deploykit.ResolveContainer(req.Name, req.Instance)
+	engine, containerName, err := deploykit.ResolveContainer(ctx, req.Name, req.Instance)
 	declaredStopped := false
 	if err != nil {
 		// THE DELIBERATELY-STOPPED ROOT (the preempt semantics, post-unroll): the migrate unroll
@@ -152,7 +152,7 @@ func pluginCheckLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.Resolved
 		if !stoppedHolderRoot(&treeNode, deployOverlay) {
 			return kit.CheckRunReply{}, err
 		}
-		engine, containerName, err = resolveContainerDeclared(req.Name, req.Instance)
+		engine, containerName, err = resolveContainerDeclared(ctx, req.Name, req.Instance)
 		if err != nil {
 			return kit.CheckRunReply{}, err
 		}
@@ -254,13 +254,13 @@ func stoppedHolderRoot(treeNode, overlay *spec.DeployNode) bool {
 // that does not exist at all stays a hard error. Mirrors sdk/deploykit/container_resolve.go
 // line-for-line except for that one gate (R3: one synthesis, one gate difference, both visible
 // side by side).
-func resolveContainerDeclared(box, instance string) (engine, name string, err error) {
+func resolveContainerDeclared(ctx context.Context, box, instance string) (engine, name string, err error) {
 	rt, err := kit.ResolveRuntime()
 	if err != nil {
 		return "", "", err
 	}
 	boxName := kit.ResolveBoxName(box)
-	runEngine := deploykit.ResolveBoxEngineForDeploy(boxName, instance, rt.RunEngine)
+	runEngine := deploykit.ResolveBoxEngineForDeploy(ctx, boxName, instance, rt.RunEngine)
 	engine = kit.EngineBinary(runEngine)
 	name = kit.ContainerNameInstance(boxName, instance)
 	if !kit.ContainerExists(engine, name) {
@@ -426,7 +426,7 @@ func pluginCheckLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedP
 	sp := pluginResolveVmSpec(rp, vmName)
 
 	user := vmshared.ResolveCloudInitSSHUser(sp)
-	port, err := deploykit.ResolveVmSshPort(sp, domainID)
+	port, err := deploykit.ResolveVmSshPort(ctx, sp, domainID)
 	if err != nil {
 		return kit.CheckRunReply{}, err
 	}
