@@ -161,6 +161,31 @@ func capturesGolden(d spec.CheckBedReply, opts bedRunOpts, snap *spec.VmSnapshot
 	return d.IsVM && opts.Anchor == "" && snap != nil && snap.OnFinalize != ""
 }
 
+// bedReclaimsVmStateDir reports whether a bed's FINAL teardown should pass `--disk` so the
+// per-domain host state dir ($VmStateRoot/charly-<BedDomain>/ — the per-run disk.qcow2 overlay
+// + seed + ssh keys) is reclaimed. It is TRUE only for a PLAIN disposable VM bed: one that is
+// NOT capturing an on_finalize golden (which lives in <state>/snapshots/<name>/ and MUST survive),
+// NOT keeping the venue (--keep / --keep-venue), and NOT an anchored run (which reverts the venue
+// to the golden, so it must survive). Without this, every plain VM bed run leaked ~250M of overlay
+// (opencharly/plugin-check#73 — the same accumulation class that left ~/.local/share/charly/vm at
+// 86G). Safe now that plugin-vm#64/#65 landed: `vm destroy <entity> --domain <domain> --disk`
+// reclaims EXACTLY the per-domain state dir and never the shared entity base.
+func bedReclaimsVmStateDir(d spec.CheckBedReply, opts bedRunOpts, snap *spec.VmSnapshotPolicy) bool {
+	return d.IsVM && !opts.Keep && opts.Anchor == "" && !capturesGolden(d, opts, snap)
+}
+
+// vmBedDestroyArgs builds the FINAL teardown argv for a VM bed: the base destroy, plus `--disk`
+// only when bedReclaimsVmStateDir says the state dir is not needed. The ONE definition of that
+// argv, so a test pins the `--disk` gating directly (the pre-run cleanup keeps its no-`--disk`
+// form — it always runs BEFORE the run's overlay is created, so there is nothing to reclaim).
+func vmBedDestroyArgs(d spec.CheckBedReply, opts bedRunOpts, snap *spec.VmSnapshotPolicy) []string {
+	argv := []string{"vm", "destroy", d.VMTemplate, "--domain", d.BedDomain, "--if-exists"}
+	if bedReclaimsVmStateDir(d, opts, snap) {
+		argv = append(argv, "--disk")
+	}
+	return argv
+}
+
 // bedStep is one emitted `charly` step in a bed run: a step name + its argv.
 type bedStep struct {
 	Name string
@@ -622,7 +647,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		var targetErr error
 		switch {
 		case d.IsVM:
-			targetErr = step("cleanup", "vm", "destroy", d.VMTemplate, "--domain", d.BedDomain, "--if-exists")
+			targetErr = step("cleanup", vmBedDestroyArgs(d, opts, bedNode.Snapshot)...)
 		case isKubeVirt:
 			targetErr = step("cleanup", "deploy", "del", name)
 		case d.IsExternal:
