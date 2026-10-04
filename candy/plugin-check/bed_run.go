@@ -317,6 +317,28 @@ func bedShortName(bed string) string {
 	return strings.TrimPrefix(rest, "accept-")
 }
 
+// bedRunGuard is the body of runCheckBed's LAST-declared defer, so it runs FIRST — while the
+// stderr capture is still live and before cap.close() restores fd 2.
+//
+// It is a NAMED function, not an inline closure, for one reason: the recover→RecordPanic
+// hand-off is the load-bearing part of #779 item 3, and a test that merely REPLICATED this defer
+// order could never notice the hand-off being deleted from production — it would keep passing on
+// its own copy of the line. Because the bed run and the test both call THIS function, deleting the
+// RecordPanic call below fails TestBedRunGuardRecordsAPanicWhileTheMirrorIsLive.
+//
+// recover() returns non-nil only when called directly by a deferred function, which is why this
+// is a function USED AS a defer rather than one called from inside another.
+func bedRunGuard(cap *bedStderrCapture, dir, name string, state *bedRunState, res **bedRunResult, err *error) {
+	r := recover()
+	if r != nil {
+		cap.RecordPanic(r)
+	}
+	recordBedVerdict(dir, name, state, r, res, err)
+	if r != nil {
+		panic(r) // never swallowed: the verdict is recorded, the crash still crashes
+	}
+}
+
 // runCheckBed executes the canonical R10 sequence for one check bed and writes
 // per-step logs + summary.yml to .check/<name>/<calver>/. Returns the result struct
 // (always non-nil once setup succeeds) and the first error encountered.
@@ -365,13 +387,15 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// cleanup.go:130-142). bed_verdict.go's registered shutdown hook owns that path.
 	state := beginBedVerdict(d.LogDir, name, d.Calver)
 	defer endBedVerdict(state)
-	defer func() {
-		r := recover()
-		recordBedVerdict(d.LogDir, name, state, r, &res, &err)
-		if r != nil {
-			panic(r) // never swallowed: the verdict is recorded, the crash still crashes
-		}
-	}()
+	// The stderr mirror. THE DEFER ORDER IS THE MECHANISM, not a style choice: bedRunGuard is
+	// declared LAST of the three so that it runs FIRST, while the capture is still live — a
+	// recovered panic's stack has to reach the file through RecordPanic, because the runtime
+	// prints its own stack only AFTER every deferred function has run, by which time cap.close()
+	// has already restored fd 2. That restoration is also what keeps a crash visible on the
+	// operator's terminal instead of only in the run dir (#779 item 3).
+	cap := startBedStderrCapture(d.LogDir)
+	defer cap.close()
+	defer bedRunGuard(cap, d.LogDir, name, state, &res, &err)
 
 	// diagPolicy decides what step()'s log scan DOES with what it finds. One value, read at
 	// every step, so the disposition is reviewable in one place rather than inferred from
@@ -1288,6 +1312,12 @@ func writeBedSummary(dir string, res *bedRunResult) {
 	// which is what made the runs behind opencharly/charly#779 unreproducible.
 	if res.Driver.Path != "" {
 		fmt.Fprintf(&buf, "driver: %s\n", res.Driver.Path)
+		if res.Driver.Version != "" {
+			// The driver's `charly version` identity. Path+size+mtime says WHICH FILE ran it; this
+			// says WHICH BUILD, which is the string a bug report quotes and the only field that
+			// separates a dev/worktree build from a released one by value (#779 item 2).
+			fmt.Fprintf(&buf, "driver_version: %s\n", yamlScalar(res.Driver.Version))
+		}
 		if res.Driver.Size > 0 {
 			fmt.Fprintf(&buf, "driver_size: %d\n", res.Driver.Size)
 		}
@@ -1316,6 +1346,14 @@ func writeBedSummary(dir string, res *bedRunResult) {
 	// run's instruments produced rows; the reference is truthful — the file exists.
 	if _, err := os.Stat(filepath.Join(dir, "evidence.yml")); err == nil {
 		fmt.Fprintln(&buf, "evidence: evidence.yml")
+	}
+	// The stderr mirror (bed_stderr.go) sits beside the summary whenever the run installed one.
+	// Same truthful-reference rule as `evidence:` above, and for the same reason: a run dir that
+	// names a file it did not write is worse than one that names nothing. On the panic path this
+	// is the ONLY place the stack trace survives — the runtime prints its own copy after every
+	// defer has restored fd 2 (#779 item 3).
+	if _, err := os.Stat(filepath.Join(dir, bedStderrLogName)); err == nil {
+		fmt.Fprintf(&buf, "runner_stderr: %s\n", bedStderrLogName)
 	}
 	fmt.Fprintln(&buf, "steps:")
 	var total time.Duration
