@@ -317,6 +317,28 @@ func bedShortName(bed string) string {
 	return strings.TrimPrefix(rest, "accept-")
 }
 
+// bedRunGuard is the body of runCheckBed's LAST-declared defer, so it runs FIRST — while the
+// stderr capture is still live and before cap.close() restores fd 2.
+//
+// It is a NAMED function, not an inline closure, for one reason: the recover→RecordPanic
+// hand-off is the load-bearing part of #779 item 3, and a test that merely REPLICATED this defer
+// order could never notice the hand-off being deleted from production — it would keep passing on
+// its own copy of the line. Because the bed run and the test both call THIS function, deleting the
+// RecordPanic call below fails TestBedRunGuardRecordsAPanicWhileTheMirrorIsLive.
+//
+// recover() returns non-nil only when called directly by a deferred function, which is why this
+// is a function USED AS a defer rather than one called from inside another.
+func bedRunGuard(cap *bedStderrCapture, dir, name string, state *bedRunState, res **bedRunResult, err *error) {
+	r := recover()
+	if r != nil {
+		cap.RecordPanic(r)
+	}
+	recordBedVerdict(dir, name, state, r, res, err)
+	if r != nil {
+		panic(r) // never swallowed: the verdict is recorded, the crash still crashes
+	}
+}
+
 // runCheckBed executes the canonical R10 sequence for one check bed and writes
 // per-step logs + summary.yml to .check/<name>/<calver>/. Returns the result struct
 // (always non-nil once setup succeeds) and the first error encountered.
@@ -373,16 +395,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// operator's terminal instead of only in the run dir (#779 item 3).
 	cap := startBedStderrCapture(d.LogDir)
 	defer cap.close()
-	defer func() {
-		r := recover()
-		if r != nil {
-			cap.RecordPanic(r)
-		}
-		recordBedVerdict(d.LogDir, name, state, r, &res, &err)
-		if r != nil {
-			panic(r) // never swallowed: the verdict is recorded, the crash still crashes
-		}
-	}()
+	defer bedRunGuard(cap, d.LogDir, name, state, &res, &err)
 
 	// diagPolicy decides what step()'s log scan DOES with what it finds. One value, read at
 	// every step, so the disposition is reviewable in one place rather than inferred from

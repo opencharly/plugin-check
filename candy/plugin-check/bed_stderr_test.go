@@ -191,6 +191,45 @@ func TestBedStderrCaptureRecordsAPanic(t *testing.T) {
 	mustContain(t, got, "goroutine ", "the stack trace")
 }
 
+// TestBedRunGuardRecordsAPanicWhileTheMirrorIsLive pins the recover→RecordPanic HAND-OFF, which
+// the test above cannot see: that one calls RecordPanic directly, so it covers the record's
+// FORMAT only. The mechanism is that runCheckBed's LAST-declared defer runs FIRST — while the
+// capture is still live and before cap.close() restores fd 2 — and hands the recovered value to
+// the mirror. This drives a REAL panic (no synthetic error) through the SAME function the bed run
+// defers, in the SAME declaration order, so deleting the RecordPanic call from production fails
+// HERE rather than passing on a test-local copy of the line.
+func TestBedRunGuardRecordsAPanicWhileTheMirrorIsLive(t *testing.T) {
+	dir := t.TempDir()
+	cap := startBedStderrCapture(dir)
+	if cap == nil {
+		t.Fatal("startBedStderrCapture returned nil for a writable run dir")
+	}
+	state := beginBedVerdict(dir, "panic-bed", "2026.277.0001")
+	var (
+		res *bedRunResult
+		err error
+	)
+
+	func() {
+		// Absorbs the re-panic bedRunGuard deliberately raises. Declared FIRST so it runs LAST:
+		// after the guard has recovered, and after the capture has been closed and synced.
+		defer func() { _ = recover() }()
+		// Declaration order mirrors runCheckBed exactly — cap.close() first, the guard LAST — so
+		// the guard runs FIRST and the stack reaches the file while the capture is live.
+		defer cap.close()
+		defer bedRunGuard(cap, dir, "panic-bed", state, &res, &err)
+		panic("boom-from-the-bed")
+	}()
+
+	b, rerr := os.ReadFile(filepath.Join(dir, bedStderrLogName))
+	if rerr != nil {
+		t.Fatalf("reading the mirror: %v", rerr)
+	}
+	got := string(b)
+	mustContain(t, got, "panic: boom-from-the-bed", "the value recovered from the real panic")
+	mustContain(t, got, "goroutine ", "the stack trace")
+}
+
 // TestBedStderrCaptureIsNilSafe pins that every entry point tolerates a capture that could not be
 // installed. startBedStderrCapture returns nil rather than failing a run — a diagnostic aid must
 // never be the reason a bed dies — so runCheckBed holds a possibly-nil capture and calls both
