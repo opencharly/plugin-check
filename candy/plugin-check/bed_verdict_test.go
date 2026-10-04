@@ -207,3 +207,28 @@ func TestWriteBedSummaryNamesTheDriver(t *testing.T) {
 		t.Fatalf("summary.yml = %q, want no stopped: line on a normal run", got)
 	}
 }
+
+// TestFirstVerdictWins pins the ordering invariant BETWEEN the two writers: a run gets exactly one
+// verdict, and the one written first stands.
+//
+// The narrow case it closes is a signal delivered while the main goroutine was ALREADY unwinding —
+// without a lock shared across the write, the hook would overwrite a truthful, complete, finished
+// verdict with a stopped-state one. The hook is deliberately left ARMED here (no endBedVerdict
+// before it fires), so it genuinely tries; only the shared write lock can stop it.
+func TestFirstVerdictWins(t *testing.T) {
+	dir := t.TempDir()
+	state := beginBedVerdict(dir, "check-foo", "2026.275.1200")
+	res := &bedRunResult{Bed: "check-foo", CalVer: "2026.275.1200", OK: true}
+	var err error
+	recordBedVerdict(dir, "check-foo", state, nil, &res, &err)
+	finished := readSummary(t, dir)
+	mustContain(t, finished, "ok: true", "first verdict")
+
+	state.enterStep("teardown")
+	onBedShutdown()
+
+	if after := readSummary(t, dir); after != finished {
+		t.Fatalf("the hook overwrote the verdict the deferred writer had already recorded:\n--- first ---\n%s\n--- after the hook ---\n%s", finished, after)
+	}
+	endBedVerdict(state) // leave the process-global registry as we found it
+}

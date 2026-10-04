@@ -150,17 +150,33 @@ func onBedShutdown() {
 	s.writeStopped("process shutdown hook fired (SIGTERM/SIGINT/SIGHUP or an explicit shutdown) while the run was still in flight")
 }
 
+// writeVerdictOnce is the ONE serialized verdict write: a run gets exactly ONE verdict, whichever
+// of the two writers — the deferred writer or the shutdown hook — reaches it first.
+//
+// The state lock is held ACROSS the file write so the two can never interleave or clobber each
+// other. Without it there is a real, if narrow, race: a signal delivered while the main goroutine
+// was already unwinding would let the hook overwrite a truthful, complete, finished verdict with a
+// stopped-state one. Holding the lock makes "first writer wins" an invariant rather than a hope.
+// Bounded by contract: one small write, no spawn, no wait (spec/proc/cleanup.go:58).
+func (s *bedRunState) writeVerdictOnce(write func()) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.done {
+		return false
+	}
+	write()
+	s.done = true
+	return true
+}
+
 // writeStopped records the stopped-state verdict, unless one has already been written.
 //
 // The hook cannot name the signal — InstallSignalHandler consumes it and re-raises without
 // passing it through — so the reason names the mechanism and the step in flight names the
 // place. That is still the whole point of the fix: the run dir now says where it stopped.
 func (s *bedRunState) writeStopped(reason string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.done {
-		return
-	}
+	// The step is read BEFORE the verdict lock is taken — snapshotStep takes that same lock.
+	step := s.snapshotStep()
 	// Synthesized, never the live result: see bedRunState's note on the race.
 	res := &bedRunResult{
 		Bed:           s.bed,
@@ -170,10 +186,9 @@ func (s *bedRunState) writeStopped(reason string) {
 		FailExitCode:  1,
 		Stopped:       true,
 		StoppedReason: reason,
-		InFlightStep:  s.step,
+		InFlightStep:  step,
 	}
-	writeBedSummary(s.dir, res)
-	s.done = true
+	s.writeVerdictOnce(func() { writeBedSummary(s.dir, res) })
 }
 
 // recordBedVerdict is the ONE writer of a finished run's verdict. runCheckBed defers it, so
@@ -201,7 +216,7 @@ func recordBedVerdict(dir, bed string, state *bedRunState, r any, res **bedRunRe
 		(*res).Stopped = true
 		(*res).StoppedReason = fmt.Sprintf("panic: %v", r)
 		(*res).InFlightStep = state.snapshotStep()
-		writeBedSummary(dir, *res)
+		state.writeVerdictOnce(func() { writeBedSummary(dir, *res) })
 		return
 	}
 	if *res == nil {
@@ -218,7 +233,7 @@ func recordBedVerdict(dir, bed string, state *bedRunState, r any, res **bedRunRe
 		}
 	}
 	(*res).Driver = state.driver
-	writeBedSummary(dir, *res)
+	state.writeVerdictOnce(func() { writeBedSummary(dir, *res) })
 }
 
 // stopReason formats the stopped-state fields for the summary. Kept here so the summary
