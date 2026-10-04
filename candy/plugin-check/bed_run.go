@@ -91,6 +91,16 @@ type bedRunResult struct {
 	// OK stays true, so callers MUST check SkippedPrereq before OK.
 	SkippedPrereq bool
 	SkipReason    string
+	// Driver names the binary that ran this bed (path + size + mtime). Recorded because a run
+	// dir that cannot name its driver cannot be reproduced: a dev/worktree build and an
+	// installed /usr/bin/charly are indistinguishable in the step logs (opencharly/charly#779).
+	Driver bedDriver
+	// Stopped marks a verdict written for a run that did NOT reach one of its own exit paths —
+	// a signal (the registered shutdown hook) or a panic. InFlightStep then names where it was
+	// when it stopped, which is the whole point of the record.
+	Stopped       bool
+	StoppedReason string
+	InFlightStep  string
 }
 
 // summaryStatus formats a bool as a human-readable status word.
@@ -311,8 +321,12 @@ func bedShortName(bed string) string {
 // per-step logs + summary.yml to .check/<name>/<calver>/. Returns the result struct
 // (always non-nil once setup succeeds) and the first error encountered.
 //
+// Named results on purpose: the deferred verdict writer below must see the outcome the
+// function actually returns (an error that never reached a record, or a panic) to mark the
+// verdict truthfully (opencharly/charly#779).
+//
 //nolint:gocyclo // canonical R10 bed sequence (build→check→deploy→check-live→update→teardown) woven from interdependent inline closures over a shared mutable result + the check-bed host session; contiguous-block extraction is not behavior-preserving
-func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRunOpts) (*bedRunResult, error) {
+func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRunOpts) (res *bedRunResult, err error) {
 	// setup — opens the session (locks/lease/env/GPU-prereq) plugin-side and returns the
 	// BedDescriptor the sequence drives from (#55 W3 B2-full: no more HostBuild round-trip).
 	// bedSetup also returns the run's ISOLATED ctx (its per-bed spec.RunEnv), which runCheckBed
@@ -334,10 +348,30 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	dir, _ := os.Getwd()
 	checkLoadPlugins(ex, ctx, name, dir)
 
-	res := &bedRunResult{Bed: name, CalVer: d.Calver, OK: true}
+	res = &bedRunResult{Bed: name, CalVer: d.Calver, OK: true}
 	if sess != nil {
 		res.RepoOverride = sess.repoOvPair
 	}
+
+	// ONE deferred writer owns the verdict for every path that UNWINDS (opencharly/charly#779).
+	// It replaces three scattered writeBedSummary call sites — the prereq-skip arm, the fail()
+	// tail and the success tail — so that NO return, error or panic can leave the run dir with
+	// logs and no verdict. Deferring also makes the record MORE complete than before, not less:
+	// it runs last, after bedTeardown and the instrument finalizer, so the summary describes the
+	// state the run ended in rather than a snapshot taken mid-sequence.
+	//
+	// It does NOT cover the signal path, and it cannot: InstallSignalHandler re-raises with the
+	// default disposition, so nothing unwinds and no deferred function runs (spec/proc/
+	// cleanup.go:130-142). bed_verdict.go's registered shutdown hook owns that path.
+	state := beginBedVerdict(d.LogDir, name, d.Calver)
+	defer endBedVerdict(state)
+	defer func() {
+		r := recover()
+		recordBedVerdict(d.LogDir, name, state, r, &res, &err)
+		if r != nil {
+			panic(r) // never swallowed: the verdict is recorded, the crash still crashes
+		}
+	}()
 
 	// diagPolicy decides what step()'s log scan DOES with what it finds. One value, read at
 	// every step, so the disposition is reviewable in one place rather than inferred from
@@ -350,7 +384,8 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		res.SkippedPrereq = true
 		res.SkipReason = d.PrereqSkip.Reason
 		res.Step = append(res.Step, stepResult{Name: prereqSkipStepName(d.PrereqSkip.Token), OK: true})
-		writeBedSummary(d.LogDir, res)
+		// No write here: the deferred writer records this return too, and SkippedPrereq keeps
+		// ok: true / skip_reason set exactly as before (#779).
 		return res, &CheckSkippedError{Msg: fmt.Sprintf("charly check run %s: skipped (%s)", name, res.SkipReason)}
 	}
 
@@ -531,6 +566,10 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// phase records an IN-PROCESS phase (member bring-up / teardown — ops that do not
 	// shell out to a `charly` subcommand) in the summary with its real duration.
 	phase := func(stepName string, fn func() error) error {
+		// Publish the in-flight step BEFORE the work, so a signal or panic during it can name
+		// where the run died rather than leaving an unattributed gap (#779).
+		state.enterStep(stepName)
+		defer state.leaveStep()
 		t0 := time.Now()
 		fmt.Fprintf(os.Stderr, "charly check run %s: [%s] START\n", name, stepName)
 		err := fn()
@@ -551,6 +590,8 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// step records a step's outcome (a `charly` subcommand over the cli seam) and
 	// writes its log file. Returns the run error so the caller can short-circuit.
 	step := func(stepName string, argv ...string) error {
+		state.enterStep(stepName)
+		defer state.leaveStep()
 		t0 := time.Now()
 		logPath := filepath.Join(d.LogDir, stepName+".log")
 		command := checkStepCommandSummary(argv)
@@ -673,7 +714,8 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		if res.FailExitCode == 0 {
 			res.FailExitCode = 1 // infra failure; a checks-failure (2) is set by step()
 		}
-		writeBedSummary(d.LogDir, res)
+		// No write here: the deferred writer records this return, and it runs later (after
+		// teardown), so the summary it writes is strictly more complete than this one was (#779).
 		if deployed {
 			printDebugRetentionNotice(os.Stderr, name, d, res.RepoOverride)
 		}
@@ -1137,12 +1179,11 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		}
 	}
 
-	// The evidence envelope lands next to summary.yml (the deferred finalizer covers every
-	// other terminal path; this explicit write covers the success tail so the summary's
-	// reference is truthful at write time).
+	// The evidence envelope lands next to summary.yml. written BEFORE the deferred verdict
+	// writer runs, so the summary the writer emits can reference it (the writer is the last
+	// thing to touch the run dir; the earlier ad-hoc success-tail write is gone — #779).
 	_ = inst.writeRunEvidence()
 
-	writeBedSummary(d.LogDir, res)
 	if !res.OK {
 		return res, fmt.Errorf("bed %s: one or more steps failed", name)
 	}
@@ -1242,8 +1283,34 @@ func writeBedSummary(dir string, res *bedRunResult) {
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, "bed: %s\n", res.Bed)
 	fmt.Fprintf(&buf, "calver: %s\n", res.CalVer)
+	// The driver is recorded so that a run dir NAMES the binary that produced it: without it a
+	// worktree/dev build and an installed /usr/bin/charly are indistinguishable after the fact,
+	// which is what made the runs behind opencharly/charly#779 unreproducible.
+	if res.Driver.Path != "" {
+		fmt.Fprintf(&buf, "driver: %s\n", res.Driver.Path)
+		if res.Driver.Size > 0 {
+			fmt.Fprintf(&buf, "driver_size: %d\n", res.Driver.Size)
+		}
+		if res.Driver.MTime != "" {
+			fmt.Fprintf(&buf, "driver_mtime: %s\n", res.Driver.MTime)
+		}
+	}
+	// A stopped verdict is the diagnosability record #779 asks for: the run did not reach any of
+	// its own exit paths, and in_flight_step names where it died. Emitted ONLY when stopped, so
+	// its absence on a normal run is itself the statement that the run finished normally.
+	if res.Stopped {
+		fmt.Fprint(&buf, stoppedLine(res.StoppedReason))
+		if res.InFlightStep != "" {
+			fmt.Fprintf(&buf, "in_flight_step: %s\n", yamlScalar(res.InFlightStep))
+		}
+	}
 	if res.RepoOverride != "" {
 		fmt.Fprintf(&buf, "repo_override: %s\n", res.RepoOverride)
+	}
+	if res.SkippedPrereq && res.SkipReason != "" {
+		// The prereq-skip reason was previously reachable only from the returned error; the run
+		// dir itself could not say why nothing ran.
+		fmt.Fprintf(&buf, "skip_reason: %s\n", yamlScalar(res.SkipReason))
 	}
 	// The capture-session evidence envelope (Cutover A) sits beside the summary when the
 	// run's instruments produced rows; the reference is truthful — the file exists.
