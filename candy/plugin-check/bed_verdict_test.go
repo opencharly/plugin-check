@@ -214,11 +214,18 @@ func TestWriteBedSummaryNamesTheDriver(t *testing.T) {
 	if d.MTime == "" {
 		t.Fatalf("currentBedDriver().MTime is empty, want the stat'd mtime of %s", d.Path)
 	}
+	// The version must be filled in HERE, not only in the summary test below: that one constructs
+	// a bedDriver literal, so it would still pass if currentBedDriver stopped recording the
+	// version at all — and the version would then be silently missing from every real run dir.
+	if d.Version == "" {
+		t.Fatal("currentBedDriver().Version is empty, want the running binary's `charly version` string")
+	}
 
 	dir := t.TempDir()
 	writeBedSummary(dir, &bedRunResult{Bed: "check-foo", CalVer: "2026.275.1200", OK: true, Driver: d})
 	got := readSummary(t, dir)
 	mustContain(t, got, "driver: "+d.Path, "driver record")
+	mustContain(t, got, "driver_version: ", "driver record")
 	mustContain(t, got, "driver_size: ", "driver record")
 	mustContain(t, got, "driver_mtime: ", "driver record")
 	if strings.Contains(got, "stopped:") {

@@ -3,6 +3,8 @@ package check
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,13 +42,73 @@ type bedDriver struct {
 	Path  string
 	Size  int64
 	MTime string
+	// Version is the driver's `charly version` identity — the CalVer stamped into the binary
+	// at build time, and the one field that distinguishes a dev/worktree build from a released
+	// one by VALUE rather than by artifact hash (opencharly/charly#779, item 2).
+	Version string
+}
+
+// buildCalVerLDFlag is the linker variable scripts/bootstrap-charly.sh stamps the binary's
+// CalVer identity into: `-ldflags "-X main.BuildCalVer=<calver>"`. Reading it out of the
+// build info is what lets this plugin report the SAME string `charly version` reports
+// (charly/charly/version.go: CharlyVersion) without importing charly's main package.
+const buildCalVerLDFlag = "main.BuildCalVer="
+
+// charlyBuildVersion reports the running binary's `charly version` identity.
+//
+// It reads THIS process's build info rather than a variable, because the plugin cannot import
+// charly's main package and the CalVer reaches a plugin by no env var and no exported constant
+// (measured: every occurrence in charly is package main's own var, its tests, and the two
+// scripts that pass the flag). ReadBuildInfo is in-process and bounded, which matters because
+// this value is read on the SIGNAL path, where spawning a child would be neither.
+//
+// Main.Version is NOT a substitute: for a build stamped this way it is "(devel)", while the
+// CalVer survives inside the recorded `-ldflags` setting (both measured on a real bootstrap-form
+// build). An unstamped build reports "unknown", which is CharlyVersion()'s own word for one.
+func charlyBuildVersion() string {
+	bi, ok := debug.ReadBuildInfo()
+	if !ok || bi == nil {
+		return "unknown"
+	}
+	return buildVersionFrom(bi.Settings, bi.Main.Version)
+}
+
+// buildVersionFrom is the decision, split out so it is testable against real debug.BuildSetting
+// values: the live read above can only ever observe THIS binary's own settings, so a test that
+// called it alone could not exercise the stamped case at all.
+func buildVersionFrom(settings []debug.BuildSetting, mainVersion string) string {
+	for _, s := range settings {
+		if s.Key == "-ldflags" {
+			if v := buildCalVerFromLDFlags(s.Value); v != "" {
+				return v
+			}
+		}
+	}
+	if mainVersion != "" && mainVersion != "(devel)" {
+		return mainVersion
+	}
+	return "unknown"
+}
+
+// buildCalVerFromLDFlags extracts the CalVer from a recorded -ldflags string, or "" when the
+// string carries no stamp. The value is a whitespace-separated flag list in which the stamp
+// appears as a field of its own after -X (e.g. `-X main.BuildCalVer=2026.277.1533`), and it may
+// sit beside other -X assignments, so the field is matched by prefix rather than parsed
+// positionally.
+func buildCalVerFromLDFlags(ldflags string) string {
+	for _, f := range strings.Fields(ldflags) {
+		if v, found := strings.CutPrefix(f, buildCalVerLDFlag); found {
+			return v
+		}
+	}
+	return ""
 }
 
 // currentBedDriver resolves the active executable. os.Executable() answers for THIS process,
 // which is the point: `command -v charly` answers for the asking shell, not for the process
 // whose argv[0] we are recording.
 func currentBedDriver() bedDriver {
-	d := bedDriver{Path: "unknown"}
+	d := bedDriver{Path: "unknown", Version: charlyBuildVersion()}
 	path, err := os.Executable()
 	if err != nil || path == "" {
 		return d

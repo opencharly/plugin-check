@@ -365,8 +365,19 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// cleanup.go:130-142). bed_verdict.go's registered shutdown hook owns that path.
 	state := beginBedVerdict(d.LogDir, name, d.Calver)
 	defer endBedVerdict(state)
+	// The stderr mirror. THE DEFER ORDER IS THE MECHANISM, not a style choice: the anonymous
+	// writer below is declared LAST so that it runs FIRST, while the capture is still live — a
+	// recovered panic's stack has to reach the file through RecordPanic, because the runtime
+	// prints its own stack only AFTER every deferred function has run, by which time this defer
+	// has already restored fd 2. That restoration is also what keeps a crash visible on the
+	// operator's terminal instead of only in the run dir (#779 item 3).
+	cap := startBedStderrCapture(d.LogDir)
+	defer cap.close()
 	defer func() {
 		r := recover()
+		if r != nil {
+			cap.RecordPanic(r)
+		}
 		recordBedVerdict(d.LogDir, name, state, r, &res, &err)
 		if r != nil {
 			panic(r) // never swallowed: the verdict is recorded, the crash still crashes
@@ -1288,6 +1299,12 @@ func writeBedSummary(dir string, res *bedRunResult) {
 	// which is what made the runs behind opencharly/charly#779 unreproducible.
 	if res.Driver.Path != "" {
 		fmt.Fprintf(&buf, "driver: %s\n", res.Driver.Path)
+		if res.Driver.Version != "" {
+			// The driver's `charly version` identity. Path+size+mtime says WHICH FILE ran it; this
+			// says WHICH BUILD, which is the string a bug report quotes and the only field that
+			// separates a dev/worktree build from a released one by value (#779 item 2).
+			fmt.Fprintf(&buf, "driver_version: %s\n", yamlScalar(res.Driver.Version))
+		}
 		if res.Driver.Size > 0 {
 			fmt.Fprintf(&buf, "driver_size: %d\n", res.Driver.Size)
 		}
@@ -1316,6 +1333,14 @@ func writeBedSummary(dir string, res *bedRunResult) {
 	// run's instruments produced rows; the reference is truthful — the file exists.
 	if _, err := os.Stat(filepath.Join(dir, "evidence.yml")); err == nil {
 		fmt.Fprintln(&buf, "evidence: evidence.yml")
+	}
+	// The stderr mirror (bed_stderr.go) sits beside the summary whenever the run installed one.
+	// Same truthful-reference rule as `evidence:` above, and for the same reason: a run dir that
+	// names a file it did not write is worse than one that names nothing. On the panic path this
+	// is the ONLY place the stack trace survives — the runtime prints its own copy after every
+	// defer has restored fd 2 (#779 item 3).
+	if _, err := os.Stat(filepath.Join(dir, bedStderrLogName)); err == nil {
+		fmt.Fprintf(&buf, "runner_stderr: %s\n", bedStderrLogName)
 	}
 	fmt.Fprintln(&buf, "steps:")
 	var total time.Duration
