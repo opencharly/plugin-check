@@ -387,10 +387,10 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// cleanup.go:130-142). bed_verdict.go's registered shutdown hook owns that path.
 	state := beginBedVerdict(d.LogDir, name, d.Calver)
 	defer endBedVerdict(state)
-	// The stderr mirror. THE DEFER ORDER IS THE MECHANISM, not a style choice: the anonymous
-	// writer below is declared LAST so that it runs FIRST, while the capture is still live — a
+	// The stderr mirror. THE DEFER ORDER IS THE MECHANISM, not a style choice: bedRunGuard is
+	// declared LAST of the three so that it runs FIRST, while the capture is still live — a
 	// recovered panic's stack has to reach the file through RecordPanic, because the runtime
-	// prints its own stack only AFTER every deferred function has run, by which time this defer
+	// prints its own stack only AFTER every deferred function has run, by which time cap.close()
 	// has already restored fd 2. That restoration is also what keeps a crash visible on the
 	// operator's terminal instead of only in the run dir (#779 item 3).
 	cap := startBedStderrCapture(d.LogDir)

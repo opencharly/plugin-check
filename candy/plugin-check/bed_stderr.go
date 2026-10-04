@@ -149,9 +149,10 @@ func (c *bedStderrCapture) Write(p []byte) (int, error) {
 	return c.file.Write(p)
 }
 
-// RecordPanic writes a recovered panic's stack into the mirror. runCheckBed calls it from the
-// deferred writer, before that defer tears the capture down: the runtime's OWN panic print
-// happens after every defer has run, so the tee cannot see it (see the type comment).
+// RecordPanic writes a recovered panic's stack into the mirror. bedRunGuard — the writer that
+// runCheckBed defers last, so it runs first — calls it before that defer tears the capture down:
+// the runtime's OWN panic print happens after every defer has run, so the tee cannot see it (see
+// the type comment).
 func (c *bedStderrCapture) RecordPanic(r any) {
 	if c == nil {
 		return
