@@ -72,7 +72,14 @@ type bedRunState struct {
 	driver bedDriver
 	start  time.Time
 	step   string // the step in flight; "" between steps
-	done   bool   // a verdict has been written for this run
+	// lastStep is the last step ENTERED, and it is never cleared. The step closures clear `step`
+	// with a defer, and a defer RUNS WHILE A PANIC UNWINDS — so by the time the panic arm of the
+	// verdict writer reads the state, `step` is already "" and the one field that says where the
+	// run died would be lost. (Measured, not assumed: see the `panic` subtest of
+	// TestBedVerdictWrittenOnEveryUnwindingExit, which fails on `in_flight_step` without this
+	// field — it reproduces the production closure frame, so the unwind really happens.)
+	lastStep string
+	done     bool // a verdict has been written for this run
 }
 
 var (
@@ -113,20 +120,26 @@ func endBedVerdict(s *bedRunState) {
 }
 
 // enterStep / leaveStep publish the step in flight. Called from the step and phase closures,
-// so the recorded name is the same string the step's own log is keyed by.
+// so the recorded name is the same string the step's own log is keyed by. leaveStep clears the
+// CURRENT step only; lastStep deliberately survives it (see bedRunState).
 func (s *bedRunState) enterStep(name string) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	s.step = name
+	if name != "" {
+		s.lastStep = name
+	}
 	s.mu.Unlock()
 }
 
 func (s *bedRunState) leaveStep() { s.enterStep("") }
 
-// snapshotStep reads the in-flight step under the lock, for the deferred writer's panic and
-// stopped-state records on the main goroutine.
+// snapshotStep reads the CURRENT in-flight step under the lock. This is the SIGNAL path's read
+// (writeStopped): the handler records and then re-raises without unwinding
+// (spec/proc/cleanup.go:130-142), so no closure defer has run and this is the step the process
+// actually died in. It is "" only when the signal arrived between steps.
 func (s *bedRunState) snapshotStep() string {
 	if s == nil {
 		return ""
@@ -134,6 +147,23 @@ func (s *bedRunState) snapshotStep() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.step
+}
+
+// snapshotStepAfterUnwind reads the step that is still the truth AFTER the stack has unwound —
+// the PANIC path's read. It must not be snapshotStep: the step closures clear `step` with a
+// defer, that defer runs while the panic propagates, and the deferred writer only reads the
+// state once the panic has reached it — so by then `step` is "" and the one field that says
+// where the run died would be gone. Falling back to the last step ENTERED restores it.
+func (s *bedRunState) snapshotStepAfterUnwind() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.step != "" {
+		return s.step
+	}
+	return s.lastStep
 }
 
 // onBedShutdown is the shutdown hook body: it runs on the signal-handler goroutine before the
@@ -215,7 +245,9 @@ func recordBedVerdict(dir, bed string, state *bedRunState, r any, res **bedRunRe
 		(*res).FailExitCode = 1
 		(*res).Stopped = true
 		(*res).StoppedReason = fmt.Sprintf("panic: %v", r)
-		(*res).InFlightStep = state.snapshotStep()
+		// After-unwind read, NOT snapshotStep: the step closure's deferred leaveStep has already
+		// cleared the current step on the way here. See snapshotStepAfterUnwind.
+		(*res).InFlightStep = state.snapshotStepAfterUnwind()
 		state.writeVerdictOnce(func() { writeBedSummary(dir, *res) })
 		return
 	}

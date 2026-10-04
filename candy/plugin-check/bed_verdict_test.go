@@ -48,17 +48,35 @@ func TestBedVerdictWrittenOnEveryUnwindingExit(t *testing.T) {
 	t.Run("panic", func(t *testing.T) {
 		dir := t.TempDir()
 		state := &bedRunState{dir: dir, bed: "check-foo", calver: "2026.275.1200"}
-		state.enterStep("check-live")
 		res := &bedRunResult{Bed: "check-foo", CalVer: "2026.275.1200", OK: true}
 		var err error
 
-		recordBedVerdict(dir, "check-foo", state, "runtime error: index out of range", &res, &err)
+		// THE PRODUCTION FRAME, not a shortcut — this subtest must exercise the real UNWIND.
+		// In bed_run.go a step closure publishes itself and clears itself with a defer, and that
+		// defer RUNS WHILE THE PANIC PROPAGATES — before runCheckBed's own deferred writer gets
+		// control and reads the state. An earlier revision of this test called enterStep and then
+		// the writer directly, with no unwind in between, so it passed even though the production
+		// panic path had lost the step entirely: `leaveStep` had already blanked it. Reproducing
+		// the closure shape here is what makes the in_flight_step assertion below load-bearing.
+		stepClosure := func() {
+			state.enterStep("check-live")
+			defer state.leaveStep()
+			panic("runtime error: index out of range")
+		}
+		func() {
+			defer func() {
+				r := recover()
+				recordBedVerdict(dir, "check-foo", state, r, &res, &err)
+			}()
+			stepClosure()
+		}()
 
 		got := readSummary(t, dir)
 		mustContain(t, got, "stopped: true", "panic path")
 		// The reason must survive a real YAML parser: it carries ": ", which unquoted would parse
 		// as nested structure instead of a scalar.
 		mustContain(t, got, `stopped_reason: "panic: runtime error: index out of range"`, "panic path")
+		// The step the run was IN when it died, read after the unwind cleared it.
 		mustContain(t, got, "in_flight_step: check-live", "panic path")
 		mustContain(t, got, "ok: false", "panic path")
 	})
