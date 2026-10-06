@@ -596,24 +596,30 @@ var diagnosticAllowlist = []diagnosticAllowance{
 	{
 		ID:       "mkinitcpio-chroot-warnings",
 		Severity: severityWarning,
-		// The pacstrap bootstrap VM's mkinitcpio/grub build emits four warning lines that
+		// The pacstrap bootstrap VM's mkinitcpio/grub build emits these warning lines that
 		// are the same chroot artifact family as the allowlisted autodetect error: the
 		// chroot has no /etc/vconsole.conf (sd-vconsole falls back), no os-prober (grub
 		// skips other-OS detection), no fsck helpers (mkinitcpio skips fsck-on-boot), and
 		// the aggregate 'errors were encountered' that summarizes the autodetect fallback.
-		Match: regexp.MustCompile(`^==> WARNING: sd-vconsole: "/etc/vconsole\.conf" not found, will use default values$|^Warning: os-prober will not be executed to detect other bootable partitions\.$|^==> WARNING: No fsck helpers found\. fsck will not be run on boot\.$|^==> WARNING: errors were encountered during the build\. The image may not be complete\.$`),
+		// grub emits TWO os-prober-absent lines: the "will not be executed" line always,
+		// and a second "is not installed; EFI BootNext entries will not be filtered" line
+		// on the grub 2.12+ EFI path (the check-dsh-cachyos-vm bed, 2026-10-06).
+		Match: regexp.MustCompile(`^==> WARNING: sd-vconsole: "/etc/vconsole\.conf" not found, will use default values$|^Warning: os-prober will not be executed to detect other bootable partitions\.$|^Warning: os-prober is not installed; EFI BootNext entries will not be filtered against detected OSes, so non-OS entries \(e\.g\. firmware updaters\) may appear in the menu\.$|^==> WARNING: No fsck helpers found\. fsck will not be run on boot\.$|^==> WARNING: errors were encountered during the build\. The image may not be complete\.$`),
 		Why: "The pacstrap bootstrap VM base-image build runs mkinitcpio and grub inside the " +
 			"chroot, which by construction lacks the guest runtime's /etc/vconsole.conf " +
 			"(sd-vconsole falls back to defaults), os-prober (grub skips other-OS detection — " +
 			"the expected boot config is authored declaratively), and fsck helpers (no " +
 			"fsck-on-boot until the guest's own package set installs them at first boot). The " +
-			"fourth line is mkinitcpio's aggregate warning that summarizes the allowlisted " +
-			"autodetect fallback — the image IS created (Initcpio image generation successful) " +
-			"and the guest boots from the kernel-cmdline root device. Observed live in every " +
-			"retained check-cachyos-vm vm-build log; all four are informational chroot " +
-			"defaults with no failure behind them. Inherent to ANY pacstrap bootstrap VM build; " +
-			"suppressing them would mean seeding chroot config that the guest would then " +
-			"inherit incorrectly.",
+			"two os-prober lines are the same absent-in-chroot condition on grub's two code " +
+			"paths — the unconditional 'will not be executed' notice and the EFI-only 'is not " +
+			"installed; EFI BootNext entries will not be filtered' notice — and the guest boots " +
+			"from the declaratively authored config either way. A further line is mkinitcpio's " +
+			"aggregate warning that summarizes the allowlisted autodetect fallback — the image " +
+			"IS created (Initcpio image generation successful) and the guest boots from the " +
+			"kernel-cmdline root device. Observed live in every retained check-cachyos-vm " +
+			"vm-build log; all are informational chroot defaults with no failure behind them. " +
+			"Inherent to ANY pacstrap bootstrap VM build; suppressing them would mean seeding " +
+			"chroot config that the guest would then inherit incorrectly.",
 	},
 	{
 		ID:       "pacman-pacnew-config-notice",

@@ -771,6 +771,7 @@ func TestMkinitcpioChrootWarningsAllowanceIsScoped(t *testing.T) {
 	claimed := []string{
 		"==> WARNING: sd-vconsole: \"/etc/vconsole.conf\" not found, will use default values",
 		"Warning: os-prober will not be executed to detect other bootable partitions.",
+		"Warning: os-prober is not installed; EFI BootNext entries will not be filtered against detected OSes, so non-OS entries (e.g. firmware updaters) may appear in the menu.",
 		"==> WARNING: No fsck helpers found. fsck will not be run on boot.",
 		"==> WARNING: errors were encountered during the build. The image may not be complete.",
 	}
@@ -1122,5 +1123,50 @@ func TestPacmanReinstalledAlreadyCurrentAllowanceIsConditional(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// realGrubOsProberRegion is the VERBATIM grub-configuration region the pacstrap bootstrap VM's
+// vm-build emitted (distro-cachyos/.check/check-dsh-cachyos-vm/2026.279.1749/vm-build.log, lines
+// 1118-1132) — the live artifact this allowance was extended for (plugin-check#81). Both
+// os-prober lines are single physical lines in the real log; the second (`EFI BootNext`) is the
+// one the pre-fix allowance missed, leaving the step at warnings=1.
+const realGrubOsProberRegion = `bash: line 36: nofail: command not found
+Installing for x86_64-efi platform.
+Installation finished. No error reported.
+Generating grub configuration file ...
+Found linux image: /boot/vmlinuz-linux-cachyos
+Found initrd image: /boot/initramfs-linux-cachyos.img
+Warning: os-prober will not be executed to detect other bootable partitions.
+Systems on them will not be added to the GRUB boot configuration.
+Check GRUB_DISABLE_OS_PROBER documentation entry.
+Adding boot menu entry for UEFI Firmware Settings ...
+Warning: os-prober is not installed; EFI BootNext entries will not be filtered against detected OSes, so non-OS entries (e.g. firmware updaters) may appear in the menu.
+Adding boot menu entry for EFI BootNext: Windows Boot Manager (Boot0000)
+Adding boot menu entry for EFI BootNext: Limine (Boot0001)
+Adding boot menu entry for EFI BootNext: UEFI OS (Boot0002)
+done
+`
+
+// TestRealVmBuildGrubRegionIsFullyAllowlisted scans the LIVE vm-build grub-configuration region
+// and requires BOTH os-prober warnings to be claimed by mkinitcpio-chroot-warnings, so the step
+// reaches warnings=0. This is the exact artifact the fix was written for: before the Match
+// extension the second line was an un-allowlisted warning (the surviving warnings=1 on
+// distro-cachyos#125's bed); after it, neither line counts against the step.
+func TestRealVmBuildGrubRegionIsFullyAllowlisted(t *testing.T) {
+	d := scanStepDiagnostics("STEP 1/1: RUN pacstrap /mnt base\n" + realGrubOsProberRegion)
+	if d.Warnings != 0 {
+		t.Fatalf("the real grub region left %d un-allowlisted warning(s); want 0 — the bed's surviving warnings=1:\n%s",
+			d.Warnings, d.failure(defaultDiagnosticPolicy(), "vm-build", "<real log region>"))
+	}
+	// Both os-prober lines, and only they, are claimed by this one allowance.
+	var claimed int
+	for _, f := range d.Findings {
+		if f.AllowID == "mkinitcpio-chroot-warnings" {
+			claimed++
+		}
+	}
+	if claimed != 2 {
+		t.Fatalf("want both os-prober lines claimed by mkinitcpio-chroot-warnings, got %d claims: %+v", claimed, d.Findings)
 	}
 }
