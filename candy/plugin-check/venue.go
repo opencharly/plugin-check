@@ -251,9 +251,11 @@ func checkLocalTarget(tree map[string]spec.DeployNode, name string) (spec.Deploy
 		return spec.DeployNode{}, false
 	}
 	if leaf, venue, ok := resolveLeafVenue(tree, name); ok {
-		if venue == "shell" || venue == "parent" || venue == "none" {
-			return leaf, true
-		}
+		// The LEAF RESOLVED — dispatch on ITS venue, never the root's. The former code fell
+		// through to the root fallback when the resolved leaf was not host-venue, so a dotted
+		// name whose leaf was a pod/kubernetes node under a local ROOT was mis-routed into the
+		// local arm (opencharly/plugin-check#78, requested item 3).
+		return leaf, venue == "shell" || venue == "parent" || venue == "none"
 	}
 	root := name
 	if idx := strings.Index(name, "."); idx > 0 {
@@ -297,4 +299,34 @@ func resolveDeployNodeByPath(tree map[string]spec.DeployNode, name string) (*spe
 		cur = m.Node
 	}
 	return cur, true
+}
+
+// resolveLocalDeployNode resolves a (possibly DOTTED) `kind: local` deploy name to its node and
+// the ROOT node whose host executor drives it.
+//
+// It uses resolveDeployNodeByPath (EXACT-KEY-FIRST), never the in-substrate-only member walk: a
+// NAMESPACE-QUALIFIED deploy key (`charly.check-task`) carries dots that are namespace separators,
+// not member-path separators, so the member walk cannot reach it and the local arm reported
+// "local deployment … not found" for EVERY dotted local bed (opencharly/plugin-check#78) — even
+// though the dispatcher (checkLocalTarget) had already resolved the same name via
+// resolveLeafVenue. One resolver per name shape (R3).
+//
+// rootNode is the node the executor is built from: the node ITSELF for an exact-key match (a
+// deploy-level entity is its own root), else the first segment's node for a genuine member path
+// (`web-pod.web-pod-local` → `web-pod`).
+func resolveLocalDeployNode(tree map[string]spec.DeployNode, name string) (node, rootNode *spec.DeployNode, ok bool) {
+	n, found := resolveDeployNodeByPath(tree, name)
+	if !found || n == nil {
+		return nil, nil, false
+	}
+	if _, exact := tree[name]; exact {
+		return n, n, true
+	}
+	if root, _, cut := strings.Cut(name, "."); cut {
+		if entry, present := tree[root]; present {
+			rn := entry
+			return n, &rn, true
+		}
+	}
+	return n, n, true
 }

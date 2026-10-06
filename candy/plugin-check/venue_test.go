@@ -58,8 +58,12 @@ func newVenueTestTree() map[string]spec.DeployNode {
 		// namespace separators, NOT member-path separators. tree["charly"] does NOT exist, so the
 		// dotted-path walk missed it and checkVmTarget fell through to a container lookup.
 		"charly.check-charly-vm": {Descent: desc("ssh")},
-		"my-local":               {Descent: desc("shell")},
-		"remote-host":            {Descent: desc("shell"), Host: "user@box"},
+		// The LOCAL sibling of the above: a namespace-qualified `kind: local` bed. No `charly`
+		// root exists, so the in-substrate member walk cannot reach it — the opencharly/plugin-check#78
+		// regression (the local arm resolved via the member walk and reported "not found").
+		"charly.check-task": {Descent: desc("shell")},
+		"my-local":          {Descent: desc("shell")},
+		"remote-host":       {Descent: desc("shell"), Host: "user@box"},
 	}
 }
 
@@ -145,6 +149,10 @@ func TestCheckLocalTarget(t *testing.T) {
 		{"my-local", true, ""},            // shell venue (host:local default)
 		{"remote-host", true, "user@box"}, // shell venue carrying host:<remote>
 		{"my-local.child", true, ""},      // dotted root is shell, leaf unresolvable → root fallback
+		// opencharly/plugin-check#78: a NAMESPACE-QUALIFIED local bed (its dots are namespace
+		// separators). checkLocalTarget already resolved it via resolveLeafVenue; the local
+		// ARM's divergent in-substrate resolver is what failed.
+		{"charly.check-task", true, ""},
 		// RCA #12: local-leaf-under-pod — the pod ROOT is not host-venue, but the LEAF (shell) is.
 		{"web-pod.web-pod-local", true, ""},
 		{"web-pod.web-pod-vm", false, ""}, // leaf under a pod root that is itself a vm, not local
@@ -170,6 +178,38 @@ func TestCheckLocalTarget(t *testing.T) {
 func TestCheckLocalTargetEmptyTree(t *testing.T) {
 	if _, ok := checkLocalTarget(nil, "anything"); ok {
 		t.Errorf("checkLocalTarget(nil, …) ok = true, want false")
+	}
+}
+
+// TestResolveLocalDeployNode pins the opencharly/plugin-check#78 fix: the LOCAL arm must resolve a
+// dotted bed the SAME way the dispatcher (checkLocalTarget) does — exact-key-first via
+// resolveDeployNodeByPath — not via the in-substrate-only member walk, which cannot reach a
+// deploy-level entity.
+func TestResolveLocalDeployNode(t *testing.T) {
+	tree := newVenueTestTree()
+
+	// A NAMESPACE-QUALIFIED local bed: dots are namespace separators, not a member path.
+	node, root, ok := resolveLocalDeployNode(tree, "charly.check-task")
+	if !ok || node == nil || root == nil {
+		t.Fatalf("resolveLocalDeployNode(charly.check-task) ok=%v node=%v root=%v, want resolved", ok, node, root)
+	}
+	// PREMISE GUARD: the in-substrate-only walk cannot reach it — the exact regression this fixes.
+	if n := resolveNestedNode(tree, "charly.check-task"); n != nil {
+		t.Fatalf("premise broken: resolveNestedNode reached a namespace-qualified key")
+	}
+
+	// A GENUINE member path: the leaf resolves and the ROOT is its first segment.
+	node, root, ok = resolveLocalDeployNode(tree, "web-pod.web-pod-local")
+	if !ok || node == nil {
+		t.Fatalf("resolveLocalDeployNode(web-pod.web-pod-local) not resolved")
+	}
+	if root == nil || root.Descent == nil || root.Descent.Venue != "container" {
+		t.Fatalf("member-path root = %+v, want the `web-pod` (container) root", root)
+	}
+
+	// Unknown stays unknown.
+	if _, _, ok := resolveLocalDeployNode(tree, "nope.not-here"); ok {
+		t.Fatalf("resolveLocalDeployNode(unknown) ok = true, want false")
 	}
 }
 
