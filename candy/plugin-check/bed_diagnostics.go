@@ -225,6 +225,16 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"own entry per the documented one-package-per-entry pattern.",
 	},
 	{
+		ID:       "cachyos-xz-local-newer-than-repo",
+		Severity: severityWarning,
+		Match:    regexp.MustCompile(`^warning: xz: local \([^)]+\) is newer than [A-Za-z0-9_.-]+ \([^)]+\)$`),
+		Why: "Identical upstream skew to the zstd entry, for xz: the published CachyOS " +
+			"image installs a newer build than the CachyOS repos carry (surfaced live by the " +
+			"distro-cachyos check-dsh-cachyos-vm deploy-add, RCA 2026-10-06 — the SAME " +
+			"transaction that reports binutils/libtool/zstd, whose entries already exist). " +
+			"Listed as its own entry per the documented one-package-per-entry pattern.",
+	},
+	{
 		ID:       "pacman-repo-serves-older-than-installed",
 		Severity: severityWarning,
 		// Scoped to the exact single-package sentence, like the --needed entry above, so a

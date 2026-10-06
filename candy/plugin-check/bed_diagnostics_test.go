@@ -314,6 +314,7 @@ func TestCachyosLocalNewerAllowances(t *testing.T) {
 		"warning: binutils: local (2.44-1) is newer than cachyos-v3 (2.43-2)":  "cachyos-binutils-local-newer-than-repo",
 		"warning: libtool: local (2.5.4-1) is newer than cachyos-v3 (2.5.3-2)": "cachyos-libtool-local-newer-than-repo",
 		"warning: zstd: local (1.5.7-3) is newer than cachyos-v3 (1.5.7-2)":    "cachyos-zstd-local-newer-than-repo",
+		"warning: xz: local (5.8.4-1) is newer than cachyos-v3 (5.8.3-1)":      "cachyos-xz-local-newer-than-repo",
 	}
 	for line, wantID := range claimed {
 		sev, _, ok := classifyDiagnosticLine(line)
