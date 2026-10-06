@@ -771,6 +771,7 @@ func TestMkinitcpioChrootWarningsAllowanceIsScoped(t *testing.T) {
 	claimed := []string{
 		"==> WARNING: sd-vconsole: \"/etc/vconsole.conf\" not found, will use default values",
 		"Warning: os-prober will not be executed to detect other bootable partitions.",
+		"Warning: os-prober is not installed; EFI BootNext entries will not be filtered against detected OSes, so non-OS entries (e.g. firmware updaters) may appear in the menu.",
 		"==> WARNING: No fsck helpers found. fsck will not be run on boot.",
 		"==> WARNING: errors were encountered during the build. The image may not be complete.",
 	}
