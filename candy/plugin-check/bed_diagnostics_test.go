@@ -315,6 +315,9 @@ func TestCachyosLocalNewerAllowances(t *testing.T) {
 		"warning: libtool: local (2.5.4-1) is newer than cachyos-v3 (2.5.3-2)": "cachyos-libtool-local-newer-than-repo",
 		"warning: zstd: local (1.5.7-3) is newer than cachyos-v3 (1.5.7-2)":    "cachyos-zstd-local-newer-than-repo",
 		"warning: xz: local (5.8.4-1) is newer than cachyos-v3 (5.8.3-1)":      "cachyos-xz-local-newer-than-repo",
+		// The openssh line renders against cachyos-CORE-v3 (not cachyos-v3) in the real
+		// log — the entry's Match accepts any repo name, so both spellings claim.
+		"warning: openssh: local (10.6p1-1) is newer than cachyos-core-v3 (10.5p1-1.1)": "cachyos-openssh-local-newer-than-repo",
 	}
 	for line, wantID := range claimed {
 		sev, _, ok := classifyDiagnosticLine(line)
