@@ -157,7 +157,7 @@ func (c *bedStderrCapture) RecordPanic(r any) {
 	if c == nil {
 		return
 	}
-	_, _ = c.Write([]byte(fmt.Sprintf("panic: %v\n%s", r, debug.Stack())))
+	_, _ = fmt.Fprintf(c, "panic: %v\n%s", r, debug.Stack())
 }
 
 // close restores fd 2 and flushes the mirror. Safe on a nil capture, and safe to call once.

@@ -111,10 +111,8 @@ func TestBuildRosterChains_SerializesSharedTokens(t *testing.T) {
 	}
 	chains := buildRosterChains(beds)
 	// nvidia-gpu group (3) serial in ONE chain; test-lock its own; free its own.
-	var sizes []int
 	chainOf := map[string]int{}
 	for i, ch := range chains {
-		sizes = append(sizes, len(ch))
 		for _, b := range ch {
 			chainOf[b.Name] = i
 		}
@@ -127,6 +125,11 @@ func TestBuildRosterChains_SerializesSharedTokens(t *testing.T) {
 	}
 	if chainOf["free"] == chainOf["gpu-1"] {
 		t.Fatal("token-free bed must be in its own chain")
+	}
+	// Exactly 3 chains (the nvidia-gpu group, test-lock, free) — pins the grouping,
+	// not merely the membership, so a regression that splits or merges a chain fails.
+	if len(chains) != 3 {
+		t.Fatalf("buildRosterChains produced %d chains, want 3: %v", len(chains), chainOf)
 	}
 }
 
