@@ -7,7 +7,45 @@
 #
 # Declaring discover: is the whole fix: the candy is scanned, the CUE schema gate
 # applies, and the STOCK `charly box validate` step starts working with no workflow
-# change. This file declares no entities of its own - it only tells charly where to look.
+# change. The `import:` and the two `local:` entities below are this repo's in-repo R10
+# witness for opencharly/plugin-check#78 — see their own comments for the mechanism.
+import:
+    - dottedfix: ./testdata/dotted-local-fixture
+
 discover:
     - path: candy
       recursive: true
+
+# The in-repo R10 witness for opencharly/plugin-check#78. The repo root IMPORTS its own
+# `testdata/dotted-local-fixture` project as the namespace `dottedfix`, so that project's
+# `kind: local` bed is addressed ONLY as the namespace-qualified `dottedfix.dottedfix-bed` —
+# the dotted-key shape the local-arm resolver must handle. This bed drives that resolution
+# through a real `charly check run`, so it aborts at name resolution before the fix and runs
+# the fixture's plan after it.
+check-dotted-local-resolve-app:
+  local:
+    description: bare kind:local template for the dotted-local resolver R10 bed
+    candy: []
+
+check-dotted-local-resolve:
+  local:
+    from: check-dotted-local-resolve-app
+    host: local
+    disposable: true
+    description: >-
+      R10 witness for opencharly/plugin-check#78: a disposable kind:local bed whose plan drives
+      `charly check live dottedfix.dottedfix-bed` — a NAMESPACE-QUALIFIED kind:local bed. Before the
+      fix the local arm re-resolved that name with the in-substrate-only member walk, which cannot
+      reach a dotted top-level key, so the command exited non-zero with `local deployment
+      "dottedfix.dottedfix-bed" not found` and never ran a step; after the fix the fixture bed's
+      plan runs and prints its step id.
+    plan:
+      - check: a namespace-qualified kind:local bed resolves and reaches its plan
+        id: dotted-local-resolves
+        exit_status: 0
+        stderr:
+          - contains: dottedfix-plan-ran
+        context: [runtime]
+        command:
+          command: ${CHARLY_BIN} check live dottedfix.dottedfix-bed
+          in_container: false

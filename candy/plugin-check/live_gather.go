@@ -545,20 +545,8 @@ func pluginCheckLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedP
 // venue — the port of charly/check_cmd.go's checkLiveLocal.
 func pluginCheckLiveLocal(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, tree map[string]spec.DeployNode, dir string, req spec.CheckRunRequest) (kit.CheckRunReply, error) {
 	dotted := strings.Contains(req.Name, ".")
-	var node, rootNode *spec.DeployNode
-	if dotted {
-		node = resolveNestedNode(tree, req.Name)
-		root, _, _ := strings.Cut(req.Name, ".")
-		if entry, ok := tree[root]; ok {
-			rn := entry
-			rootNode = &rn
-		}
-	} else if entry, ok := tree[req.Name]; ok {
-		n := entry
-		node = &n
-		rootNode = &n
-	}
-	if node == nil {
+	node, rootNode, ok := resolveLocalDeployNode(tree, req.Name)
+	if !ok {
 		return kit.CheckRunReply{}, fmt.Errorf("check live: local deployment %q not found", req.Name)
 	}
 

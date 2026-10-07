@@ -298,3 +298,33 @@ func resolveDeployNodeByPath(tree map[string]spec.DeployNode, name string) (*spe
 	}
 	return cur, true
 }
+
+// resolveLocalDeployNode resolves a (possibly DOTTED) `kind: local` deploy name to its node and
+// the ROOT node whose host executor drives it.
+//
+// It uses resolveDeployNodeByPath (EXACT-KEY-FIRST), never the in-substrate-only member walk: a
+// NAMESPACE-QUALIFIED deploy key (`charly.check-task`) carries dots that are namespace separators,
+// not member-path separators, so the member walk cannot reach it and the local arm reported
+// "local deployment … not found" for EVERY dotted local bed (opencharly/plugin-check#78) — even
+// though the dispatcher (checkLocalTarget) had already resolved the same name via
+// resolveLeafVenue. One resolver per name shape (R3).
+//
+// rootNode is the node the executor is built from: the node ITSELF for an exact-key match (a
+// deploy-level entity is its own root), else the first segment's node for a genuine member path
+// (`web-pod.web-pod-local` → `web-pod`).
+func resolveLocalDeployNode(tree map[string]spec.DeployNode, name string) (node, rootNode *spec.DeployNode, ok bool) {
+	n, found := resolveDeployNodeByPath(tree, name)
+	if !found || n == nil {
+		return nil, nil, false
+	}
+	if _, exact := tree[name]; exact {
+		return n, n, true
+	}
+	if root, _, cut := strings.Cut(name, "."); cut {
+		if entry, present := tree[root]; present {
+			rn := entry
+			return n, &rn, true
+		}
+	}
+	return n, n, true
+}
