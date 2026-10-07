@@ -29,6 +29,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,6 +47,11 @@ import (
 type bedRunOpts struct {
 	Keep      bool // don't tear the bed down after the run (--keep / --keep-venue)
 	NoRebuild bool // skip the fresh-update R10 re-verify step (--no-rebuild; forced by anchored mode)
+	// KeepOnFailure retains the deployed target (and its members) when the run FAILS, so the
+	// dead venue can be inspected (--keep-on-failure). Retention is an EXPLICIT opt-in: without
+	// this flag a failed bed's venue is torn down exactly as a passing one's is
+	// (opencharly/plugin-check#75).
+	KeepOnFailure bool
 
 	// §5.3 snapshot-anchored mode (see anchored.go for the decision table):
 	Anchor    string            // --anchor <name>: revert this golden-disk snapshot before the checks
@@ -194,6 +200,52 @@ func vmBedDestroyArgs(d spec.CheckBedReply, opts bedRunOpts, snap *spec.VmSnapsh
 		argv = append(argv, "--disk")
 	}
 	return argv
+}
+
+// retainVenueOnFailure reports whether a FAILED bed's deployed target (and its members) is
+// deliberately kept for inspection instead of being torn down — the ONE retention decision, read
+// by the failure tail and re-decided nowhere else.
+//
+// Retention is an EXPLICIT opt-in (opencharly/plugin-check#75, the operator's correction on that
+// thread). The venue half of teardown now has the same reach the session half already has through
+// its defer, so the DEFAULT for a run that dies mid-step is the teardown a passing run gets.
+// `--keep` / `--keep-venue` / a bed's own `keep_venue:` policy already mean "do not tear this
+// down" (they force opts.Keep); `--keep-on-failure` adds the narrower "keep it, but only to
+// inspect a failure", and a root's own `ephemeral.keep_on_failure:` is the authored form of that
+// same request — the score path already honours it (live_scoring.go's ephemeralKeepOnFailure), so
+// the bed runner reads it rather than inventing a second retention rule.
+//
+// `!root.IsDisposable()` is not a fallback: autonomous destroy is authorized ONLY on a root
+// explicitly marked `disposable: true` (the project rulebook, "Disposable-Only Autonomy"), so a
+// root that is not disposable is never destroyed by an unattended failure tail.
+func retainVenueOnFailure(opts bedRunOpts, root spec.DeployNode) bool {
+	if opts.Keep || opts.KeepOnFailure {
+		return true
+	}
+	if root.Ephemeral != nil && root.Ephemeral.KeepOnFailure {
+		return true
+	}
+	return !root.IsDisposable()
+}
+
+// bedFailedVenue is the ONE act of the failure tail's venue decision: either keep the deployed
+// target (and its members) and print the operator's inspect/destroy hints, or tear it down through
+// the SAME teardown a passing run uses. Either way it returns the caller's ORIGINAL step error:
+// the teardown is best-effort on this path, so a failed `vm destroy` must never replace the step
+// failure the operator needs to read — it is reported as a warning instead.
+//
+// Named rather than inlined into fail() for the reason bedRunGuard documents: the decision IS the
+// thing under test, and a test that replicated an inline closure could never notice the decision
+// being deleted from production.
+func bedFailedVenue(w io.Writer, name string, d spec.CheckBedReply, repoOverride string, opts bedRunOpts, root spec.DeployNode, teardown func() error, stepErr error) error {
+	if retainVenueOnFailure(opts, root) {
+		printDebugRetentionNotice(w, name, d, repoOverride)
+		return stepErr
+	}
+	if err := teardown(); err != nil {
+		fmt.Fprintf(w, "warning: venue teardown after failure %s: %v\n", name, err)
+	}
+	return stepErr
 }
 
 // bedStep is one emitted `charly` step in a bed run: a step name + its argv.
@@ -677,9 +729,13 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		return nil
 	}
 
-	// cleanup tears the disposable bed's DEPLOYED TARGET down (suppressed by --keep).
-	// Runtime and member cleanup are independently recorded, and either failure fails the bed; the
-	// session's locks/lease/env are still released by the teardown defer on every path.
+	// cleanup tears the bed's DEPLOYED TARGET down (suppressed by --keep / --keep-on-failure).
+	// It is the ONE venue-teardown body, reached from the success tail AND from the failure tail
+	// (fail() and the panic-path defer below), so a run that dies mid-step reclaims its venue
+	// exactly as a passing run does (opencharly/plugin-check#75). Runtime and member cleanup are
+	// independently recorded, and either failure fails the bed on the SUCCESS path; the failure
+	// path reports it as a warning so the original step error survives. The session's
+	// locks/lease/env are still released by the teardown defer on every path.
 	cleanup := func() error {
 		if opts.Keep {
 			return nil
@@ -731,8 +787,33 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 
 	// deployed flips true once the bed's target actually exists (after deploy-add).
 	deployed := false
-	// fail is the SINGLE failure tail: record the summary, LEAVE THE BED RUNNING for
-	// debugging (the check-live failure is already on record), and return the error.
+
+	// venueTornDown makes the venue teardown idempotent: the same run reaches it from the success
+	// tail AND from every unwinding failure tail (fail() and the panic-path defer below), and a
+	// second `vm destroy`/`remove --purge` for a target that is already gone would be a blind
+	// retry, not a fix (R4).
+	venueTornDown := false
+	// tearDownVenue is the ONE venue-teardown owner: the venue half of the every-exit-path
+	// guarantee the session half already has through the bedTeardown defer above. It is exactly
+	// the teardown a passing run has always run — nested children in reverse deploy order, then
+	// the root verb, then deploykit.TearDownMembers — so a `disposable: true` root and its members
+	// cannot outlive a step failure and wait for some later run of the SAME bed to reclaim them.
+	// Retention for inspection is an explicit opt-in; see retainVenueOnFailure.
+	//
+	// It does NOT cover the SIGNAL path, and it cannot: proc.InstallSignalHandler re-raises with
+	// the default disposition, so nothing unwinds and no deferred function runs
+	// (spec/proc/cleanup.go:130-142; bed_verdict.go states the same bound for the verdict writer),
+	// and SIGKILL is uncatchable. On that path the venue stays up, which is why `check stop` still
+	// prints the scoped destroy verb.
+	tearDownVenue := func() error {
+		if venueTornDown || !deployed {
+			return nil
+		}
+		venueTornDown = true
+		return cleanup()
+	}
+	// fail is the SINGLE failure tail: record the outcome, dispose of the venue unless retention
+	// was explicitly requested, and return the step error the caller needs to read.
 	fail := func(format string, args ...any) (*bedRunResult, error) {
 		res.OK = false
 		if res.FailExitCode == 0 {
@@ -740,11 +821,16 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		}
 		// No write here: the deferred writer records this return, and it runs later (after
 		// teardown), so the summary it writes is strictly more complete than this one was (#779).
-		if deployed {
-			printDebugRetentionNotice(os.Stderr, name, d, res.RepoOverride)
+		stepErr := fmt.Errorf(format, args...)
+		if !deployed {
+			return res, stepErr
 		}
-		return res, fmt.Errorf(format, args...)
+		return res, bedFailedVenue(os.Stderr, name, d, res.RepoOverride, opts, bedNode, tearDownVenue, stepErr)
 	}
+	// The unwinding paths that do NOT route through fail(): a panic reaches bedRunGuard (which
+	// records it and re-panics) with the venue still up unless this defer disposes of it. It runs
+	// on the normal tail too, where the explicit teardown below has already run and it is a no-op.
+	defer func() { _ = tearDownVenue() }()
 
 	// Instrument phase bracket: BUILD — around the image/domain build steps (the deploy-level
 	// member builds + Steps 1+2 below). Start before the first build step; the stop runs
@@ -847,7 +933,9 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 				return fail("vm create %s: %w", d.VMTemplate, err)
 			}
 		}
-		deployed = true // VM domain exists — keep it on any later failure
+		// VM domain exists — the failure tail now disposes of it unless retention was explicitly
+		// requested (opencharly/plugin-check#75).
+		deployed = true
 		// Anchored mode reuses the venue: the domain is already deployed from the
 		// fresh lane, so skip waitReady + deploy-add (the deploy plugin's prepare-
 		// venue would try to `vm create` the existing domain and fail). The
@@ -878,7 +966,9 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		if err := step("deploy-add", bedAdd(name)...); err != nil {
 			return fail("deploy add %s: %w", name, err)
 		}
-		deployed = true // CR registered — keep it on any later failure
+		// CR registered — the failure tail now disposes of it unless retention was explicitly
+		// requested (opencharly/plugin-check#75).
+		deployed = true
 		waitReady()
 		// Nested HOST-ROOTED (kind:local) children deploy host-side after the root;
 		// the kubevirt plugin's own PostApply handles in-guest children.
@@ -908,7 +998,9 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		if err := step("deploy-add", addArgs...); err != nil {
 			return fail("deploy add %s: %w", name, err)
 		}
-		deployed = true // target registered — keep it on any later failure
+		// target registered — the failure tail now disposes of it unless retention was explicitly
+		// requested (opencharly/plugin-check#75).
+		deployed = true
 		// kind:local + external apply candies in place during deploy add; pod beds
 		// need `charly config` + `charly start`.
 		if !isInPlace {
@@ -1191,10 +1283,12 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		return fail("evidence phase %s: %w", name, err)
 	}
 
-	// Step 6: tear down (suppressed by --keep). Cleanup is part of the acceptance contract.
-	// A teardown-phase instrument's stop runs AFTER the teardown steps (its capture window
+	// Step 6: tear down (suppressed by --keep / --keep-on-failure through the owner's own gate).
+	// Cleanup is part of the acceptance contract, and on THIS path a teardown failure fails the
+	// bed — the failure tail only warns, because there the step error is the one to read. A
+	// teardown-phase instrument's stop runs AFTER the teardown steps (its capture window
 	// IS the teardown); the bracket pairs with the start above on the same keep gate.
-	if err := cleanup(); err != nil {
+	if err := tearDownVenue(); err != nil {
 		return fail("clean up %s: %w", name, err)
 	}
 	if !opts.Keep {
@@ -1241,12 +1335,14 @@ func checkStepCommandSummary(argv []string) string {
 	return strings.Join(words, " ")
 }
 
-// printDebugRetentionNotice tells the operator that a FAILED bed was left running for
-// inspection, with the target-appropriate inspect + destroy commands. repoOverride is the
+// printDebugRetentionNotice tells the operator that a FAILED bed's venue was deliberately LEFT
+// RUNNING for inspection, with the target-appropriate inspect + destroy commands. It is printed
+// only on the retention path: when the failure tail tears the venue down (the default, see
+// retainVenueOnFailure) there is nothing left running to point at. repoOverride is the
 // bed's own auto-superproject `<repo>=<dir>` pair (res.RepoOverride, captured from the
 // session — not process env, which the roster no longer mutates): it is carried in the
 // inspect hint so the command reproduces the bed's actual LOCAL-candy state.
-func printDebugRetentionNotice(w *os.File, name string, d spec.CheckBedReply, repoOverride string) {
+func printDebugRetentionNotice(w io.Writer, name string, d spec.CheckBedReply, repoOverride string) {
 	live := "charly check live " + name
 	if repoOverride != "" {
 		live = proc.RepoOverrideEnv + "='" + repoOverride + "' " + live
