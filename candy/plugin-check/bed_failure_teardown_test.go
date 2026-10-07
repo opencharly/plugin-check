@@ -20,9 +20,9 @@ func disposableRoot() spec.DeployNode {
 	return spec.DeployNode{Disposable: &yes}
 }
 
-// TestRetainVenueOnFailure pins the DECISION: which failures keep the venue, and which dispose of
-// it. Kept separate from the act below so the policy is readable as a table.
-func TestRetainVenueOnFailure(t *testing.T) {
+// TestKeepVenue pins the DECISION: which venues are kept, and which are disposed of. Kept separate
+// from the acts below so the policy is readable as a table.
+func TestKeepVenue(t *testing.T) {
 	ephemeral := spec.DeployNode{Ephemeral: &spec.EphemeralLifetime{KeepOnFailure: true}}
 	ordinary := spec.DeployNode{}
 	cases := []struct {
@@ -32,18 +32,84 @@ func TestRetainVenueOnFailure(t *testing.T) {
 		want bool
 	}{
 		{"disposable root, no retention flag → dispose", bedRunOpts{}, disposableRoot(), false},
-		{"--keep-on-failure → retain", bedRunOpts{KeepOnFailure: true}, disposableRoot(), true},
-		{"--keep (already meant 'do not tear down') → retain", bedRunOpts{Keep: true}, disposableRoot(), true},
-		{"keep_venue: policy forces Keep → retain", bedRunOpts{Keep: true, KeepVenue: true}, disposableRoot(), true},
-		{"ephemeral.keep_on_failure (the score path's own field) → retain", bedRunOpts{}, ephemeral, true},
-		{"root not marked disposable is never destroyed autonomously → retain", bedRunOpts{}, ordinary, true},
+		{"--keep-on-failure → keep", bedRunOpts{KeepOnFailure: true}, disposableRoot(), true},
+		{"--keep (already meant 'do not tear down') → keep", bedRunOpts{Keep: true}, disposableRoot(), true},
+		{"keep_venue: policy forces Keep → keep", bedRunOpts{Keep: true, KeepVenue: true}, disposableRoot(), true},
+		{"ephemeral.keep_on_failure (the score path's own field) → keep", bedRunOpts{}, ephemeral, true},
+		{"root not marked disposable is never destroyed unattended → keep", bedRunOpts{}, ordinary, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := retainVenueOnFailure(tc.opts, tc.root); got != tc.want {
-				t.Errorf("retainVenueOnFailure() = %v, want %v", got, tc.want)
+			if got := keepVenue(tc.opts, tc.root); got != tc.want {
+				t.Errorf("keepVenue() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestBedVenueTeardown_RefusesWhenTheVenueIsKept is the block-1 regression: the ONE owner must read
+// the SAME decision as the failure tail. The defect was a defer that called the teardown on a run
+// whose failure tail had just kept the venue, so `--keep-on-failure` printed "left running for
+// debugging" and then destroyed the target anyway.
+func TestBedVenueTeardown_RefusesWhenTheVenueIsKept(t *testing.T) {
+	cases := []struct {
+		name     string
+		state    venueTeardownState
+		opts     bedRunOpts
+		root     spec.DeployNode
+		wantCall int
+	}{
+		{"disposable root, default → dispose", venueTeardownState{deployed: true}, bedRunOpts{}, disposableRoot(), 1},
+		{"--keep-on-failure → keep, no destroy", venueTeardownState{deployed: true}, bedRunOpts{KeepOnFailure: true}, disposableRoot(), 0},
+		{"--keep → keep, no destroy", venueTeardownState{deployed: true}, bedRunOpts{Keep: true}, disposableRoot(), 0},
+		{"non-disposable root → keep, no destroy", venueTeardownState{deployed: true}, bedRunOpts{}, spec.DeployNode{}, 0},
+		{"never deployed → nothing to do", venueTeardownState{}, bedRunOpts{}, disposableRoot(), 0},
+		{"already torn down → no second destroy (R4)", venueTeardownState{deployed: true, tornDown: true}, bedRunOpts{}, disposableRoot(), 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			state := tc.state
+			if err := bedVenueTeardown(&state, tc.opts, tc.root, func() error {
+				calls++
+				return nil
+			}); err != nil {
+				t.Fatalf("bedVenueTeardown: %v", err)
+			}
+			if calls != tc.wantCall {
+				t.Fatalf("teardown calls = %d, want %d", calls, tc.wantCall)
+			}
+			if tc.wantCall == 1 && !state.tornDown {
+				t.Error("a destructive teardown must mark the state torn down, so the owner's second caller is a no-op")
+			}
+		})
+	}
+}
+
+// TestBedFailedVenue_ThenTheOwnerRefuses is the unit-level reproduction of the full failing path:
+// the failure tail keeps the venue under --keep-on-failure, and the every-unwinding-path defer that
+// runs after it (same state, same decision) must NOT destroy it.
+func TestBedFailedVenue_ThenTheOwnerRefuses(t *testing.T) {
+	stepErr := errors.New("check-live exited 2")
+	var out bytes.Buffer
+	state := &venueTeardownState{deployed: true}
+	calls := 0
+	teardown := func() error { calls++; return nil }
+
+	got := bedFailedVenue(&out, "check-x", spec.CheckBedReply{IsVM: true}, "", bedRunOpts{KeepOnFailure: true}, disposableRoot(), teardown, stepErr)
+	// ... and then the deferred owner runs, exactly as runCheckBed's defer does.
+	if derr := bedVenueTeardown(state, bedRunOpts{KeepOnFailure: true}, disposableRoot(), teardown); derr != nil {
+		t.Fatalf("bedVenueTeardown: %v", derr)
+	}
+
+	if !errors.Is(got, stepErr) {
+		t.Errorf("returned error = %v, want the original step error %v", got, stepErr)
+	}
+	if calls != 0 {
+		t.Fatalf("venue teardown calls = %d, want 0: --keep-on-failure must survive the deferred owner", calls)
+	}
+	if !strings.Contains(out.String(), "left running for debugging") {
+		t.Errorf("retention notice missing although the venue was kept:\n%s", out.String())
 	}
 }
 
