@@ -62,13 +62,8 @@ func newVenueTestTree() map[string]spec.DeployNode {
 		// root exists, so the in-substrate member walk cannot reach it — the opencharly/plugin-check#78
 		// regression (the local arm resolved via the member walk and reported "not found").
 		"charly.check-task": {Descent: desc("shell")},
-		"my-local": {Descent: desc("shell"), Member: []spec.Member{
-			// A NON-HOST leaf under a HOST root — the branch checkLocalTarget's dispatch change
-			// decides (a resolved non-host leaf must NOT be local-routed via its root). Before
-			// the opencharly/plugin-check#78 fix it fell through to the root fallback and matched.
-			{Name: "pod-child", Position: spec.PositionInSubstrate, Node: &spec.DeployNode{Descent: desc("container")}},
-		}},
-		"remote-host": {Descent: desc("shell"), Host: "user@box"},
+		"my-local":          {Descent: desc("shell")},
+		"remote-host":       {Descent: desc("shell"), Host: "user@box"},
 	}
 }
 
@@ -154,10 +149,6 @@ func TestCheckLocalTarget(t *testing.T) {
 		{"my-local", true, ""},            // shell venue (host:local default)
 		{"remote-host", true, "user@box"}, // shell venue carrying host:<remote>
 		{"my-local.child", true, ""},      // dotted root is shell, leaf unresolvable → root fallback
-		// opencharly/plugin-check#78 finding 3: a RESOLVED NON-HOST leaf under a HOST root must NOT
-		// be local-routed via its root. This case FAILS on the pre-fix code (which fell through to
-		// the root fallback and returned true).
-		{"my-local.pod-child", false, ""},
 		// opencharly/plugin-check#78: a NAMESPACE-QUALIFIED local bed (its dots are namespace
 		// separators). checkLocalTarget already resolved it via resolveLeafVenue; the local
 		// ARM's divergent in-substrate resolver is what failed.

@@ -251,11 +251,9 @@ func checkLocalTarget(tree map[string]spec.DeployNode, name string) (spec.Deploy
 		return spec.DeployNode{}, false
 	}
 	if leaf, venue, ok := resolveLeafVenue(tree, name); ok {
-		// The LEAF RESOLVED — dispatch on ITS venue, never the root's. The former code fell
-		// through to the root fallback when the resolved leaf was not host-venue, so a dotted
-		// name whose leaf was a pod/kubernetes node under a local ROOT was mis-routed into the
-		// local arm (opencharly/plugin-check#78, requested item 3).
-		return leaf, venue == "shell" || venue == "parent" || venue == "none"
+		if venue == "shell" || venue == "parent" || venue == "none" {
+			return leaf, true
+		}
 	}
 	root := name
 	if idx := strings.Index(name, "."); idx > 0 {

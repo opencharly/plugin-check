@@ -7,7 +7,8 @@
 #
 # Declaring discover: is the whole fix: the candy is scanned, the CUE schema gate
 # applies, and the STOCK `charly box validate` step starts working with no workflow
-# change. This file declares no entities of its own - it only tells charly where to look.
+# change. The `import:` and the two `local:` entities below are this repo's in-repo R10
+# witness for opencharly/plugin-check#78 — see their own comments for the mechanism.
 import:
     - dottedfix: ./testdata/dotted-local-fixture
 
