@@ -7,8 +7,8 @@
 #
 # Declaring discover: is the whole fix: the candy is scanned, the CUE schema gate
 # applies, and the STOCK `charly box validate` step starts working with no workflow
-# change. The `import:` and the two `local:` entities below are this repo's in-repo R10
-# witness for opencharly/plugin-check#78 — see their own comments for the mechanism.
+# change. The `import:` and the `local:` entities below are this repo's in-repo R10
+# witnesses (opencharly/plugin-check#78 and #86) — see their own comments.
 import:
     - dottedfix: ./testdata/dotted-local-fixture
 
@@ -48,4 +48,50 @@ check-dotted-local-resolve:
         context: [runtime]
         command:
           command: ${CHARLY_BIN} check live dottedfix.dottedfix-bed
+          in_container: false
+
+# The in-repo R10 witness for opencharly/plugin-check#86. `check-nonhost-leaf` is a HOST-venue
+# (`kind: local`) entity carrying an in-substrate member that is a NON-host `pod`, so the dotted
+# name `check-nonhost-leaf.check-nonhost-leaf-pod` resolves its LEAF to a container venue while its
+# ROOT is host-venue — exactly the shape `checkLocalTarget`'s dispatch decides. Before the fix the
+# resolved non-host leaf fell through to the host root's fallback, the name was local-routed, the
+# (empty) local plan succeeded and the nested command exited 0; after the fix the POD arm owns the
+# name and reports the deliberately un-started container, which is the assertion below.
+check-nonhost-leaf-app:
+  local:
+    description: bare kind:local template for the non-host-leaf dispatch witness bed
+    candy: []
+
+check-nonhost-leaf:
+  local:
+    description: >-
+      HOST root carrying the in-substrate NON-host (pod) member the #86 dispatch witness targets.
+      It is deliberately NOT a template (a local body carrying a member decodes as a deploy node),
+      so it exists only to be the dotted name's ROOT: `check-nonhost-leaf.check-nonhost-leaf-pod`
+      resolves a container-venue LEAF under a host-venue root.
+    candy: []
+    check-nonhost-leaf-pod:
+      pod:
+        description: the NON-host LEAF — a container-venue member under a host root, never started
+        image: alpine:3.20
+
+check-nonhost-leaf-route:
+  local:
+    from: check-nonhost-leaf-app
+    host: local
+    disposable: true
+    description: >-
+      R10 witness for opencharly/plugin-check#86: `charly check live check-nonhost-leaf.check-nonhost-leaf-pod`
+      must dispatch on the RESOLVED LEAF's venue (the pod arm) instead of falling through to the
+      host root. The assertion is the routing's observable consequence — the pod arm refusing the
+      container it was never asked to start, where the pre-fix local arm quietly succeeded.
+    plan:
+      - check: a resolved NON-host leaf under a HOST root is dispatched to its own venue, not local
+        id: nonhost-leaf-routed-to-its-venue
+        exit_status: 1
+        stderr:
+          - contains: is not running
+        context: [runtime]
+        command:
+          command: ${CHARLY_BIN} check live check-nonhost-leaf.check-nonhost-leaf-pod
           in_container: false
