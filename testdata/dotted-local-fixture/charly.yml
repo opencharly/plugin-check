@@ -1,0 +1,28 @@
+# Fixture project for the in-repo R10 bed of opencharly/plugin-check#78.
+#
+# The repo-root charly.yml IMPORTS this project under the namespace `dottedfix`, so its
+# `kind: local` bed is reachable ONLY by the NAMESPACE-QUALIFIED name
+# `dottedfix.dottedfix-bed` — the dotted-key shape the local-arm resolver must handle.
+# Its dots are namespace separators, NOT a member path, and NO `dottedfix` ROOT node
+# exists in the resolved tree, so the in-substrate-only member walk cannot reach it
+# (the exact precondition of the bug).
+dottedfix-app:
+  local:
+    description: bare kind:local template for the dotted-local resolver fixture
+    candy: []
+
+dottedfix-bed:
+  local:
+    from: dottedfix-app
+    host: local
+    disposable: true
+    description: >-
+      Fixture `kind: local` bed that exists to be resolved by its namespace-qualified
+      name `dottedfix.dottedfix-bed`. Its plan is a single deterministic check, so a live
+      run is cheap AND its step id in the output proves the plan was reached rather than
+      aborting at name resolution.
+    plan:
+      - check: the fixture bed's plan was reached and ran
+        id: dottedfix-plan-ran
+        command: "true"
+        context: [runtime]
