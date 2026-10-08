@@ -21,11 +21,11 @@ func disposableRoot() spec.DeployNode {
 }
 
 // TestKeepVenueOnSuccess pins the SUCCESS tail's decision: it is the PRE-CHANGE gate exactly
-// (`opts.Keep`), so a passing run disposes of its venue under `--keep-on-failure`, under a root's
-// `ephemeral.keep_on_failure:`, and for a root that is not marked disposable — no success-path
-// behaviour changed by this PR (round-5 block).
+// (`opts.Keep`), so a passing run disposes of its venue even under `--keep-on-failure` — no
+// success-path behaviour changed by this PR (round-5 block). The predicate takes no root by
+// construction, so the root-scoped arms (`ephemeral.keep_on_failure:`, `disposable:`) belong to the
+// FAILURE path and are pinned there, in TestKeepVenueOnFailure and in the two cross-checks below.
 func TestKeepVenueOnSuccess(t *testing.T) {
-	ephemeral := spec.DeployNode{Ephemeral: &spec.EphemeralLifetime{KeepOnFailure: true}}
 	cases := []struct {
 		name string
 		opts bedRunOpts
@@ -35,7 +35,6 @@ func TestKeepVenueOnSuccess(t *testing.T) {
 		{"--keep → keep", bedRunOpts{Keep: true}, true},
 		{"keep_venue: policy forces Keep → keep", bedRunOpts{Keep: true, KeepVenue: true}, true},
 		{"--keep-on-failure alone → NOT kept on a passing run", bedRunOpts{KeepOnFailure: true}, false},
-		{"ephemeral.keep_on_failure of the root → NOT kept on a passing run", bedRunOpts{}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -52,7 +51,16 @@ func TestKeepVenueOnSuccess(t *testing.T) {
 	if !keepVenueOnFailure(bedRunOpts{}, spec.DeployNode{}) {
 		t.Error("failure path must keep a non-disposable root (Disposable-Only Autonomy)")
 	}
-	_ = ephemeral
+	// The root's own ephemeral arm belongs to the failure path: the same request that is ignored by
+	// the success gate keeps the venue when the run fails.
+	keepOnFailureRoot := disposableRoot()
+	keepOnFailureRoot.Ephemeral = &spec.EphemeralLifetime{KeepOnFailure: true}
+	if keepVenueOnSuccess(bedRunOpts{}) {
+		t.Error("root-scoped retention must not leak into the success gate")
+	}
+	if !keepVenueOnFailure(bedRunOpts{}, keepOnFailureRoot) {
+		t.Error("root's ephemeral.keep_on_failure must keep the venue on the FAILURE path")
+	}
 }
 
 // TestKeepVenueOnFailure pins the FAILURE-scoped decision: the same table, plus the two requests
