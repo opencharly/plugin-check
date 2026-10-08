@@ -43,6 +43,10 @@ type CheckRunCmd struct {
 	// bed-path flags (ignored on the iterate: path).
 	Keep      bool `name:"keep" help:"check beds: don't tear the bed down after the run"`
 	NoRebuild bool `name:"no-rebuild" help:"check beds: skip the fresh-update R10 re-verify step (R10 acceptance gate)"`
+	// Retention of a FAILED bed's venue is an explicit opt-in: without this flag the failure tail
+	// disposes of the deployed target (and its members) exactly as a passing run does, so an
+	// aborted bed cannot leave a live disposable target behind (opencharly/plugin-check#75).
+	KeepOnFailure bool `name:"keep-on-failure" help:"check beds: keep the deployed target (and its members) running when the run FAILS, for inspection (default: tear it down)"`
 	// §5.3 snapshot-anchored mode (VM beds): revert the named golden-disk
 	// snapshot before the checks (the operator's FRESH lane — a run without
 	// --anchor — captures it on_finalize), keep the venue between batch runs, and
@@ -152,11 +156,12 @@ func checkRunBedOpts(c *CheckRunCmd) (bedRunOpts, error) {
 		return bedRunOpts{}, err
 	}
 	return bedRunOpts{
-		Keep:      c.Keep || c.KeepVenue,
-		NoRebuild: c.NoRebuild || c.Anchor != "",
-		Anchor:    c.Anchor,
-		KeepVenue: c.KeepVenue,
-		Vars:      vars,
+		Keep:          c.Keep || c.KeepVenue,
+		NoRebuild:     c.NoRebuild || c.Anchor != "",
+		KeepOnFailure: c.KeepOnFailure,
+		Anchor:        c.Anchor,
+		KeepVenue:     c.KeepVenue,
+		Vars:          vars,
 	}, nil
 }
 
