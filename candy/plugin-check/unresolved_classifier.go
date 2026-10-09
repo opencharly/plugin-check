@@ -34,8 +34,10 @@ import (
 // where that candy is present. Narrowing it per-candy would turn a legitimate skip into a false
 // dead-assertion failure, which is the one error this classifier must not make.
 //
-// A nil or empty envelope yields an empty set — the conservative answer, since nothing is then known
-// to be declared.
+// A nil envelope yields nil — "the host cannot answer" — which is NOT an empty set. An envelope that
+// exists but declares nothing yields an EMPTY set, and the two are treated differently by
+// installUnresolvedClassifier; conflating them would turn every gather that never loaded a project
+// into one that fails steps over a vocabulary it never read.
 // A NIL return means "this gather has no resolved project, so the host cannot answer at all" — it
 // is NOT the same as an empty set, which means "the project declares nothing". The distinction is
 // load-bearing: see installUnresolvedClassifier.
