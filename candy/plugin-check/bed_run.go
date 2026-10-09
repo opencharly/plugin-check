@@ -159,6 +159,23 @@ func bedAdd(args ...string) []string {
 	return append([]string{"deploy", "add"}, append(args, "--dev-local-pkg")...)
 }
 
+// deployKeyForBed maps a bed's ROSTER address to the DEPLOY KEY the deploy phase creates.
+//
+// A namespaced bed is addressed `<ns>.<name>` by a roster while its deploy is keyed
+// `<ns>/<name>` (spec.DeployKey). `charly deploy add` performs that conversion, but
+// `charly config` / `charly start` take the deploy key itself, so handing them the roster
+// address makes them miss the deploy, degrade the box name to the key, and end up asking for a
+// ref nothing ever built. This is the same class of defect `ResolveBedForRoot` fixed one phase
+// earlier for `charly box build`: a name that does not resolve from the project root. The
+// conversion is `spec.DeployKey`'s own, reused rather than re-spelled (R3), and a local bed
+// with no namespace is returned unchanged.
+func deployKeyForBed(name string) string {
+	if ns, rest, ok := strings.Cut(name, "."); ok && ns != "" && rest != "" {
+		return spec.DeployKey(ns, rest)
+	}
+	return name
+}
+
 // configStartArgs builds the `charly config`/`charly start` argv for a pod bed's config+start
 // steps. An add_candy: overlay bed's FRESH artifact to verify is the overlay `deploy-add` just
 // built + persisted (resolved via the persisted resolved_image (DeployNode.ResolvedImage),
@@ -1034,7 +1051,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// kind:local + external apply candies in place during deploy add; pod beds
 		// need `charly config` + `charly start`.
 		if !isInPlace {
-			configArgs, startArgs := configStartArgs(name, d.ImageTag, d.HasAddCandy)
+			configArgs, startArgs := configStartArgs(deployKeyForBed(name), d.ImageTag, d.HasAddCandy)
 			if err := step("config", configArgs...); err != nil {
 				return fail("config %s: %w", name, err)
 			}
