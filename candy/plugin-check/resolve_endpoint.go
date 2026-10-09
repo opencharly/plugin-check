@@ -26,7 +26,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 
 	"github.com/opencharly/sdk"
@@ -112,7 +111,13 @@ func resolveImageLabelForHost(ctx context.Context, req *pb.InvokeRequest) (*pb.I
 	if err != nil {
 		return nil, err
 	}
-	if !venue.IsContainer() || strings.Contains(in.Box, ".") {
+	// A dot in the name does NOT make a venue un-inspectable. resolveCheckVenue's own dotted branch
+	// (venue.go) already returns a `Kind: container` venue for a ROOT-namespaced deploy like
+	// `<ns>.<bed>` — the same shape a nested deploy has — so rejecting on the dot alone discarded a
+	// venue the resolver had just resolved, and `charly check live` reported
+	// "container <name> is not running" for a container that was running. The venue's own kind is
+	// the correct and sufficient guard.
+	if !venue.IsContainer() {
 		return nil, fmt.Errorf("container for %s is not running", in.Box)
 	}
 	imageRef, err := container.ContainerImageRef(venue.Engine, venue.Name)
