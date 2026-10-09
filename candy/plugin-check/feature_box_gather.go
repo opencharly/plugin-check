@@ -104,7 +104,7 @@ func pluginCheckRunFeatureBox(ex *sdk.Executor, ctx context.Context, req spec.Ch
 		HasRuntime:           hasRuntime,
 		Distros:              meta.Distro,
 		SkipDeterministicRun: true,
-	}, nil /* no resolved project on this gather — see unresolved_classifier.go */)
+	}, declaredVocabularyFor(ex, ctx, req.Dir))
 	results := kit.RunPlan(ctx, runner, meta.Description, req.Strict)
 	return kit.CheckRunReply{Image: imageRef, Steps: results, Header: fmt.Sprintf("Feature run (image, build scope): %s", imageRef)}, nil
 }

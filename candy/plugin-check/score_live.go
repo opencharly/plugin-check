@@ -67,6 +67,7 @@ func pluginRunCheckLive(ex *sdk.Executor, ctx context.Context, scoreName string,
 
 	dir, _ := os.Getwd()
 	var deployRoots map[string]spec.DeployNode
+	var declared map[string]bool
 	// Best-effort, matching the core original's own merged-tree-read(cwd) tolerance (a missing/
 	// absent project never fails scoring — a plan whose steps address a bare venue by container
 	// name still scores via pluginResolveScoringChain's roots==nil fallback). A nil ex (unit
@@ -74,6 +75,9 @@ func pluginRunCheckLive(ex *sdk.Executor, ctx context.Context, scoreName string,
 	if ex != nil {
 		if rp, rerr := resolvedProject(ex, ctx, dir); rerr == nil && rp != nil {
 			deployRoots = derefDeployTree(rp.Deploy)
+			// The SAME envelope already carries the vocabulary the scored leg needs — one resolution,
+			// two consumers (opencharly/plugin-check#95).
+			declared = declaredVarNames(rp)
 		}
 	}
 
@@ -81,7 +85,7 @@ func pluginRunCheckLive(ex *sdk.Executor, ctx context.Context, scoreName string,
 		if len(bucket) == 0 {
 			continue
 		}
-		pluginScoreOneVenueBucket(ex, ctx, dir, bucket, deployRoots, out, verdictByID)
+		pluginScoreOneVenueBucket(ex, ctx, dir, bucket, deployRoots, declared, out, verdictByID)
 	}
 
 	// Cyclic scored steps get a deterministic fail verdict.
@@ -109,7 +113,7 @@ func pluginRunCheckLive(ex *sdk.Executor, ctx context.Context, scoreName string,
 // scoring executor chain, builds the bucket's runner, then runs each step — appending verdicts to
 // out and recording them in verdictByID. The port of charly/check_runner_live.go's
 // scoreOnePodBucket.
-func pluginScoreOneVenueBucket(ex *sdk.Executor, ctx context.Context, dir string, bucket []scoredStep, deployRoots map[string]spec.DeployNode, out *spec.CheckRunResults, verdictByID map[string]string) {
+func pluginScoreOneVenueBucket(ex *sdk.Executor, ctx context.Context, dir string, bucket []scoredStep, deployRoots map[string]spec.DeployNode, declared map[string]bool, out *spec.CheckRunResults, verdictByID map[string]string) {
 	venue := bucket[0].step.Venue
 
 	var ephemeralCleanup func(bool)
@@ -181,7 +185,7 @@ func pluginScoreOneVenueBucket(ex *sdk.Executor, ctx context.Context, dir string
 				}
 				return vex, map[string]string{}, false, nil
 			}),
-		}, nil /* no resolved project on this gather — see unresolved_classifier.go */)
+		}, declared)
 	}
 
 	for _, e := range bucket {
