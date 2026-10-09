@@ -125,6 +125,13 @@ type bedRunResult struct {
 }
 
 // summaryStatus formats a bool as a human-readable status word.
+func summaryStatus(ok bool) string {
+	if ok {
+		return "PASS"
+	}
+	return "FAIL"
+}
+
 // rollupSkippedRe matches the inner engine's own count in its rollup line — the one spec/report
 // prints as "N step(s): X passed, Y failed, Z skipped". Anchored on the ", Z skipped" tail so a step
 // NAMED something-with-skipped-in-it cannot be read as a count.
@@ -144,13 +151,6 @@ func skippedFromRollup(logText string) int {
 		return 0
 	}
 	return n
-}
-
-func summaryStatus(ok bool) string {
-	if ok {
-		return "PASS"
-	}
-	return "FAIL"
 }
 
 // prereqSkipStepName names the lone summary step a prerequisite skip records. The GPU gate
