@@ -93,6 +93,31 @@ func marshalEndpointReply(reply spec.CheckEndpointResolveReply) (*pb.InvokeReply
 // guarded to the plain (non-nested) container venue, since a non-container or dotted-nested name
 // has no podman-inspectable image label. Empty value (no live deployment, or the label absent) is a
 // valid result, not an error.
+// imageLabelRefusal reports why THIS host cannot read an OCI image label for box, or "" when it can.
+// It exists as a pure function because its two reasons are different things that were once reported
+// as one, untrue, third thing (opencharly/plugin-check#96):
+//
+//   - the venue is not a container at all — there is no container to read a label from;
+//   - the box name carries a namespace separator, i.e. a NESTED container (an instance inside
+//     another instance), whose name this host spells "<base>_<child>" (spec/exec.NestedContainerName).
+//     The container IS RUNNING; what this host cannot do is read an image LABEL from it.
+//
+// "container for %s is not running" was true of neither, and it sent readers hunting for a process
+// that exists. The refusal is real; only the report was wrong.
+func imageLabelRefusal(venue *CheckVenue, box string) string {
+	if venue == nil || !venue.IsContainer() {
+		kind := ""
+		if venue != nil {
+			kind = venue.Kind
+		}
+		return fmt.Sprintf("check-image-label: %s is not a container venue (kind %q) — there is no container to read a label from", box, kind)
+	}
+	if strings.Contains(box, ".") {
+		return fmt.Sprintf("check-image-label: %s resolves to the NESTED container %s — a nested container's image label is not readable from this host (a limitation of the label lookup, not a missing container)", box, venue.Name)
+	}
+	return ""
+}
+
 func resolveImageLabelForHost(ctx context.Context, req *pb.InvokeRequest) (*pb.InvokeReply, error) {
 	var in spec.CheckImageLabelResolveRequest
 	if len(req.GetParamsJson()) > 0 {
@@ -112,8 +137,8 @@ func resolveImageLabelForHost(ctx context.Context, req *pb.InvokeRequest) (*pb.I
 	if err != nil {
 		return nil, err
 	}
-	if !venue.IsContainer() || strings.Contains(in.Box, ".") {
-		return nil, fmt.Errorf("container for %s is not running", in.Box)
+	if why := imageLabelRefusal(venue, in.Box); why != "" {
+		return nil, fmt.Errorf("%s", why)
 	}
 	imageRef, err := container.ContainerImageRef(venue.Engine, venue.Name)
 	if err != nil {
