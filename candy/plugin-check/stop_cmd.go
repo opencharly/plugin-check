@@ -101,7 +101,10 @@ func (c *CheckStopCmd) Run() error {
 // A bed run that is interrupted mid-sequence can leave a pod or a libvirt domain up,
 // and charly already has scoped verbs for both. Removing them from here would make a
 // "stop" silently destructive, and the deploy may be exactly what the operator wants
-// to inspect — the same reason a FAILED bed leaves its target running for debugging.
+// to inspect. This is the SIGNAL path, where nothing unwinds and no teardown can run
+// (bed_verdict.go states the same bound) — distinct from a bed that FAILS a step, which
+// now disposes of its own venue unless `--keep-on-failure` asked to retain it
+// (opencharly/plugin-check#75).
 func (c *CheckStopCmd) reportResidue(cwd string) error {
 	runDir := filepath.Join(cwd, ".check", c.Bed)
 	if _, err := os.Stat(runDir); err == nil {
