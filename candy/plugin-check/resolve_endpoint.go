@@ -87,6 +87,18 @@ func marshalEndpointReply(reply spec.CheckEndpointResolveReply) (*pb.InvokeReply
 	return &pb.InvokeReply{ResultJson: out}, nil
 }
 
+// venueIsInspectable reports whether a resolved venue has a podman-inspectable image label.
+//
+// Only a CONTAINER venue does. A dot in the requested name does NOT make a venue un-inspectable:
+// resolveCheckVenue's own dotted branch (venue.go) already returns a `Kind: container` venue for a
+// ROOT-namespaced deploy like `<ns>.<bed>` — the same shape a nested deploy has — so testing the raw
+// name for a dot discarded a venue the resolver had just resolved, and `charly check live` reported
+// "container for <name> is not running" for a container that was running. The venue's own kind is
+// the correct and sufficient guard, and it is the ONE place this decision is made (R3).
+func venueIsInspectable(v *CheckVenue) bool {
+	return v != nil && v.IsContainer()
+}
+
 // resolveImageLabelForHost serves one verb:check-resolve OpResolveImageLabel: read one raw OCI
 // label off box/instance's live image. Mirrors the former core-side resolveImageLabelFor exactly —
 // guarded to the plain (non-nested) container venue, since a non-container or dotted-nested name
@@ -111,13 +123,7 @@ func resolveImageLabelForHost(ctx context.Context, req *pb.InvokeRequest) (*pb.I
 	if err != nil {
 		return nil, err
 	}
-	// A dot in the name does NOT make a venue un-inspectable. resolveCheckVenue's own dotted branch
-	// (venue.go) already returns a `Kind: container` venue for a ROOT-namespaced deploy like
-	// `<ns>.<bed>` — the same shape a nested deploy has — so rejecting on the dot alone discarded a
-	// venue the resolver had just resolved, and `charly check live` reported
-	// "container <name> is not running" for a container that was running. The venue's own kind is
-	// the correct and sufficient guard.
-	if !venue.IsContainer() {
+	if !venueIsInspectable(venue) {
 		return nil, fmt.Errorf("container for %s is not running", in.Box)
 	}
 	imageRef, err := container.ContainerImageRef(venue.Engine, venue.Name)
