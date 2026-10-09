@@ -81,7 +81,7 @@ func pluginCheckLiveKubeVirt(ex *sdk.Executor, ctx context.Context, rp *spec.Res
 		CandyDirs:      candyDirsFromEnvelope(rp),
 		HostVars:       hostVars,
 		TargetResolver: pluginVenueResolver(ex, ctx, dir, req.Instance),
-	})
+	}, declaredVarNames(rp))
 	results := kit.RunPlan(ctx, runner, set, false)
 	return kit.CheckRunReply{Steps: results, Header: fmt.Sprintf("KubeVirt: charly-%s (managed ssh alias)", req.Name)}, nil
 }

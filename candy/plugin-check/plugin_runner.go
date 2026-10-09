@@ -51,7 +51,11 @@ func (v *kitVerbs) SetRunner(kr *kit.Runner) {
 	v.VerbResolver.SetRunner(kr)
 }
 
-func newPluginCheckRunner(ex *sdk.Executor, ctx context.Context, env spec.CheckEnv, cfg kit.RunnerConfig) *kit.Runner {
+// declared is the resolved project's declared variable vocabulary (declaredVarNames). It is a
+// REQUIRED parameter rather than an optional one: every call site has to say which project it is
+// running against, so a site that cannot answer fails to compile instead of silently regressing to
+// the pre-charly#865 behaviour of skipping a dead assertion.
+func newPluginCheckRunner(ex *sdk.Executor, ctx context.Context, env spec.CheckEnv, cfg kit.RunnerConfig, declared map[string]bool) *kit.Runner {
 	// env.MCPProvide is the deployment's mcp_provide declarations (the live-VM gathers seed it
 	// from the resolved vm template) — captured onto the resolver so RunVerb's FRESH snapshot
 	// (pluginSnapshotCheckEnv, built from runner state on every call) carries it too, not just
@@ -79,6 +83,10 @@ func newPluginCheckRunner(ex *sdk.Executor, ctx context.Context, env spec.CheckE
 		cfg.ProbeTimeout = poll.ReadinessProvider().PerAttemptFor(vmshared.PollLocal)
 	}
 	kr := kit.NewRunner(cfg)
+	// The host's answer to the walk's ONE unanswerable question — can any mode or scope of THIS
+	// project supply this unresolved name? — installed HERE so every construction site gets it by
+	// construction and none can forget it (unresolved_classifier.go; opencharly/charly#865).
+	installUnresolvedClassifier(kr, declared)
 	pvr.SetRunner(kr)
 	return kr
 }

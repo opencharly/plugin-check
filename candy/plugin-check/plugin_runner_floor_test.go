@@ -18,7 +18,7 @@ import (
 // fallback (that kit-internal defensive const is never hit by this constructor, since it
 // always sets ProbeTimeout from the readiness table first).
 func TestNewPluginCheckRunner_WiresReadinessFloor(t *testing.T) {
-	r := newPluginCheckRunner(nil, nil, spec.CheckEnv{}, kit.RunnerConfig{})
+	r := newPluginCheckRunner(nil, nil, spec.CheckEnv{}, kit.RunnerConfig{}, nil /* no project in a floor test */)
 	if got := r.ProbeNeverHang(&spec.Op{}); got != vmshared.ReadinessPerAttemptFallback {
 		t.Errorf("newPluginCheckRunner default: got %s, want readiness floor %s", got, vmshared.ReadinessPerAttemptFallback)
 	}

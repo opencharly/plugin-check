@@ -35,7 +35,7 @@ func TestNewPluginCheckRunner_VerbResolverTracksLiveExec(t *testing.T) {
 	runner := newPluginCheckRunner(nil, context.Background(), spec.CheckEnv{Mode: "live"}, kit.RunnerConfig{
 		Exec: wantExec,
 		Mode: kit.ModeLive,
-	})
+	}, nil /* no project in a test */)
 
 	pvr, ok := runner.Verbs().(*kitVerbs)
 	if !ok {
@@ -90,7 +90,7 @@ func TestPluginSnapshotCheckEnv_ReflectsSwapVenue(t *testing.T) {
 		Mode:           kit.ModeLive,
 		Box:            groupRoot,
 		TargetResolver: resolver,
-	})
+	}, nil /* no project in a test */)
 	pvr, ok := runner.Verbs().(*kitVerbs)
 	if !ok {
 		t.Fatalf("runner.Verbs() = %T, want *kitVerbs", runner.Verbs())
@@ -138,7 +138,7 @@ func TestPluginSnapshotCheckEnv_CarriesVmMcpProvide(t *testing.T) {
 	}, kit.RunnerConfig{
 		Exec: &kit.SSHExecutor{Host: "charly-cachyos-vm", ConnectTimeout: 10},
 		Mode: kit.ModeLive,
-	})
+	}, nil /* no project in a test */)
 	pvr, ok := vmRunner.Verbs().(*kitVerbs)
 	if !ok {
 		t.Fatalf("vm runner Verbs() = %T, want *kitVerbs", vmRunner.Verbs())
@@ -168,7 +168,7 @@ func TestPluginSnapshotCheckEnv_CarriesVmMcpProvide(t *testing.T) {
 	}, kit.RunnerConfig{
 		Exec: &kit.NestedExecutor{Jump: kit.NestedJump{Kind: kit.JumpContainerExec, Engine: "podman"}},
 		Mode: kit.ModeLive,
-	})
+	}, nil /* no project in a test */)
 	cpvr, ok := containerRunner.Verbs().(*kitVerbs)
 	if !ok {
 		t.Fatalf("container runner Verbs() = %T, want *kitVerbs", containerRunner.Verbs())

@@ -181,7 +181,7 @@ func pluginScoreOneVenueBucket(ex *sdk.Executor, ctx context.Context, dir string
 				}
 				return vex, map[string]string{}, false, nil
 			}),
-		})
+		}, nil /* no resolved project on this gather — see unresolved_classifier.go */)
 	}
 
 	for _, e := range bucket {
