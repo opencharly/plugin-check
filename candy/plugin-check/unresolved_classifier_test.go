@@ -63,10 +63,10 @@ func TestInstallUnresolvedClassifier(t *testing.T) {
 	}
 }
 
-// TestDeclaredVocabularyForFallsBackConservatively pins the ONE place a check-run gather obtains the
-// declared vocabulary (opencharly/plugin-check#95). The six gathers that used to pass nil must never
-// invent an answer: an unresolvable project is a skip-class answer, never a failure built from a lookup
-// error. A nil executor (no reverse channel) and an empty dir both mean "no project to resolve".
+// TestVocabularyDirFallsBackToCwd pins the fallback this whole change rests on. `charly check box`
+// dispatches Mode:"box" with an Image and no Dir at all, so a helper that read only the request's dir
+// was inert on the path it was written for — measured, not assumed: the first version of the fix was
+// run against a disposable box and the bed still reported SKIP (opencharly/plugin-check#95).
 func TestVocabularyDirFallsBackToCwd(t *testing.T) {
 	// The request's own dir wins when it has one.
 	if got := vocabularyDir("/some/project"); got != "/some/project" {

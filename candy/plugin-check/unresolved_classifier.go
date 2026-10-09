@@ -42,9 +42,6 @@ import (
 // exists but declares nothing yields an EMPTY set, and the two are treated differently by
 // installUnresolvedClassifier; conflating them would turn every gather that never loaded a project
 // into one that fails steps over a vocabulary it never read.
-// A NIL return means "this gather has no resolved project, so the host cannot answer at all" — it
-// is NOT the same as an empty set, which means "the project declares nothing". The distinction is
-// load-bearing: see installUnresolvedClassifier.
 // projectDirFromCwd returns the process working directory — the project root an Invoke was
 // dispatched in. Empty on error, which every caller reads as "no project to resolve".
 func projectDirFromCwd() string {
@@ -94,6 +91,9 @@ func declaredVocabularyFor(ex *sdk.Executor, ctx context.Context, dir string) ma
 	return declaredVarNames(rp)
 }
 
+// A NIL return means "this gather has no resolved project, so the host cannot answer at all" — it
+// is NOT the same as an empty set, which means "the project declares nothing". The distinction is
+// load-bearing: see installUnresolvedClassifier.
 func declaredVarNames(rp *spec.ResolvedProject) map[string]bool {
 	if rp == nil {
 		return nil
