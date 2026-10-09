@@ -2,7 +2,6 @@ package check
 
 import (
 	"context"
-	"github.com/opencharly/sdk"
 	"testing"
 
 	"github.com/opencharly/sdk/kit"
@@ -68,11 +67,28 @@ func TestInstallUnresolvedClassifier(t *testing.T) {
 // declared vocabulary (opencharly/plugin-check#95). The six gathers that used to pass nil must never
 // invent an answer: an unresolvable project is a skip-class answer, never a failure built from a lookup
 // error. A nil executor (no reverse channel) and an empty dir both mean "no project to resolve".
+func TestVocabularyDirFallsBackToCwd(t *testing.T) {
+	// The request's own dir wins when it has one.
+	if got := vocabularyDir("/some/project"); got != "/some/project" {
+		t.Errorf("a request Dir must win, got %q", got)
+	}
+	// An EMPTY dir is not a refusal: it falls back to the process working directory. This is the
+	// whole difference between a working fix and an inert one — `charly check box` sends Mode:"box"
+	// with no Dir at all, and the first version of this change asked for req.Dir and therefore still
+	// skipped the box path. Asserted against the live cwd so the fallback is proven, not assumed.
+	if got := vocabularyDir(""); got != projectDirFromCwd() {
+		t.Errorf("an empty dir must fall back to the cwd (%q), got %q", projectDirFromCwd(), got)
+	}
+	if projectDirFromCwd() == "" {
+		t.Fatal("the test cannot prove the fallback from an empty cwd")
+	}
+}
+
+// TestDeclaredVocabularyForFallsBackConservatively pins that a nil executor yields nothing: with no
+// reverse channel there is nothing to ask, so the answer stays the conservative skip rather than a
+// failure invented from the absence of a lookup.
 func TestDeclaredVocabularyForFallsBackConservatively(t *testing.T) {
 	if got := declaredVocabularyFor(nil, context.Background(), "/some/project"); got != nil {
 		t.Errorf("a nil executor must yield no vocabulary, got %v", got)
-	}
-	if got := declaredVocabularyFor(&sdk.Executor{}, context.Background(), ""); got != nil {
-		t.Errorf("an empty dir must yield no vocabulary, got %v", got)
 	}
 }
