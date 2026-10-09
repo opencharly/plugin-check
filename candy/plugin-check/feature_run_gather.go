@@ -132,7 +132,7 @@ func pluginCheckRunFeatureLivePod(ex *sdk.Executor, ctx context.Context, rp *spe
 		SkipDeterministicRun: true,
 		CandyDirs:            candyDirsFromEnvelope(rp),
 		Grader:               grader,
-	})
+	}, declaredVarNames(rp))
 	results := kit.RunPlan(ctx, runner, meta.Description, req.Strict)
 	grading := "agent-graded prose"
 	if req.NoAgent {
@@ -242,7 +242,7 @@ func pluginCheckRunFeatureLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec
 		HostVars:             hostVars,
 		TargetResolver:       pluginVenueResolver(ex, ctx, dir, req.Instance),
 		Grader:               grader,
-	})
+	}, declaredVarNames(rp))
 	results := kit.RunPlan(ctx, runner, set, req.Strict)
 	grading := "agent-graded prose"
 	if req.NoAgent {
