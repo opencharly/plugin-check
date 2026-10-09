@@ -1,6 +1,10 @@
 package check
 
 import (
+	"context"
+	"os"
+
+	"github.com/opencharly/sdk"
 	"github.com/opencharly/sdk/kit"
 	"github.com/opencharly/spec/spec"
 )
@@ -41,6 +45,34 @@ import (
 // A NIL return means "this gather has no resolved project, so the host cannot answer at all" — it
 // is NOT the same as an empty set, which means "the project declares nothing". The distinction is
 // load-bearing: see installUnresolvedClassifier.
+// projectDirFromCwd returns the process working directory — the project root an Invoke was
+// dispatched in. Empty on error, which every caller reads as "no project to resolve".
+func projectDirFromCwd() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return dir
+}
+
+// declaredVocabularyFor resolves the project at dir and returns its declared-variable vocabulary, or
+// nil when it cannot be resolved. This is the ONE place a check-run gather obtains the vocabulary, so
+// the six gathers that were left passing nil (opencharly/plugin-check#95) cannot each invent their own
+// answer — and so a site that genuinely has no project keeps the conservative nil rather than a guess.
+//
+// Best-effort on purpose, matching every other resolution on these paths: an unresolvable project is a
+// skip-class answer (UnresolvedConditional), never a failure invented from a lookup error.
+func declaredVocabularyFor(ex *sdk.Executor, ctx context.Context, dir string) map[string]bool {
+	if ex == nil || dir == "" {
+		return nil
+	}
+	rp, err := resolvedProject(ex, ctx, dir)
+	if err != nil || rp == nil {
+		return nil
+	}
+	return declaredVarNames(rp)
+}
+
 func declaredVarNames(rp *spec.ResolvedProject) map[string]bool {
 	if rp == nil {
 		return nil

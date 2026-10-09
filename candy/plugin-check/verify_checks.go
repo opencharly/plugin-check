@@ -125,7 +125,7 @@ func verifyChecksRunPlan(ex *sdk.Executor, ctx context.Context, venueExec spec.D
 		VerifyOnly:     in.VerifyOnly,
 		HostVars:       hostVars,
 		TargetResolver: pluginVenueResolver(ex, ctx, in.Dir, in.Instance),
-	}, nil /* no resolved project on this gather — see unresolved_classifier.go */)
+	}, declaredVocabularyFor(ex, ctx, in.Dir))
 	set := &kit.LabelDescriptionSet{Deploy: []kit.LabeledDescription{{Origin: "local:" + in.Box, Plan: plan}}}
 	return kit.RunPlan(ctx, runner, set, false)
 }

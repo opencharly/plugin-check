@@ -1,6 +1,8 @@
 package check
 
 import (
+	"context"
+	"github.com/opencharly/sdk"
 	"testing"
 
 	"github.com/opencharly/sdk/kit"
@@ -59,5 +61,18 @@ func TestInstallUnresolvedClassifier(t *testing.T) {
 	installUnresolvedClassifier(kr, nil)
 	if got := kr.ClassifyUnresolved(op, "NOT_DECLARED"); got != kit.UnresolvedConditional {
 		t.Errorf("a nil (UNKNOWN) vocabulary = %v, want the conservative UnresolvedConditional", got)
+	}
+}
+
+// TestDeclaredVocabularyForFallsBackConservatively pins the ONE place a check-run gather obtains the
+// declared vocabulary (opencharly/plugin-check#95). The six gathers that used to pass nil must never
+// invent an answer: an unresolvable project is a skip-class answer, never a failure built from a lookup
+// error. A nil executor (no reverse channel) and an empty dir both mean "no project to resolve".
+func TestDeclaredVocabularyForFallsBackConservatively(t *testing.T) {
+	if got := declaredVocabularyFor(nil, context.Background(), "/some/project"); got != nil {
+		t.Errorf("a nil executor must yield no vocabulary, got %v", got)
+	}
+	if got := declaredVocabularyFor(&sdk.Executor{}, context.Background(), ""); got != nil {
+		t.Errorf("an empty dir must yield no vocabulary, got %v", got)
 	}
 }
