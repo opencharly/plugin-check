@@ -2,9 +2,11 @@ package check
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	pb "github.com/opencharly/spec/proto"
+	"github.com/opencharly/spec/spec"
 )
 
 // resolve_endpoint_test.go — pins the drain-after-Invoke ordering invariant team-lead flagged as
@@ -102,5 +104,42 @@ func TestDrainEndpointCleanups_SequentialInvokesDoNotLeak(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("calls after second (empty) drain = %d, want still 1 (no leak/re-fire)", calls)
+	}
+}
+
+// TestImageLabelRefusal pins the two reasons the label lookup refuses, and the fact that they are
+// DIFFERENT — the defect in opencharly/plugin-check#96 was reporting both as one false third thing
+// ("container for %s is not running") about a container that was up.
+func TestImageLabelRefusal(t *testing.T) {
+	ctr := func(name string) *CheckVenue {
+		return &CheckVenue{Kind: "container", Name: name, Descriptor: spec.VenueDescriptor{Kind: "container"}}
+	}
+	cases := []struct {
+		name      string
+		venue     *CheckVenue
+		box       string
+		mustMatch []string
+		mustMiss  []string
+	}{
+		{"a plain container is readable", ctr("charly-app"), "app", nil, []string{"not a container", "NESTED"}},
+		{"a nested container names the limitation, not a missing process",
+			ctr("charly-ns_app"), "ns.app", []string{"NESTED", "charly-ns_app", "not readable"}, []string{"is not running"}},
+		{"a non-container venue says so", &CheckVenue{Kind: "ssh"}, "app", []string{"not a container"}, []string{"is not running", "NESTED"}},
+		{"a nil venue says so too", nil, "app", []string{"not a container"}, []string{"is not running"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := imageLabelRefusal(tc.venue, tc.box)
+			for _, want := range tc.mustMatch {
+				if !strings.Contains(got, want) {
+					t.Errorf("refusal = %q, want it to contain %q", got, want)
+				}
+			}
+			for _, bad := range tc.mustMiss {
+				if strings.Contains(got, bad) {
+					t.Errorf("refusal = %q, must NOT say %q", got, bad)
+				}
+			}
+		})
 	}
 }
