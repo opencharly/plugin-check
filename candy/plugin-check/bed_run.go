@@ -40,6 +40,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -77,6 +79,11 @@ type stepResult struct {
 	Name     string
 	Duration time.Duration
 	OK       bool
+	// Skipped is how many of this step's inner plan steps SKIPPED — read from the phase's own rollup
+	// line, which the inner engine already prints. Without it the record said `ok: true` for a phase
+	// that asserted nothing, which is charly#865's sentence one layer up: "a check that cannot run is
+	// not a check that passed" (opencharly/plugin-check#93).
+	Skipped int
 	// Diag is the scan of this step's retained log (bed_diagnostics.go). The exit code alone
 	// is NOT the verdict: a tool that treats its own failure as non-fatal — pacman refusing an
 	// install scriptlet, the RCA case — exits 0 with the failure sitting in the log, and R10
@@ -123,6 +130,27 @@ func summaryStatus(ok bool) string {
 		return "PASS"
 	}
 	return "FAIL"
+}
+
+// rollupSkippedRe matches the inner engine's own count in its rollup line — the one spec/report
+// prints as "N step(s): X passed, Y failed, Z skipped". Anchored on the ", Z skipped" tail so a step
+// NAMED something-with-skipped-in-it cannot be read as a count.
+var rollupSkippedRe = regexp.MustCompile(`,\s*(\d+)\s+skipped`)
+
+// skippedFromRollup reads how many inner steps skipped, from text this file already has in hand: the
+// phase branch scans the SAME logText for diagnostics one line before it decides `ok`. Returns 0 when
+// no rollup line is present, which is the honest answer for a phase that has no rollup at all — it is
+// NOT a claim that nothing skipped.
+func skippedFromRollup(logText string) int {
+	m := rollupSkippedRe.FindStringSubmatch(logText)
+	if m == nil {
+		return 0
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // prereqSkipStepName names the lone summary step a prerequisite skip records. The GPU gate
@@ -734,7 +762,8 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		diag := scanStepDiagnostics(logText)
 		diagFail := diag.failure(diagPolicy, stepName, logPath)
 		ok := cerr == nil && reply.ExitCode == 0 && diagFail == ""
-		res.Step = append(res.Step, stepResult{Name: stepName, Duration: dur, OK: ok, Diag: diag})
+		res.Step = append(res.Step, stepResult{Name: stepName, Duration: dur, OK: ok, Diag: diag,
+			Skipped: skippedFromRollup(logText)})
 		if !ok {
 			res.OK = false
 			if res.FailExitCode == 0 {
@@ -1489,6 +1518,9 @@ func writeBedSummary(dir string, res *bedRunResult) {
 		fmt.Fprintf(&buf, "  - name: %s\n", s.Name)
 		fmt.Fprintf(&buf, "    duration_seconds: %d\n", int(s.Duration.Round(time.Second)/time.Second))
 		fmt.Fprintf(&buf, "    ok: %t\n", s.OK)
+		// Emitted for EVERY step, like `ok:` itself: a reader must be able to tell "this step skipped
+		// nothing" from "this record predates the field", and an absent line cannot say which.
+		fmt.Fprintf(&buf, "    skipped: %d\n", s.Skipped)
 		writeStepDiagnostics(&buf, "    ", s.Diag)
 		total += s.Duration
 	}

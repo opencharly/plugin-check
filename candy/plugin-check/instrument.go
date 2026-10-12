@@ -417,7 +417,7 @@ func instrumentRunnerFor(ctx context.Context, ex *sdk.Executor, d *spec.CheckBed
 		cfg.Exec = exec
 		return newPluginCheckRunner(ex, ctx, spec.CheckEnv{
 			Mode: "live", Box: venue, Venue: d.BedDomain, VenueKind: venueKindOf(d),
-		}, cfg, nil /* no resolved project on this gather — see unresolved_classifier.go */), nil
+		}, cfg, declaredVocabularyFor(ex, ctx, projectDirFromCwd())), nil
 	}
 	// Member venue: the live resolver (the members-up walk already proved it reachable).
 	dir, _ := os.Getwd()
@@ -429,7 +429,7 @@ func instrumentRunnerFor(ctx context.Context, ex *sdk.Executor, d *spec.CheckBed
 	cfg.Exec = exec
 	return newPluginCheckRunner(ex, ctx, spec.CheckEnv{
 		Mode: "live", Box: venue, Venue: venue, VenueKind: "member",
-	}, cfg, nil /* no resolved project on this gather — see unresolved_classifier.go */), nil
+	}, cfg, declaredVocabularyFor(ex, ctx, projectDirFromCwd())), nil
 }
 
 // venueKindOf returns the root venue kind word for the CheckEnv snapshot.

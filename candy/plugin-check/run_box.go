@@ -67,7 +67,7 @@ func pluginCheckRunBox(ex *sdk.Executor, ctx context.Context, req spec.CheckRunR
 		HasRuntime: hasRuntime,
 		Distros:    meta.Distro,
 		VerifyOnly: true,
-	}, nil /* no resolved project on this gather — see unresolved_classifier.go */)
+	}, declaredVocabularyFor(ex, ctx, req.Dir))
 
 	stepResults := kit.RunPlan(ctx, runner, meta.Description, false)
 	return kit.CheckRunReply{Image: imageRef, Steps: stepResults}, nil

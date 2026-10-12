@@ -1,6 +1,7 @@
 package check
 
 import (
+	"context"
 	"testing"
 
 	"github.com/opencharly/sdk/kit"
@@ -59,5 +60,35 @@ func TestInstallUnresolvedClassifier(t *testing.T) {
 	installUnresolvedClassifier(kr, nil)
 	if got := kr.ClassifyUnresolved(op, "NOT_DECLARED"); got != kit.UnresolvedConditional {
 		t.Errorf("a nil (UNKNOWN) vocabulary = %v, want the conservative UnresolvedConditional", got)
+	}
+}
+
+// TestVocabularyDirFallsBackToCwd pins the fallback this whole change rests on. `charly check box`
+// dispatches Mode:"box" with an Image and no Dir at all, so a helper that read only the request's dir
+// was inert on the path it was written for — measured, not assumed: the first version of the fix was
+// run against a disposable box and the bed still reported SKIP (opencharly/plugin-check#95).
+func TestVocabularyDirFallsBackToCwd(t *testing.T) {
+	// The request's own dir wins when it has one.
+	if got := vocabularyDir("/some/project"); got != "/some/project" {
+		t.Errorf("a request Dir must win, got %q", got)
+	}
+	// An EMPTY dir is not a refusal: it falls back to the process working directory. This is the
+	// whole difference between a working fix and an inert one — `charly check box` sends Mode:"box"
+	// with no Dir at all, and the first version of this change asked for req.Dir and therefore still
+	// skipped the box path. Asserted against the live cwd so the fallback is proven, not assumed.
+	if got := vocabularyDir(""); got != projectDirFromCwd() {
+		t.Errorf("an empty dir must fall back to the cwd (%q), got %q", projectDirFromCwd(), got)
+	}
+	if projectDirFromCwd() == "" {
+		t.Fatal("the test cannot prove the fallback from an empty cwd")
+	}
+}
+
+// TestDeclaredVocabularyForFallsBackConservatively pins that a nil executor yields nothing: with no
+// reverse channel there is nothing to ask, so the answer stays the conservative skip rather than a
+// failure invented from the absence of a lookup.
+func TestDeclaredVocabularyForFallsBackConservatively(t *testing.T) {
+	if got := declaredVocabularyFor(nil, context.Background(), "/some/project"); got != nil {
+		t.Errorf("a nil executor must yield no vocabulary, got %v", got)
 	}
 }
