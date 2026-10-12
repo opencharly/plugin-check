@@ -227,7 +227,7 @@ func pluginCheckLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.Resolved
 		CandyDirs:      candyDirsFromEnvelope(rp),
 		HostVars:       hostVars,
 		TargetResolver: pluginVenueResolver(ex, ctx, dir, req.Instance),
-	})
+	}, declaredVarNames(rp))
 	results := kit.RunPlan(ctx, runner, set, false)
 	return kit.CheckRunReply{Steps: results, Header: header}, nil
 }
@@ -536,7 +536,7 @@ func pluginCheckLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedP
 		CandyDirs:      candyDirsFromEnvelope(rp),
 		HostVars:       hostVars,
 		TargetResolver: pluginVenueResolver(ex, ctx, dir, req.Instance),
-	})
+	}, declaredVarNames(rp))
 	results := kit.RunPlan(ctx, runner, set, false)
 	return kit.CheckRunReply{Steps: results, Header: fmt.Sprintf("VM: charly-%s (ssh %s@%s:%d)", req.Name, user, host, port)}, nil
 }
@@ -641,7 +641,7 @@ func pluginRunLocalDeployScopePlan(ex *sdk.Executor, ctx context.Context, rp *sp
 		VerifyOnly:     true,
 		HostVars:       hostVars,
 		TargetResolver: pluginVenueResolver(ex, ctx, dir, instance),
-	})
+	}, declaredVarNames(rp))
 	return kit.RunPlan(ctx, runner, set, false), true, nil
 }
 
