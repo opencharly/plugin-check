@@ -194,7 +194,7 @@ func bedAdd(args ...string) []string {
 	//
 	// Remote refs are left alone: spec.ResolveBoxName resolves those by parsing, not by namespace splitting,
 	// so the roster conversion would mangle them.
-	if len(args) > 0 && !spec.IsRemoteImageRef(spec.StripURLScheme(args[0])) {
+	if len(args) > 0 && !isRemoteImageRef(args[0]) {
 		args = append([]string{deployKeyForBed(args[0])}, args[1:]...)
 	}
 	return append([]string{"deploy", "add"}, append(args, "--dev-local-pkg")...)
