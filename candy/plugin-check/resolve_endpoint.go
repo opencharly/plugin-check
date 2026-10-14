@@ -26,7 +26,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 
 	"github.com/opencharly/sdk"
@@ -88,11 +87,25 @@ func marshalEndpointReply(reply spec.CheckEndpointResolveReply) (*pb.InvokeReply
 	return &pb.InvokeReply{ResultJson: out}, nil
 }
 
+// venueIsInspectable reports whether a resolved venue has a podman-inspectable image label.
+//
+// Only a CONTAINER venue does. A dot in the requested name does NOT make a venue un-inspectable:
+// resolveCheckVenue's own dotted branch (venue.go) already returns a `Kind: container` venue for a
+// ROOT-namespaced deploy like `<ns>.<bed>` — the same shape a nested deploy has — so testing the raw
+// name for a dot discarded a venue the resolver had just resolved, and `charly check live` reported
+// "container for <name> is not running" for a container that was running. The venue's own kind is
+// the correct and sufficient guard, and it is the ONE place this decision is made (R3).
+func venueIsInspectable(v *CheckVenue) bool {
+	return v != nil && v.IsContainer()
+}
+
 // resolveImageLabelForHost serves one verb:check-resolve OpResolveImageLabel: read one raw OCI
 // label off box/instance's live image. Mirrors the former core-side resolveImageLabelFor exactly —
-// guarded to the plain (non-nested) container venue, since a non-container or dotted-nested name
-// has no podman-inspectable image label. Empty value (no live deployment, or the label absent) is a
-// valid result, not an error.
+// guarded by venueIsInspectable: only a CONTAINER venue has an inspectable image. A dot in the
+// requested name does NOT exclude a venue -- resolveCheckVenue returns a Kind: container venue for a
+// root-namespaced deploy (<ns>.<bed>), and excluding it here reported "not running" for a container
+// that was running. See venueIsInspectable (resolve_endpoint.go) for the one place that decision is made.
+// An empty value (no live deployment, or the label absent) is a valid result, not an error.
 func resolveImageLabelForHost(ctx context.Context, req *pb.InvokeRequest) (*pb.InvokeReply, error) {
 	var in spec.CheckImageLabelResolveRequest
 	if len(req.GetParamsJson()) > 0 {
@@ -112,7 +125,7 @@ func resolveImageLabelForHost(ctx context.Context, req *pb.InvokeRequest) (*pb.I
 	if err != nil {
 		return nil, err
 	}
-	if !venue.IsContainer() || strings.Contains(in.Box, ".") {
+	if !venueIsInspectable(venue) {
 		return nil, fmt.Errorf("container for %s is not running", in.Box)
 	}
 	imageRef, err := container.ContainerImageRef(venue.Engine, venue.Name)

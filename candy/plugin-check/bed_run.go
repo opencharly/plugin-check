@@ -184,7 +184,37 @@ func withRunTag(args []string, tag string) []string {
 // A bed exists to prove the in-development package builds and installs, so on a bed that condition
 // must be loud.
 func bedAdd(args ...string) []string {
+	// The ref is a ROSTER address ("openclaw.check-openclaw-pod", or a child "ns.box.child") and the deploy
+	// side needs the DEPLOY KEY, for the same reason configStartArgs converts before config/start: a roster
+	// address does not resolve from the project root, and the deploy resolver then derives a bare NAMESPACE
+	// as its requested box -- `unknown box "openclaw"` from sdk/deploykit/graph.go's FilterBox. Measured on
+	// openclaw.check-openclaw-pod's deploy-add (opencharly/plugin-build#28). Converting HERE rather than at
+	// each call site is R2's answer: eight callers hand this function a roster address, and one conversion
+	// applied in one place is what stops the ninth caller from missing it.
+	//
+	// Remote refs are left alone: spec.ResolveBoxName resolves those by parsing, not by namespace splitting,
+	// so the roster conversion would mangle them.
+	if len(args) > 0 && !isRemoteImageRef(args[0]) {
+		args = append([]string{deployKeyForBed(args[0])}, args[1:]...)
+	}
 	return append([]string{"deploy", "add"}, append(args, "--dev-local-pkg")...)
+}
+
+// deployKeyForBed maps a bed's ROSTER address to the DEPLOY KEY the deploy phase creates.
+//
+// A namespaced bed is addressed `<ns>.<name>` by a roster while its deploy is keyed
+// `<ns>/<name>` (spec.DeployKey). `charly deploy add` performs that conversion, but
+// `charly config` / `charly start` take the deploy key itself, so handing them the roster
+// address makes them miss the deploy, degrade the box name to the key, and end up asking for a
+// ref nothing ever built. This is the same class of defect `ResolveBedForRoot` fixed one phase
+// earlier for `charly box build`: a name that does not resolve from the project root. The
+// conversion is `spec.DeployKey`'s own, reused rather than re-spelled (R3), and a local bed
+// with no namespace is returned unchanged.
+func deployKeyForBed(name string) string {
+	if ns, rest, ok := strings.Cut(name, "."); ok && ns != "" && rest != "" {
+		return spec.DeployKey(ns, rest)
+	}
+	return name
 }
 
 // configStartArgs builds the `charly config`/`charly start` argv for a pod bed's config+start
@@ -1063,7 +1093,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// kind:local + external apply candies in place during deploy add; pod beds
 		// need `charly config` + `charly start`.
 		if !isInPlace {
-			configArgs, startArgs := configStartArgs(name, d.ImageTag, d.HasAddCandy)
+			configArgs, startArgs := configStartArgs(deployKeyForBed(name), d.ImageTag, d.HasAddCandy)
 			if err := step("config", configArgs...); err != nil {
 				return fail("config %s: %w", name, err)
 			}
