@@ -556,7 +556,7 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"warm run skips the transaction ('cache=138/148') and therefore cannot reproduce it, " +
 			"which is why this reads as intermittent and is not. Reproduced in " +
 			"opencharly/plugin-check#103: the COLD failure at " +
-			".check/openclaw.check-openclaw-pod/2026.287.1227/image-build.log:1321-1324, and the LIVE " +
+			".check/openclaw.check-openclaw-pod/2026.287.1227/image-build.log:1320-1324 (the wrapper error is line 1323), and the LIVE " +
 			"confirmation on a 58-layer rebuild at .check/openclaw.check-openclaw-pod/2026.287.1353, " +
 			"where this entry claims that same wrapper error and the step reads errors: 0 " +
 			"allowlisted: 7 and PASSES (chain re-printed at lines 473-477).",
