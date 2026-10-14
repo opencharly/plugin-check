@@ -525,6 +525,43 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"and the step still fails.",
 	},
 	{
+		ID:       "pacman-pre-transaction-hook-container-systemd-sshd-restart",
+		Severity: severityError,
+		// The sibling of `pacman-post-transaction-hook-container-systemd` (which sits BELOW this
+		// entry), for the other hook in the same class. The two are different phases and the IDs
+		// say so: that one is a POST-transaction hook that calls systemd, this one is the PRE-
+		// transaction openssh hook that asks systemd to mark sshd.service for restart. Inside a
+		// container build systemd refuses, the hook exits nonzero, and pacman reports it as the
+		// same generic wrapper error. The banner asserted here is that hook's own, so the same
+		// reasoning applies line for line: a wrapper error from any OTHER hook stays fatal.
+		Match: regexp.MustCompile(`^error: (command failed to execute correctly)$`),
+		// The proof binds the claim to THIS hook, in order: the sshd restart banner, systemd's
+		// container-init refusal that it triggers, and the wrapper error that follows. Marking a
+		// unit for restart is meaningless in a build container -- there is no systemd to restart
+		// it, and no running sshd to restart -- so the refusal IS the proof that this failure is
+		// the class and not a real one. Bounded to three intervening lines, as its sibling is.
+		RecoveredBy: `(?s)\(\s*\d+/\d+\) Marking sshd\.service for restart\.\.\.\n.*?` +
+			`System has not been booted with systemd as init system \(PID 1\)\.[^\n]*\n` +
+			`(?:[^\n]*\n){0,3}` +
+			`error: command failed to execute correctly`,
+		// Its chain also TERMINATES IN the wrapper error it names, so the proof is LINE-BOUND for
+		// the same reason: a SECOND wrapper error in the log is a different line and stays fatal.
+		ProofEndsOnLine: true,
+		Why: "Measured 2026-10-14 on a COLD build of openclaw.check-openclaw-pod: the openssh " +
+			"pre-transaction hook 'Marking sshd.service for restart' calls systemd, which refuses " +
+			"because the build container has no PID 1, and pacman reports the hook's nonzero exit " +
+			"as 'error: command failed to execute correctly'. The build EXITS 0 and the transaction " +
+			"completes (the log goes on to ':: Processing package changes...' and upgrades tzdata, " +
+			"glibc, ...), but the step failed on the one error line. Only COLD builds reach it -- a " +
+			"warm run skips the transaction ('cache=138/148') and therefore cannot reproduce it, " +
+			"which is why this reads as intermittent and is not. Reproduced in " +
+			"opencharly/plugin-check#103: the COLD failure at " +
+			".check/openclaw.check-openclaw-pod/2026.287.1227/image-build.log:1320-1324 (the wrapper error is line 1323), and the LIVE " +
+			"confirmation on a 58-layer rebuild at .check/openclaw.check-openclaw-pod/2026.287.1353, " +
+			"where this entry claims that same wrapper error and the step reads errors: 0 " +
+			"allowlisted: 7 and PASSES (chain re-printed at lines 473-477).",
+	},
+	{
 		ID:       "pacman-post-transaction-hook-container-systemd",
 		Severity: severityError,
 		// pacman runs every installed package's post-transaction hooks and reports a hook that
