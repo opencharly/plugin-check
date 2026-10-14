@@ -62,6 +62,15 @@ type CheckVenue struct {
 // IsContainer reports whether the venue is a running container.
 func (v *CheckVenue) IsContainer() bool { return v != nil && v.Kind == "container" }
 
+// isRemoteImageRef reports whether ref names a remote image (an @github/... ref) rather than a local
+// roster address. The guard is the COMPOSITION of StripURLScheme and IsRemoteImageRef, and it is one
+// function because both callers ask the same question: bedAdd converting an argv before the deploy
+// resolver sees it, and resolveBedContainer converting a lookup name. Folding it here is R2 -- the
+// composition, not just the two spec helpers, was the duplicated implementation.
+func isRemoteImageRef(ref string) bool {
+	return spec.IsRemoteImageRef(spec.StripURLScheme(ref))
+}
+
 // resolveBedContainer resolves a bed's ROSTER address to the running container that address denotes.
 //
 // A bed's deploy phase CREATES the container under the DEPLOY KEY, not the roster address:
@@ -80,15 +89,6 @@ func (v *CheckVenue) IsContainer() bool { return v != nil && v.Kind == "containe
 //
 // Every lookup MUST convert the way the deploy does. Remote refs are left alone: spec.ResolveBoxName
 // resolves those by parsing, not by namespace splitting, so deployKeyForBed would mangle them.
-// isRemoteImageRef reports whether ref names a remote image (an @github/... ref) rather than a local
-// roster address. The guard is the COMPOSITION of StripURLScheme and IsRemoteImageRef, and it is one
-// function because both callers ask the same question: bedAdd converting an argv before the deploy
-// resolver sees it, and resolveBedContainer converting a lookup name. Folding it here is R2 -- the
-// composition, not just the two spec helpers, was the duplicated implementation.
-func isRemoteImageRef(ref string) bool {
-	return spec.IsRemoteImageRef(spec.StripURLScheme(ref))
-}
-
 func resolveBedContainer(ctx context.Context, name, instance string) (engine, containerName string, err error) {
 	if isRemoteImageRef(name) {
 		return deploykit.ResolveContainer(ctx, name, instance)
