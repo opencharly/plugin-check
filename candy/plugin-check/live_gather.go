@@ -135,7 +135,7 @@ func pluginCheckLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.Resolved
 		overlayPlan = expanded
 	}
 
-	engine, containerName, err := deploykit.ResolveContainer(ctx, req.Name, req.Instance)
+	engine, containerName, err := resolveBedContainer(ctx, req.Name, req.Instance)
 	declaredStopped := false
 	if err != nil {
 		// THE DELIBERATELY-STOPPED ROOT (the preempt semantics, post-unroll): the migrate unroll

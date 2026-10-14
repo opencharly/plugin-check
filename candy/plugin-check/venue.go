@@ -66,6 +66,31 @@ func (v *CheckVenue) IsContainer() bool { return v != nil && v.Kind == "containe
 // resolved-project envelope's Deploy tree (rp.Deploy) instead of a direct LoadUnified/
 // merged-tree-read call — the ONLY change from the core original, which read the SAME merged
 // deploy tree via the host loader in-process.
+// resolveBedContainer resolves a bed's ROSTER address to the running container that address denotes.
+//
+// A bed's deploy phase CREATES the container under the DEPLOY KEY, not the roster address:
+// bed_run.go's configStartArgs passes deployKeyForBed(name) to `charly config`/`start`, because a roster
+// address like "openclaw.check-openclaw-pod" does not resolve from the project root. spec.ContainerName is
+// faithful to the ref it is handed -- it maps "/" to "-" and does nothing else -- so the two spellings name
+// two different containers:
+//
+//	charly config openclaw.check-openclaw-pod  ->  charly-openclaw.check-openclaw-pod   (roster address)
+//	charly config openclaw/check-openclaw-pod  ->  charly-openclaw-check-openclaw-pod   (deploy key)
+//
+// A lookup that hands ResolveContainer the raw roster address therefore computes the FIRST name while the
+// deploy created the SECOND, and reports a running container as "container ... is not running"
+// (deploykit/container_resolve.go:40). Measured: the openclaw.check-openclaw-pod bed's check-live step
+// failed exactly this way while `start` reported ok: true.
+//
+// Every lookup MUST convert the way the deploy does. Remote refs are left alone: spec.ResolveBoxName
+// resolves those by parsing, not by namespace splitting, so deployKeyForBed would mangle them.
+func resolveBedContainer(ctx context.Context, name, instance string) (engine, containerName string, err error) {
+	if spec.IsRemoteImageRef(spec.StripURLScheme(name)) {
+		return deploykit.ResolveContainer(ctx, name, instance)
+	}
+	return deploykit.ResolveContainer(ctx, deployKeyForBed(name), instance)
+}
+
 func resolveCheckVenue(ex *sdk.Executor, ctx context.Context, dir, name, instance string) (*CheckVenue, error) {
 	if name == "." {
 		return &CheckVenue{Exec: kit.ShellExecutor{}, Kind: "host", Descriptor: spec.VenueDescriptor{Kind: "shell"}}, nil
@@ -106,7 +131,7 @@ func resolveCheckVenue(ex *sdk.Executor, ctx context.Context, dir, name, instanc
 		}
 	}
 
-	engine, containerName, cerr := deploykit.ResolveContainer(ctx, name, instance)
+	engine, containerName, cerr := resolveBedContainer(ctx, name, instance)
 	if cerr != nil {
 		return nil, cerr
 	}

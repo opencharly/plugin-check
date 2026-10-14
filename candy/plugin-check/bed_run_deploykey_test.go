@@ -47,8 +47,8 @@ func TestDeployKeyForBed(t *testing.T) {
 // or stops round-tripping through spec.ParseDeployKey.
 func TestDeployKeyForBed_ContractWithSpec(t *testing.T) {
 	const (
-		bed = "openclaw.check-openclaw-pod"
-		ns  = "openclaw"
+		bed  = "openclaw.check-openclaw-pod"
+		ns   = "openclaw"
 		rest = "check-openclaw-pod"
 	)
 
