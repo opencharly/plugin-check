@@ -62,10 +62,6 @@ type CheckVenue struct {
 // IsContainer reports whether the venue is a running container.
 func (v *CheckVenue) IsContainer() bool { return v != nil && v.Kind == "container" }
 
-// resolveCheckVenue maps an `charly check` verb's <name> argument to an execution venue, off the
-// resolved-project envelope's Deploy tree (rp.Deploy) instead of a direct LoadUnified/
-// merged-tree-read call — the ONLY change from the core original, which read the SAME merged
-// deploy tree via the host loader in-process.
 // resolveBedContainer resolves a bed's ROSTER address to the running container that address denotes.
 //
 // A bed's deploy phase CREATES the container under the DEPLOY KEY, not the roster address:
@@ -90,6 +86,11 @@ func resolveBedContainer(ctx context.Context, name, instance string) (engine, co
 	}
 	return deploykit.ResolveContainer(ctx, deployKeyForBed(name), instance)
 }
+
+// resolveCheckVenue maps an `charly check` verb's <name> argument to an execution venue, off the
+// resolved-project envelope's Deploy tree (rp.Deploy) instead of a direct LoadUnified/
+// merged-tree-read call — the ONLY change from the core original, which read the SAME merged
+// deploy tree via the host loader in-process.
 
 func resolveCheckVenue(ex *sdk.Executor, ctx context.Context, dir, name, instance string) (*CheckVenue, error) {
 	if name == "." {
