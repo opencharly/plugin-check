@@ -1173,3 +1173,44 @@ func TestRealVmBuildGrubRegionIsFullyAllowlisted(t *testing.T) {
 		t.Fatalf("want both os-prober lines claimed by mkinitcpio-chroot-warnings, got %d claims: %+v", claimed, d.Findings)
 	}
 }
+
+// TestPacmanPostTransactionHookContainerSystemdSshdRestartIsConditional pins the SIBLING entry for the
+// other hook in the same class. pacman runs a pre-transaction hook for openssh that asks systemd to mark
+// sshd.service for restart; a container build has no PID 1, systemd refuses, the hook exits nonzero, and
+// pacman reports it as the same generic wrapper error as the modules-load hook.
+//
+// Captured verbatim 2026-10-14 from the COLD build of openclaw.check-openclaw-pod
+// (.check/openclaw.check-openclaw-pod/2026.287.1227/image-build.log:1321-1324), the run filed as
+// opencharly/plugin-check#103.
+func TestPacmanPostTransactionHookContainerSystemdSshdRestartIsConditional(t *testing.T) {
+	const captured = "(1/2) Marking sshd.service for restart...\n" +
+		"System has not been booted with systemd as init system (PID 1). Can't operate.\n" +
+		"Failed to connect to system scope bus via local transport: Host is down\n" +
+		"error: command failed to execute correctly\n" +
+		"(2/2) Removing old entries from the info directory file...\n"
+	const errLine = "error: command failed to execute correctly\n"
+	const step = "STEP 12/14: RUN pacman -S --needed ...\n"
+	const id = "pacman-post-transaction-hook-container-systemd-sshd-restart"
+
+	t.Run("the captured sshd restart hook sequence is exempt", func(t *testing.T) {
+		d := scanStepDiagnostics(step + captured)
+		if d.Errors != 0 || d.Allowlisted != 1 || d.fails(defaultDiagnosticPolicy()) {
+			t.Errorf("the sshd restart hook's wrapper error must be exempt; got %+v", d)
+		}
+		if got := allowIDForLine(d, errLine); got != id {
+			t.Errorf("the wrapper error must be claimed by its OWN entry, got %q", got)
+		}
+	})
+
+	t.Run("the wrapper error with no sshd banner in the log is fatal", func(t *testing.T) {
+		// Same wrapper wording, no sshd restart banner: nothing here proves the class.
+		const bare = "error: command failed to execute correctly\n"
+		d := scanStepDiagnostics(step + bare)
+		if d.Errors != 1 || d.Allowlisted != 0 {
+			t.Errorf("a wrapper error with no banner must stay fatal; got %+v", d)
+		}
+		if got := allowIDForLine(d, errLine); got == id {
+			t.Errorf("the sshd entry must not claim a wrapper error whose banner is absent, got %q", got)
+		}
+	})
+}
