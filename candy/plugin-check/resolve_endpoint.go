@@ -101,9 +101,11 @@ func venueIsInspectable(v *CheckVenue) bool {
 
 // resolveImageLabelForHost serves one verb:check-resolve OpResolveImageLabel: read one raw OCI
 // label off box/instance's live image. Mirrors the former core-side resolveImageLabelFor exactly —
-// guarded to the plain (non-nested) container venue, since a non-container or dotted-nested name
-// has no podman-inspectable image label. Empty value (no live deployment, or the label absent) is a
-// valid result, not an error.
+// guarded by venueIsInspectable: only a CONTAINER venue has an inspectable image. A dot in the
+// requested name does NOT exclude a venue -- resolveCheckVenue returns a Kind: container venue for a
+// root-namespaced deploy (<ns>.<bed>), and excluding it here reported "not running" for a container
+// that was running. See venueIsInspectable (resolve_endpoint.go) for the one place that decision is made.
+// An empty value (no live deployment, or the label absent) is a valid result, not an error.
 func resolveImageLabelForHost(ctx context.Context, req *pb.InvokeRequest) (*pb.InvokeReply, error) {
 	var in spec.CheckImageLabelResolveRequest
 	if len(req.GetParamsJson()) > 0 {
