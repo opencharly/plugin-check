@@ -91,7 +91,6 @@ func resolveBedContainer(ctx context.Context, name, instance string) (engine, co
 // resolved-project envelope's Deploy tree (rp.Deploy) instead of a direct LoadUnified/
 // merged-tree-read call — the ONLY change from the core original, which read the SAME merged
 // deploy tree via the host loader in-process.
-
 func resolveCheckVenue(ex *sdk.Executor, ctx context.Context, dir, name, instance string) (*CheckVenue, error) {
 	if name == "." {
 		return &CheckVenue{Exec: kit.ShellExecutor{}, Kind: "host", Descriptor: spec.VenueDescriptor{Kind: "shell"}}, nil
