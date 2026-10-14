@@ -407,7 +407,14 @@ func pluginLoadVmCheckPlans(ctx context.Context, ex *sdk.Executor, rp *spec.Reso
 		}
 	}
 	plan = append(append([]spec.Step(nil), projectPlan...), localPlan...)
-	plan = append(plan, candyAddSteps(rp, addCandies)...)
+	addSteps, addErr := candyAddSteps(rp, addCandies)
+	if addErr != nil {
+		// An unresolvable add_candy pin is an INFRA failure (the check never produced a
+		// verdict), not a failing check: the child's plan cannot be built from what this
+		// deployment named. See candyAddSteps' version guard.
+		return nil, "", 0, addErr
+	}
+	plan = append(plan, addSteps...)
 	// include: steps splice at collect time (the include primitive's contract) — the
 	// check-project projection expands them, and the live gather must too, or a residual
 	// include: step reaches the walk and no-ops as a skip ("include expanded at collect
