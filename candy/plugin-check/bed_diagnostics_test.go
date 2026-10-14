@@ -1181,14 +1181,18 @@ func TestRealVmBuildGrubRegionIsFullyAllowlisted(t *testing.T) {
 // pacman reports it as the same generic wrapper error as the modules-load hook.
 //
 // Captured verbatim 2026-10-14 from the COLD build of openclaw.check-openclaw-pod
-// (.check/openclaw.check-openclaw-pod/2026.287.1227/image-build.log:1321-1324), the run filed as
+// (.check/openclaw.check-openclaw-pod/2026.287.1227/image-build.log:1320-1324 (the wrapper error is line 1323; the earlier 1321-1324 was copied from a previous body rather than taken from the capture)), the run filed as
 // opencharly/plugin-check#103.
 func TestPacmanPreTransactionHookContainerSystemdSshdRestartIsConditional(t *testing.T) {
+	// Order matters and this fixture follows the CAPTURE, not convenience: the wrapper error comes AFTER the
+	// "(2/2)" line, four lines below the banner, with two intervening lines. RecoveredBy's {0,3} window would
+	// also accept the swapped order -- which is exactly why the order is asserted here rather than left to the
+	// window: a fixture that passes for the wrong reason proves nothing about the class.
 	const captured = "(1/2) Marking sshd.service for restart...\n" +
 		"System has not been booted with systemd as init system (PID 1). Can't operate.\n" +
 		"Failed to connect to system scope bus via local transport: Host is down\n" +
-		"error: command failed to execute correctly\n" +
-		"(2/2) Removing old entries from the info directory file...\n"
+		"(2/2) Removing old entries from the info directory file...\n" +
+		"error: command failed to execute correctly\n"
 	const errLine = "error: command failed to execute correctly\n"
 	const step = "STEP 12/14: RUN pacman -S --needed ...\n"
 	const id = "pacman-pre-transaction-hook-container-systemd-sshd-restart"
