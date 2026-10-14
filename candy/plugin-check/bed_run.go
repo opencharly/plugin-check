@@ -184,6 +184,19 @@ func withRunTag(args []string, tag string) []string {
 // A bed exists to prove the in-development package builds and installs, so on a bed that condition
 // must be loud.
 func bedAdd(args ...string) []string {
+	// The ref is a ROSTER address ("openclaw.check-openclaw-pod", or a child "ns.box.child") and the deploy
+	// side needs the DEPLOY KEY, for the same reason configStartArgs converts before config/start: a roster
+	// address does not resolve from the project root, and the deploy resolver then derives a bare NAMESPACE
+	// as its requested box -- `unknown box "openclaw"` from sdk/deploykit/graph.go's FilterBox. Measured on
+	// openclaw.check-openclaw-pod's deploy-add (opencharly/plugin-build#28). Converting HERE rather than at
+	// each call site is R2's answer: eight callers hand this function a roster address, and one conversion
+	// applied in one place is what stops the ninth caller from missing it.
+	//
+	// Remote refs are left alone: spec.ResolveBoxName resolves those by parsing, not by namespace splitting,
+	// so the roster conversion would mangle them.
+	if len(args) > 0 && !spec.IsRemoteImageRef(spec.StripURLScheme(args[0])) {
+		args = append([]string{deployKeyForBed(args[0])}, args[1:]...)
+	}
 	return append([]string{"deploy", "add"}, append(args, "--dev-local-pkg")...)
 }
 

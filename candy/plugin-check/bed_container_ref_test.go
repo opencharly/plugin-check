@@ -62,3 +62,52 @@ func TestResolveBedContainerConvertsRosterAddress(t *testing.T) {
 		}
 	})
 }
+
+// TestBedAddConvertsTheRosterAddress pins the third site of the same conversion.
+//
+// bedAdd has eight callers and every one hands it a bed's ROSTER address (`name`, or a nested child
+// `name+"."+childKey`). `charly deploy add openclaw.check-openclaw-pod` does not resolve from the project root,
+// so the deploy resolver derives a bare NAMESPACE as its requested box and FilterBox rejects it:
+// `unknown box "openclaw"` (sdk/deploykit/graph.go:312), measured on this bed's deploy-add and filed as
+// opencharly/plugin-build#28. Converting inside bedAdd is what makes the ninth caller impossible to miss.
+func TestBedAddConvertsTheRosterAddress(t *testing.T) {
+	t.Run("a roster address becomes the deploy key, flags follow it", func(t *testing.T) {
+		got := bedAdd("openclaw.check-openclaw-pod")
+		want := []string{"deploy", "add", "openclaw/check-openclaw-pod", "--dev-local-pkg"}
+		if len(got) != len(want) {
+			t.Fatalf("bedAdd = %q, want %q", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("bedAdd = %q, want %q", got, want)
+			}
+		}
+	})
+
+	t.Run("a nested child keeps its tail", func(t *testing.T) {
+		got := bedAdd("openclaw.check-openclaw-pod.child")
+		if got[2] != "openclaw/check-openclaw-pod.child" {
+			t.Fatalf("bedAdd child ref = %q, want openclaw/check-openclaw-pod.child", got[2])
+		}
+	})
+
+	t.Run("a plain name with no namespace is left alone", func(t *testing.T) {
+		if got := bedAdd("check-local"); got[2] != "check-local" {
+			t.Fatalf("bedAdd(plain) = %q, want check-local unchanged", got[2])
+		}
+	})
+
+	t.Run("a remote ref is NOT mangled", func(t *testing.T) {
+		const remote = "@github.com/opencharly/charly/charly.yml"
+		if got := bedAdd(remote); got[2] != remote {
+			t.Fatalf("bedAdd(remote) = %q, want it untouched -- spec.ResolveBoxName resolves remote refs by parsing", got[2])
+		}
+	})
+
+	t.Run("a vm template argument is not mistaken for the ref", func(t *testing.T) {
+		got := bedAdd("openclaw.check-openclaw-pod", "cachyos.vm")
+		if got[2] != "openclaw/check-openclaw-pod" || got[3] != "cachyos.vm" {
+			t.Fatalf("bedAdd(ref, vmTemplate) = %q, want the ref converted and the template untouched", got)
+		}
+	})
+}
