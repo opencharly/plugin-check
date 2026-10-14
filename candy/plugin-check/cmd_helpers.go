@@ -21,6 +21,7 @@ package check
 // verify_local.go) — no longer core at all.
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/opencharly/sdk/deploykit"
@@ -83,26 +84,53 @@ func guestNestedCheckCmd(guestPod, format, section string, filter []string, inst
 
 // candyAddSteps collects the deploy-scope check/provision steps from each locally-scanned candy a
 // deploy applies via add_candy — the envelope-sourced replacement for charly/check_cmd.go's
-// collectAddCandySteps. Remote (@github) candies are skipped, matching the original: they carry
-// their own context and a re-scan can resolve a different cached version than what was deployed.
-func candyAddSteps(rp *spec.ResolvedProject, addCandies []string) []spec.Step {
+// collectAddCandySteps. Remote (@github) candies are looked up exactly like local ones (see the
+// map-key note inside).
+//
+// THE VERSION GUARD (opencharly/plugin-check#112). `rp.CandyModels` is keyed by candy IDENTITY
+// (BareRef: no @, no :version), which is right for the graph but cannot distinguish two
+// coordinates of one repo: when two scopes in the same project pin the same repo at different
+// tags, the scan FETCHES both and its per-entity arbiter keeps ONE winner
+// (sdk/loaderkit/scan_orchestrate.go — the losers are dropped at PickCandyVersion), so this bare
+// lookup returns that winner whatever the deploy pinned. Measured: `distro-arch`'s bed pins
+// `layer-direnv:v2026.287.2155` while `layer-agent-forwarding` transitively pins
+// `layer-direnv:v2026.272.0057`, and the bed's child `check live` ran the OLD plan (9 steps, no
+// `context:`) while the fetched artifact carried the pinned one.
+//
+// So an authored ref that NAMES a version and receives a model stamped with a DIFFERENT one is an
+// unresolvable input, not a plan to run: fail loudly naming both, instead of silently asserting a
+// version the deploy never named. The guard is deliberately narrow:
+//   - a version-less ref (no pin) keeps the identity lookup — that is the documented behaviour;
+//   - an UNSTAMPED model (Version == "") is not gated, because that is the documented local-shadow
+//     case (sdk/loaderkit's scan gives a local candy of the same name precedence, as INFO);
+//   - a local bare-name ref has no version to honour.
+//
+// It is the MISSED CONTROL, not the fix: the pin still cannot be honoured here (that needs the
+// per-coordinate models on the envelope — see the issue). It makes the wrong-version run a named
+// error until then.
+func candyAddSteps(rp *spec.ResolvedProject, addCandies []string) ([]spec.Step, error) {
 	if rp == nil || len(addCandies) == 0 {
-		return nil
+		return nil, nil
 	}
 	var out []spec.Step
 	for _, ref := range addCandies {
-		// A remote @github ref is looked up exactly like a local one: BareRef is the
-		// map-key form (no @, no :version), and rp.CandyModels keys a FETCHED candy by
-		// precisely that. Skipping remote refs here silently dropped every baked check:
-		// step of a candy applied by ref — the normal way a bed pins one — so the bed ran
-		// only its own plan and passed while asserting almost nothing.
-		m, ok := rp.CandyModels[deploykit.BareRef(ref)]
+		// BareRef is the map-key form (no @, no :version), and rp.CandyModels keys a FETCHED
+		// candy by precisely that. Skipping remote refs here silently dropped every baked check:
+		// step of a candy applied by ref — the normal way a bed pins one — so the bed ran only
+		// its own plan and passed while asserting almost nothing.
+		bare := deploykit.BareRef(ref)
+		m, ok := rp.CandyModels[bare]
 		if !ok {
 			continue
 		}
+		if _, want := spec.StripCandyRefVersion(ref); want != "" && m.Version != "" && m.Version != want {
+			return nil, fmt.Errorf(
+				"add_candy %q names version %q but the resolved model for %q is version %q: a bare-keyed lookup cannot honour a pin when the same repo is pinned at two coordinates in one project, and this resolution carries the arbiter's winner, not the pinned version. Running it would assert a version this deploy never named (opencharly/plugin-check#112). Honour the pin (or drop the version and pin the project consistently) and retry",
+				ref, want, bare, m.Version)
+		}
 		out = append(out, deploykit.BakeableSteps(m.Plan)...)
 	}
-	return out
+	return out, nil
 }
 
 // candyDirsFromEnvelope projects the envelope's rp.CandyModels into a name -> SourceDir map — the
