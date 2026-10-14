@@ -525,13 +525,15 @@ var diagnosticAllowlist = []diagnosticAllowance{
 			"and the step still fails.",
 	},
 	{
-		ID:       "pacman-post-transaction-hook-container-systemd-sshd-restart",
+		ID:       "pacman-pre-transaction-hook-container-systemd-sshd-restart",
 		Severity: severityError,
-		// The SIBLING of the entry above, for the other hook in the same class. pacman runs a
-		// pre-transaction hook for openssh that asks systemd to mark sshd.service for restart;
-		// inside a container build systemd refuses, the hook exits nonzero, and pacman reports it
-		// as the same generic wrapper error. The banner asserted here is that hook's own, so the
-		// same reasoning applies line for line: a wrapper error from any OTHER hook stays fatal.
+		// The sibling of `pacman-post-transaction-hook-container-systemd` (which sits BELOW this
+		// entry), for the other hook in the same class. The two are different phases and the IDs
+		// say so: that one is a POST-transaction hook that calls systemd, this one is the PRE-
+		// transaction openssh hook that asks systemd to mark sshd.service for restart. Inside a
+		// container build systemd refuses, the hook exits nonzero, and pacman reports it as the
+		// same generic wrapper error. The banner asserted here is that hook's own, so the same
+		// reasoning applies line for line: a wrapper error from any OTHER hook stays fatal.
 		Match: regexp.MustCompile(`^error: (command failed to execute correctly)$`),
 		// The proof binds the claim to THIS hook, in order: the sshd restart banner, systemd's
 		// container-init refusal that it triggers, and the wrapper error that follows. Marking a

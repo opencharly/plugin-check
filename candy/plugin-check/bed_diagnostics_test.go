@@ -1174,15 +1174,16 @@ func TestRealVmBuildGrubRegionIsFullyAllowlisted(t *testing.T) {
 	}
 }
 
-// TestPacmanPostTransactionHookContainerSystemdSshdRestartIsConditional pins the SIBLING entry for the
-// other hook in the same class. pacman runs a pre-transaction hook for openssh that asks systemd to mark
+// TestPacmanPreTransactionHookContainerSystemdSshdRestartIsConditional pins the sibling entry for the
+// other hook in the same class -- a PRE-transaction hook, where its sibling above the class is a
+// post-transaction one. pacman runs a pre-transaction hook for openssh that asks systemd to mark
 // sshd.service for restart; a container build has no PID 1, systemd refuses, the hook exits nonzero, and
 // pacman reports it as the same generic wrapper error as the modules-load hook.
 //
 // Captured verbatim 2026-10-14 from the COLD build of openclaw.check-openclaw-pod
 // (.check/openclaw.check-openclaw-pod/2026.287.1227/image-build.log:1321-1324), the run filed as
 // opencharly/plugin-check#103.
-func TestPacmanPostTransactionHookContainerSystemdSshdRestartIsConditional(t *testing.T) {
+func TestPacmanPreTransactionHookContainerSystemdSshdRestartIsConditional(t *testing.T) {
 	const captured = "(1/2) Marking sshd.service for restart...\n" +
 		"System has not been booted with systemd as init system (PID 1). Can't operate.\n" +
 		"Failed to connect to system scope bus via local transport: Host is down\n" +
@@ -1190,7 +1191,7 @@ func TestPacmanPostTransactionHookContainerSystemdSshdRestartIsConditional(t *te
 		"(2/2) Removing old entries from the info directory file...\n"
 	const errLine = "error: command failed to execute correctly\n"
 	const step = "STEP 12/14: RUN pacman -S --needed ...\n"
-	const id = "pacman-post-transaction-hook-container-systemd-sshd-restart"
+	const id = "pacman-pre-transaction-hook-container-systemd-sshd-restart"
 
 	t.Run("the captured sshd restart hook sequence is exempt", func(t *testing.T) {
 		d := scanStepDiagnostics(step + captured)
