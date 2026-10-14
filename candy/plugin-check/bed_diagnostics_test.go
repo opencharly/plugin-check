@@ -1173,3 +1173,49 @@ func TestRealVmBuildGrubRegionIsFullyAllowlisted(t *testing.T) {
 		t.Fatalf("want both os-prober lines claimed by mkinitcpio-chroot-warnings, got %d claims: %+v", claimed, d.Findings)
 	}
 }
+
+// TestPacmanPreTransactionHookContainerSystemdSshdRestartIsConditional pins the sibling entry for the
+// other hook in the same class -- a PRE-transaction hook, where its sibling above the class is a
+// post-transaction one. pacman runs a pre-transaction hook for openssh that asks systemd to mark
+// sshd.service for restart; a container build has no PID 1, systemd refuses, the hook exits nonzero, and
+// pacman reports it as the same generic wrapper error as the modules-load hook.
+//
+// Captured verbatim 2026-10-14 from the COLD build of openclaw.check-openclaw-pod
+// (.check/openclaw.check-openclaw-pod/2026.287.1227/image-build.log:1320-1324 (the wrapper error is line 1323; the earlier 1321-1324 was copied from a previous body rather than taken from the capture)), the run filed as
+// opencharly/plugin-check#103.
+func TestPacmanPreTransactionHookContainerSystemdSshdRestartIsConditional(t *testing.T) {
+	// Order matters and this fixture follows the CAPTURE, not convenience: the wrapper error comes AFTER the
+	// "(2/2)" line, four lines below the banner, with two intervening lines. RecoveredBy's {0,3} window would
+	// also accept the swapped order -- which is exactly why the order is asserted here rather than left to the
+	// window: a fixture that passes for the wrong reason proves nothing about the class.
+	const captured = "(1/2) Marking sshd.service for restart...\n" +
+		"System has not been booted with systemd as init system (PID 1). Can't operate.\n" +
+		"Failed to connect to system scope bus via local transport: Host is down\n" +
+		"(2/2) Removing old entries from the info directory file...\n" +
+		"error: command failed to execute correctly\n"
+	const errLine = "error: command failed to execute correctly\n"
+	const step = "STEP 12/14: RUN pacman -S --needed ...\n"
+	const id = "pacman-pre-transaction-hook-container-systemd-sshd-restart"
+
+	t.Run("the captured sshd restart hook sequence is exempt", func(t *testing.T) {
+		d := scanStepDiagnostics(step + captured)
+		if d.Errors != 0 || d.Allowlisted != 1 || d.fails(defaultDiagnosticPolicy()) {
+			t.Errorf("the sshd restart hook's wrapper error must be exempt; got %+v", d)
+		}
+		if got := allowIDForLine(d, errLine); got != id {
+			t.Errorf("the wrapper error must be claimed by its OWN entry, got %q", got)
+		}
+	})
+
+	t.Run("the wrapper error with no sshd banner in the log is fatal", func(t *testing.T) {
+		// Same wrapper wording, no sshd restart banner: nothing here proves the class.
+		const bare = "error: command failed to execute correctly\n"
+		d := scanStepDiagnostics(step + bare)
+		if d.Errors != 1 || d.Allowlisted != 0 {
+			t.Errorf("a wrapper error with no banner must stay fatal; got %+v", d)
+		}
+		if got := allowIDForLine(d, errLine); got == id {
+			t.Errorf("the sshd entry must not claim a wrapper error whose banner is absent, got %q", got)
+		}
+	})
+}
