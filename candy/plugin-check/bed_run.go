@@ -184,13 +184,22 @@ func withRunTag(args []string, tag string) []string {
 // bedAdd builds a `charly deploy add` argv for a BED deploy. Every deploy a bed makes goes through
 // it, so the bed-only flags are declared once instead of at six call sites (R3).
 //
+// THE RUN TAG IS ONE OF THOSE FLAGS, and it is the reason this function takes it: `charly deploy
+// add` with no `--tag` resolves "the newest local CalVer" of the box, so a box with more than one
+// local build can have its pod or VM run an artifact this run did not build — and the live verdict
+// then certifies it. Measured on `check-crabbox-pod`: `check-image` (which uses the run-tagged ref)
+// asserted the layer's `0.51.0` and passed, while the pod's `check-live` reported `0.48.1` and the
+// older layer's baked plan, i.e. a different image (opencharly/plugin-check#115). The pod path had
+// been tagged by hand at one call site; the VM path had no tag anywhere. Putting it HERE — where
+// every deploy already passes — is what stops the next call site from missing it (R2).
+//
 // --dev-local-pkg is the deploy-side twin of the flag every bed image build already passes. Without
 // it, a localpkg candy whose package source cannot be found takes the deploy path's benign skip and
 // the bed installs nothing — which is how check-fedora-vm stopped building its rpm against a
 // missing package source and failed later at a live `rpm -q` that explained none of it.
 // A bed exists to prove the in-development package builds and installs, so on a bed that condition
 // must be loud.
-func bedAdd(args ...string) []string {
+func bedAdd(refs []string, tag string) []string {
 	// The ref is a ROSTER address ("openclaw.check-openclaw-pod", or a child "ns.box.child") and the deploy
 	// side needs the DEPLOY KEY, for the same reason configStartArgs converts before config/start: a roster
 	// address does not resolve from the project root, and the deploy resolver then derives a bare NAMESPACE
@@ -201,10 +210,11 @@ func bedAdd(args ...string) []string {
 	//
 	// Remote refs are left alone: spec.ResolveBoxName resolves those by parsing, not by namespace splitting,
 	// so the roster conversion would mangle them.
+	args := refs
 	if len(args) > 0 && !isRemoteImageRef(args[0]) {
 		args = append([]string{deployKeyForBed(args[0])}, args[1:]...)
 	}
-	return append([]string{"deploy", "add"}, append(args, "--dev-local-pkg")...)
+	return withRunTag(append([]string{"deploy", "add"}, append(args, "--dev-local-pkg")...), tag)
 }
 
 // deployKeyForBed maps a bed's ROSTER address to the DEPLOY KEY the deploy phase creates.
@@ -1052,14 +1062,14 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// boots it; waitReady runs after it, before the checks.
 		if opts.Anchor == "" {
 			waitReady()
-			if err := step("deploy-add", bedAdd(name, d.VMTemplate)...); err != nil {
+			if err := step("deploy-add", bedAdd([]string{name, d.VMTemplate}, d.ImageTag)...); err != nil {
 				return fail("deploy add %s: %w", name, err)
 			}
 			// Deploy the VM's nested HOST-ROOTED (kind:local) children only (d.LocalChildKeys, the
 			// host-resolved deployNestedLocalChildren subset). A VM's nested CONTAINER children are
 			// deployed IN-GUEST by plugin-deploy-vm's PostApply, so a host-side re-deploy would be wrong.
 			for _, childKey := range d.LocalChildKeys {
-				if err := step("deploy-"+childKey, bedAdd(name+"."+childKey)...); err != nil {
+				if err := step("deploy-"+childKey, bedAdd([]string{name + "." + childKey}, d.ImageTag)...); err != nil {
 					return fail("deploy nested local child %s.%s: %w", name, childKey, err)
 				}
 			}
@@ -1072,7 +1082,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// OpPrepareVenue/OpApply), then wait on the managed ssh alias (the plugin writes it
 		// under VmSshAlias(VmDomainIdentity(name)) — identical to the vm path). No
 		// `charly vm build`/`create`; no libvirt domain; no `charly config`/`start`.
-		if err := step("deploy-add", bedAdd(name)...); err != nil {
+		if err := step("deploy-add", bedAdd([]string{name}, d.ImageTag)...); err != nil {
 			return fail("deploy add %s: %w", name, err)
 		}
 		// CR registered — the failure tail now disposes of it unless keepVenueOnFailure says otherwise
@@ -1082,7 +1092,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// Nested HOST-ROOTED (kind:local) children deploy host-side after the root;
 		// the kubevirt plugin's own PostApply handles in-guest children.
 		for _, childKey := range d.ChildKeys {
-			if err := step("deploy-"+childKey, bedAdd(name+"."+childKey)...); err != nil {
+			if err := step("deploy-"+childKey, bedAdd([]string{name + "." + childKey}, d.ImageTag)...); err != nil {
 				return fail("deploy nested child %s.%s: %w", name, childKey, err)
 			}
 		}
@@ -1100,10 +1110,11 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		}
 		// Positionals first, then flags: bedAdd appends its own, so the ref must already be in
 		// place before it is called.
-		addArgs := append(bedAdd(positional...), "--node-only")
+		addArgs := append(bedAdd(positional, d.ImageTag), "--node-only")
 		// The pre-run tear-down of any lingering bed + sibling members from a previous interrupted
 		// run now happens in the hoisted pre-run-cleanup block above, before persist.
-		addArgs = withRunTag(addArgs, d.ImageTag)
+		// (The run tag used to be appended HERE by hand, at this one call site — which is exactly
+		// why the VM path, three other call sites away, had none. bedAdd carries it now.)
 		if err := step("deploy-add", addArgs...); err != nil {
 			return fail("deploy add %s: %w", name, err)
 		}
@@ -1123,7 +1134,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 			waitReady()
 			// Deploy any nested children onto the started substrate, pre-order.
 			for _, childKey := range d.ChildKeys {
-				if err := step("deploy-"+childKey, bedAdd(name+"."+childKey)...); err != nil {
+				if err := step("deploy-"+childKey, bedAdd([]string{name + "." + childKey}, d.ImageTag)...); err != nil {
 					return fail("deploy nested child %s.%s: %w", name, childKey, err)
 				}
 			}
@@ -1324,13 +1335,13 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 			}
 			if d.IsVM {
 				for _, childKey := range d.LocalChildKeys {
-					if err := step("redeploy-"+childKey, bedAdd(name+"."+childKey)...); err != nil {
+					if err := step("redeploy-"+childKey, bedAdd([]string{name + "." + childKey}, d.ImageTag)...); err != nil {
 						return fail("re-deploy nested local child %s.%s (fresh rebuild): %w", name, childKey, err)
 					}
 				}
 			} else {
 				for _, childKey := range d.ChildKeys {
-					if err := step("redeploy-"+childKey, bedAdd(name+"."+childKey)...); err != nil {
+					if err := step("redeploy-"+childKey, bedAdd([]string{name + "." + childKey}, d.ImageTag)...); err != nil {
 						return fail("re-deploy nested child %s.%s (fresh rebuild): %w", name, childKey, err)
 					}
 				}
