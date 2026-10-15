@@ -38,8 +38,14 @@ func (e *CheckFailedError) Error() string {
 	return fmt.Sprintf("%d check(s) failed", e.Failed)
 }
 
-// CheckSkippedError marks a bed skipped for a missing host prerequisite. The plugin's Invoke maps it
-// to sdk.ExitCodeError{Code: CheckSkippedExitCode} so the compiled-in command exits 3.
+// CheckSkippedError marks a phase that RAN NOTHING, so that it is recorded as a skip rather than as
+// a verdict. Two instances reach it: a bed that cannot run because a required HOST prerequisite is
+// absent (a GPU resource whose vendor has no matching card), and any check mode whose plan
+// resolution comes back EMPTY — an image that baked no `plan:`, a deployment whose source declares
+// none, a bed child whose own plan and add_candies contribute nothing (no_plan_skip.go). The
+// plugin's Invoke maps it to sdk.ExitCodeError{Code: CheckSkippedExitCode} so the compiled-in
+// command exits 3, and the caller can tell "nothing ran" from "checks failed" (2) and from
+// "couldn't run" (1) without parsing prose.
 type CheckSkippedError struct{ Msg string }
 
 func (e *CheckSkippedError) Error() string { return e.Msg }
@@ -109,7 +115,10 @@ func (c *CheckBoxCmd) Run() error {
 	fmt.Fprintf(os.Stderr, "Image: %s\n", reply.Image)
 	if reply.NoSteps {
 		fmt.Fprintln(os.Stderr, "No plan steps defined for this image.")
-		return nil
+		// Nothing ran, so there is no verdict to report — see no_plan_skip.go. This arm used to
+		// return nil (exit 0), which made "this image bakes no plan" indistinguishable from "its
+		// plan passed"; in a bed it banked the vacuous phase as ok: true.
+		return skipNoPlanSteps("this image")
 	}
 
 	// YAML format emits the shape the benchmark scorer (ParseCharlyTestOutput) expects — the

@@ -54,7 +54,9 @@ func (c *CheckFeatureRunCmd) Run() error {
 	}
 	if reply.NoSteps {
 		fmt.Fprintln(os.Stderr, "No plan steps baked into this deployment's image (author a plan: with check: steps).")
-		return nil
+		// No plan, no acceptance test, no verdict: a SKIP rather than the exit-0 pass this arm
+		// used to report (no_plan_skip.go; opencharly/plugin-check#110).
+		return skipNoPlanSteps("this deployment's image")
 	}
 	if reply.Header != "" {
 		fmt.Fprintln(os.Stderr, reply.Header)
