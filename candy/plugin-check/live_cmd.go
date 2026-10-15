@@ -126,7 +126,10 @@ func (c *CheckLiveCmd) Run() error {
 
 	if reply.NoSteps {
 		fmt.Fprintln(os.Stderr, "No plan steps defined for this image.")
-		return nil
+		// A phase that resolved nothing asserted nothing: a SKIP, not a pass. This is the arm that
+		// banked a bed's vacuous child phase as `ok: true` (opencharly/plugin-check#110) — and it
+		// names the target it judged, because the child ref is the one thing the bed's log needs.
+		return skipNoPlanSteps("deployment " + c.Box)
 	}
 	if reply.Header != "" {
 		fmt.Fprintln(os.Stderr, reply.Header)

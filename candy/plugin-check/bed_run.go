@@ -84,6 +84,13 @@ type stepResult struct {
 	// that asserted nothing, which is charly#865's sentence one layer up: "a check that cannot run is
 	// not a check that passed" (opencharly/plugin-check#93).
 	Skipped int
+	// SkipReason marks a step whose phase resolved NOTHING and therefore reported a skip instead of
+	// a verdict (no_plan_skip.go). OK stays true — a skip is not a failure, the same posture this
+	// struct's Skipped field takes for a phase whose inner steps all skipped — but the step is then
+	// not counted as a PASS either, which is the whole point: `opencharly/plugin-check#110` was the
+	// record saying `ok: true` for a child phase whose entire log was "No plan steps defined for
+	// this image." Written only when the step skipped; its PRESENCE is the skip marker.
+	SkipReason string
 	// Diag is the scan of this step's retained log (bed_diagnostics.go). The exit code alone
 	// is NOT the verdict: a tool that treats its own failure as non-fatal — pacman refusing an
 	// install scriptlet, the RCA case — exits 0 with the failure sitting in the log, and R10
@@ -791,6 +798,19 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// way). diagPolicy owns the disposition; the report goes to summary.yml either way.
 		diag := scanStepDiagnostics(logText)
 		diagFail := diag.failure(diagPolicy, stepName, logPath)
+		// A child that reports a SKIP resolved nothing: it rendered no verdict, so it must not be
+		// banked as a PASS (opencharly/plugin-check#110). Recorded and announced, then the bed
+		// continues — a skip is not a failure, and the reason is what tells a reader that this step
+		// asserted nothing.
+		if skipReason := stepSkipReason(reply.ExitCode, logText); skipReason != "" {
+			if writeErr := os.WriteFile(logPath, []byte(logText), 0o644); writeErr != nil {
+				fmt.Fprintf(os.Stderr, "charly check run %s: writing %s: %v\n", name, logPath, writeErr)
+			}
+			res.Step = append(res.Step, stepResult{Name: stepName, Duration: dur, OK: true, Diag: diag,
+				Skipped: skippedFromRollup(logText), SkipReason: skipReason})
+			fmt.Fprintf(os.Stderr, "charly check run %s: [%s] SKIPPED after %s: %s (log: %s)\n", name, stepName, dur.Round(time.Millisecond), skipReason, logPath)
+			return nil
+		}
 		ok := cerr == nil && reply.ExitCode == 0 && diagFail == ""
 		res.Step = append(res.Step, stepResult{Name: stepName, Duration: dur, OK: ok, Diag: diag,
 			Skipped: skippedFromRollup(logText)})
@@ -1551,6 +1571,13 @@ func writeBedSummary(dir string, res *bedRunResult) {
 		// Emitted for EVERY step, like `ok:` itself: a reader must be able to tell "this step skipped
 		// nothing" from "this record predates the field", and an absent line cannot say which.
 		fmt.Fprintf(&buf, "    skipped: %d\n", s.Skipped)
+		// A step whose PHASE resolved nothing (no_plan_skip.go) says so by NAME, not by count: its
+		// `skipped:` is 0 because no inner step skipped — nothing was resolved to skip. Present only
+		// when the step skipped, so the key's presence IS the marker and `ok: true` beside it cannot
+		// read as "this phase asserted something and it passed" (opencharly/plugin-check#110).
+		if s.SkipReason != "" {
+			fmt.Fprintf(&buf, "    skip_reason: %s\n", yamlScalar(s.SkipReason))
+		}
 		writeStepDiagnostics(&buf, "    ", s.Diag)
 		total += s.Duration
 	}

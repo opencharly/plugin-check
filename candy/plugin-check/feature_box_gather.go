@@ -49,7 +49,9 @@ func (c *CheckFeatureBoxCmd) Run() error {
 	if reply.NoSteps {
 		fmt.Fprintf(os.Stderr, "Image: %s\n", reply.Image)
 		fmt.Fprintln(os.Stderr, "No plan steps baked into this image (author a plan: with check: steps).")
-		return nil
+		// The sibling arm's rule, applied here too: an empty resolution is a SKIP, not a pass
+		// (no_plan_skip.go). The provenance line above stays FIRST on every path.
+		return skipNoPlanSteps("this image")
 	}
 	if reply.Header != "" {
 		fmt.Fprintln(os.Stderr, reply.Header)
