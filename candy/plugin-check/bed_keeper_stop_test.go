@@ -163,3 +163,66 @@ func equalArgv(a, b []string) bool {
 	}
 	return true
 }
+
+// keeperStopStep returns the emitted keeper-stop argv for a policy, or fails the test
+// when the sequence carries no keeper stop at all.
+func keeperStopStep(t *testing.T, d spec.CheckBedReply, snap *spec.VmSnapshotPolicy) []string {
+	t.Helper()
+	for _, s := range goldenCaptureSteps(d, snap) {
+		if s.Name == "snapshot-stop-keeper" {
+			return s.Argv
+		}
+	}
+	t.Fatal("goldenCaptureSteps emitted no keeper stop")
+	return nil
+}
+
+// TestBedKeeperStop_ForceStopDeclared pins charly#934's knob: a bed whose keeper guest
+// ignores ACPI declares force_stop: true on its snapshot policy and the emitted
+// keeper-stop step then carries --force, while an undeclared policy keeps the graceful
+// form it has always had. The ONLY difference is the declared intent — measured on a
+// live keeper: graceful failed for the full 3m0s cap, forced released it in 38s, and
+// `vm list` reported the domain shut off and still DEFINED (the venue stays KEPT).
+func TestBedKeeperStop_ForceStopDeclared(t *testing.T) {
+	d := spec.CheckBedReply{IsVM: true, VMTemplate: "omarchy-vm", BedDomain: "check-omarchy-pr-vm-anchored"}
+	graceful := &spec.VmSnapshotPolicy{OnFinalize: "golden"}
+	forced := &spec.VmSnapshotPolicy{OnFinalize: "golden", ForceStop: true}
+
+	wantGraceful := []string{"vm", "stop", "omarchy-vm", "--domain", "check-omarchy-pr-vm-anchored"}
+	wantForced := []string{"vm", "stop", "omarchy-vm", "--domain", "check-omarchy-pr-vm-anchored", "--force"}
+
+	if got := keeperStopStep(t, d, graceful); !equalArgv(got, wantGraceful) {
+		t.Errorf("undeclared policy: keeper stop %v, want the graceful form %v", got, wantGraceful)
+	}
+	if got := keeperStopStep(t, d, forced); !equalArgv(got, wantForced) {
+		t.Errorf("force_stop: true: keeper stop %v, want the forced form %v", got, wantForced)
+	}
+	if got := keeperStopPath(keeperStopStep(t, d, forced)); got != "forced" {
+		t.Errorf("the note must name the forced path, got %q", got)
+	}
+	if got := keeperStopPath(keeperStopStep(t, d, graceful)); got != "graceful" {
+		t.Errorf("the note must name the graceful path, got %q", got)
+	}
+}
+
+// TestBedKeeperStopRetry_OneBoundedFallback pins the BOUND on the force fallback: a
+// failed graceful keeper stop retries once with the forced argv, a failed FORCED one
+// retries not at all, and no other step ever falls back. So a bed whose guest ignores
+// ACPI is released by the fallback, and a real failure is still reported rather than
+// looped over (charly#934).
+func TestBedKeeperStopRetry_OneBoundedFallback(t *testing.T) {
+	d := spec.CheckBedReply{IsVM: true, VMTemplate: "omarchy-vm", BedDomain: "check-omarchy-pr-vm-anchored"}
+	graceful := keeperStopArgs(d, false)
+	forced := keeperStopArgs(d, true)
+
+	got, ok := keeperStopRetry("snapshot-stop-keeper", graceful, d)
+	if !ok || !keeperStopForced(got) {
+		t.Fatalf("a failed graceful keeper stop must retry with the forced argv; got %v ok=%v", got, ok)
+	}
+	if _, ok := keeperStopRetry("snapshot-stop-keeper", forced, d); ok {
+		t.Error("a failed FORCED keeper stop must not retry — the fallback is bounded to one attempt")
+	}
+	if _, ok := keeperStopRetry("snapshot-capture", graceful, d); ok {
+		t.Error("only the keeper stop has a fallback; the capture must not")
+	}
+}
