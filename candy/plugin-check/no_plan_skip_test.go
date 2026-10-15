@@ -1,6 +1,8 @@
 package check
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -75,5 +77,55 @@ func TestStepSkipReason(t *testing.T) {
 				t.Fatalf("stepSkipReason(%d) = %q, want it to contain %q — the reason must carry the child's own sentence (or name the code), never a bare marker", tc.exitCode, got, tc.wantSub)
 			}
 		})
+	}
+}
+
+// TestBedSummaryRecordsASkippedPhase gates the OTHER half of the record: the classifier decides a
+// step skipped, and `summary.yml` must then say so. A step that resolved nothing has `skipped: 0`
+// (nothing was resolved to skip), so without this key the record is byte-identical to a fully-green
+// phase's — which is exactly the reading `opencharly/plugin-check#110` is about. The key is emitted
+// only when the step skipped, so its PRESENCE is the marker, and its absence on the neighbouring
+// green step is the statement that that one did assert something.
+func TestBedSummaryRecordsASkippedPhase(t *testing.T) {
+	const reason = "no plan steps resolved for deployment check-arch-vm.charly-cachyos-tailscale-test: this phase asserted nothing, so it is recorded as a SKIP and not as a pass (opencharly/plugin-check#110)"
+	dir := t.TempDir()
+	writeBedSummary(dir, &bedRunResult{
+		Bed:    "check-arch-vm",
+		CalVer: "2026.288.0001",
+		OK:     true,
+		Step: []stepResult{
+			{Name: "check-live-charly-cachyos-tailscale-test", OK: true, SkipReason: reason},
+			{Name: "check-live-arch-host", OK: true},
+		},
+	})
+
+	raw, err := os.ReadFile(filepath.Join(dir, "summary.yml"))
+	if err != nil {
+		t.Fatalf("reading summary.yml: %v", err)
+	}
+	summary := string(raw)
+
+	// Split the steps block so every assertion is about the step it belongs to, not about the file
+	// as a whole: the defect this guards against is a reader attributing one phase's status to
+	// another, which is how a vacuous child's PASS went unnoticed next to a green sibling.
+	blocks := strings.Split(summary, "  - name: ")
+	if len(blocks) != 3 {
+		t.Fatalf("summary.yml carries %d step blocks, want 2:\n%s", len(blocks)-1, summary)
+	}
+	skipped, green := blocks[1], blocks[2]
+	if !strings.Contains(skipped, "check-live-charly-cachyos-tailscale-test") {
+		t.Fatalf("the skipped step is not the first block:\n%s", summary)
+	}
+	if !strings.Contains(skipped, "skip_reason: ") {
+		t.Fatalf("the skipped step's record carries no skip_reason:\n%s\nwant a `skip_reason:` line under it — `ok: true` beside `skipped: 0` is what a fully-green phase looks like, which is the reading this closes", skipped)
+	}
+	if !strings.Contains(skipped, "this phase asserted nothing") {
+		t.Fatalf("the skip_reason does not carry the reason itself:\n%s", skipped)
+	}
+	if !strings.Contains(skipped, "skipped: 0") {
+		t.Fatalf("the skipped step's `skipped:` count should still be 0 — nothing was resolved to skip, and the reason is what marks the step:\n%s", skipped)
+	}
+	if strings.Contains(green, "skip_reason: ") {
+		t.Fatalf("a green step grew a skip_reason, so the key no longer marks anything:\n%s", green)
 	}
 }
