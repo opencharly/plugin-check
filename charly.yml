@@ -95,3 +95,48 @@ check-nonhost-leaf-route:
         command:
           command: ${CHARLY_BIN} check live check-nonhost-leaf.check-nonhost-leaf-pod
           in_container: false
+
+# The in-repo R10 witness for opencharly/plugin-check#110 — the VACUOUS CHILD PHASE.
+#
+# The class bed (charly's assembled `check-local-vm`) exercises the command surface end to end but
+# CANNOT reach this change's branch: every child it runs resolves a real plan, so no phase ever takes
+# the empty-resolution path — a run that would be byte-identical without the change. This bed IS that
+# path, authored in the same in-repo idiom as the #78 and #86 witnesses above.
+check-empty-venue:
+  local:
+    description: >-
+      Bare kind:local template whose deployments resolve NO plan steps — an explicit empty `candy:`
+      list says "deliberately nothing", so no candy plan can contribute one either.
+    candy: []
+
+check-empty-resolution-witness:
+  local:
+    from: check-empty-venue
+    host: local
+    disposable: true
+    description: >-
+      R10 witness for opencharly/plugin-check#110. The change makes an EMPTY plan resolution a SKIP —
+      exit 3 with a `SKIPPED — …` line naming the issue — instead of the exit-0 non-verdict it was,
+      and makes a bed record such a phase with a per-step `skip_reason` instead of banking it as a
+      pass. The plan step asserts the first half by driving the empty child phase through
+      `charly check live` and requiring the skip (before the change that command exits 0 and prints
+      no such line, so this step FAILS without it); the nested CHILD is what makes the bed runner
+      take the same path as its own phase, so the run's summary.yml records the skipped phase WITH
+      its reason — the emitted artefact this change adds.
+    plan:
+      - check: an EMPTY plan resolution is a SKIP — exit 3 with a SKIPPED line naming the issue — not the exit-0 non-verdict it used to be
+        id: empty-resolution-is-a-skip
+        exit_status: 3
+        stderr:
+          - contains: SKIPPED —
+          - contains: opencharly/plugin-check#110
+        context: [runtime]
+        command:
+          command: ${CHARLY_BIN} check live check-empty-resolution-witness.empty-plan-child
+          in_container: false
+    empty-plan-child:
+      local:
+        description: >-
+          The empty-resolution CHILD: no `plan:` of its own and no candy to contribute one, so the
+          phase the bed runner drives for it resolves NOTHING.
+        candy: []
