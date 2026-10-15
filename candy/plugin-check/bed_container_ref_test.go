@@ -72,7 +72,7 @@ func TestResolveBedContainerConvertsRosterAddress(t *testing.T) {
 // opencharly/plugin-build#28. Converting inside bedAdd is what makes the ninth caller impossible to miss.
 func TestBedAddConvertsTheRosterAddress(t *testing.T) {
 	t.Run("a roster address becomes the deploy key, flags follow it", func(t *testing.T) {
-		got := bedAdd("openclaw.check-openclaw-pod")
+		got := bedAdd([]string{"openclaw.check-openclaw-pod"}, "")
 		want := []string{"deploy", "add", "openclaw/check-openclaw-pod", "--dev-local-pkg"}
 		if len(got) != len(want) {
 			t.Fatalf("bedAdd = %q, want %q", got, want)
@@ -85,27 +85,27 @@ func TestBedAddConvertsTheRosterAddress(t *testing.T) {
 	})
 
 	t.Run("a nested child keeps its tail", func(t *testing.T) {
-		got := bedAdd("openclaw.check-openclaw-pod.child")
+		got := bedAdd([]string{"openclaw.check-openclaw-pod.child"}, "")
 		if got[2] != "openclaw/check-openclaw-pod.child" {
 			t.Fatalf("bedAdd child ref = %q, want openclaw/check-openclaw-pod.child", got[2])
 		}
 	})
 
 	t.Run("a plain name with no namespace is left alone", func(t *testing.T) {
-		if got := bedAdd("check-local"); got[2] != "check-local" {
+		if got := bedAdd([]string{"check-local"}, ""); got[2] != "check-local" {
 			t.Fatalf("bedAdd(plain) = %q, want check-local unchanged", got[2])
 		}
 	})
 
 	t.Run("a remote ref is NOT mangled", func(t *testing.T) {
 		const remote = "@github.com/opencharly/charly/charly.yml"
-		if got := bedAdd(remote); got[2] != remote {
+		if got := bedAdd([]string{remote}, ""); got[2] != remote {
 			t.Fatalf("bedAdd(remote) = %q, want it untouched -- spec.ResolveBoxName resolves remote refs by parsing", got[2])
 		}
 	})
 
 	t.Run("a vm template argument is not mistaken for the ref", func(t *testing.T) {
-		got := bedAdd("openclaw.check-openclaw-pod", "cachyos.vm")
+		got := bedAdd([]string{"openclaw.check-openclaw-pod", "cachyos.vm"}, "")
 		if got[2] != "openclaw/check-openclaw-pod" || got[3] != "cachyos.vm" {
 			t.Fatalf("bedAdd(ref, vmTemplate) = %q, want the ref converted and the template untouched", got)
 		}
