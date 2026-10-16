@@ -41,6 +41,18 @@ import (
 // bed in 1/6 of the 30-minute cap-only window it previously consumed silently.
 const rebuildReadyDeadline = 5 * time.Minute
 
+// initialReadyDeadline bounds the FIRST readiness wait after `vm create` — the hop between
+// `[vm-create] PASS` and `[deploy-add] START` (opencharly/charly#951). It is a SEPARATE constant
+// from rebuildReadyDeadline on purpose: a rebooted clone and a freshly created guest are not the
+// same boot. The initial path can meet a first-boot guest, and vmSshReadyProbe deliberately does
+// NOT include WaitForCloudInit in the reconnect condition (cloud-init is the deploy-time race
+// guard, so deploy-add never races a still-running first-boot pacman) — which is exactly why the
+// fresh path needs the longer bound. 10 minutes is 2x the rebuild's 5 and 1/3 of the 30-minute
+// cap-only window this hop previously consumed silently, so a lease-less guest still fails the bed
+// in well under 1/3 of the time it used to, while a slow-but-healthy first boot is not
+// misclassified as a setup defect.
+const initialReadyDeadline = 10 * time.Minute
+
 // waitVenueReady runs a venue readiness probe under a TOTAL deadline and turns a deadline
 // expiry into a named, time-bounded failure. The probe receives the deadline-bounded context,
 // so the underlying readiness poll (spec/poll.PollUntil) returns as soon as the deadline
