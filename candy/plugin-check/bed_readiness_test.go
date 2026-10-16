@@ -93,3 +93,23 @@ func TestRebuildReadyDeadline_IsTighterThanTheCapItBounds(t *testing.T) {
 		t.Fatalf("rebuildReadyDeadline = %s, too tight for a loaded host to be told apart from a setup defect", rebuildReadyDeadline)
 	}
 }
+
+// TestInitialReadyDeadlineBounds mirrors the rebuild-deadline bounds AND adds the property that
+// distinguishes the two waits: the INITIAL wait follows a fresh `vm create` and can meet a
+// first-boot guest (cloud-init is deliberately NOT in the reconnect condition — see
+// vmSshReadyProbe), while the REBUILD wait follows a reboot of an already-provisioned clone. A
+// fresh boot is not a reboot, so the initial bound must not be the tighter of the two.
+// (opencharly/charly#951 — the hop between `[vm-create] PASS` and `[deploy-add] START`.)
+func TestInitialReadyDeadlineBounds(t *testing.T) {
+	const capOnlyWindow = 30 * time.Minute
+	if initialReadyDeadline <= 0 || initialReadyDeadline >= capOnlyWindow {
+		t.Fatalf("initialReadyDeadline = %s, want (0, %s)", initialReadyDeadline, capOnlyWindow)
+	}
+	if initialReadyDeadline < 3*time.Minute {
+		t.Fatalf("initialReadyDeadline = %s, too tight for a loaded host to be told apart from a setup defect", initialReadyDeadline)
+	}
+	if initialReadyDeadline < rebuildReadyDeadline {
+		t.Fatalf("initialReadyDeadline = %s, want >= rebuildReadyDeadline (%s): the initial wait follows a fresh create and can meet a first boot, while the rebuild wait follows a reboot",
+			initialReadyDeadline, rebuildReadyDeadline)
+	}
+}
