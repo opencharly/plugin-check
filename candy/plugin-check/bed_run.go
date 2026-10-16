@@ -738,16 +738,23 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// needed (#55 W3 B2): d.IsVM + d.BedDomain are already in hand from the setup reply, and
 	// spec/exec's readiness gates are pure process-driving pollers with no session/registry
 	// coupling (spec/exec/venue_wait.go's own header). Best-effort, matching the former op.
-	waitReady := func() {
+	// waitReady waits for the venue to become reachable. The VM/kubevirt arm runs under a TOTAL
+	// deadline (bed_readiness.go's initialReadyDeadline) and names the class it is waiting on, so
+	// a lease-less guest fails the bed as a time-bounded, diagnostic failure instead of stalling
+	// silently until the cap-only window closes (opencharly/charly#951 — the hop between
+	// `[vm-create] PASS` and `[deploy-add] START` had neither a bound nor a log line). The container
+	// arm keeps the shared self-bounding gate (WaitForContainerReady's 90-second no-progress
+	// watchdog early-outs a stalled container — the RCA's stall is VM-only).
+	waitReady := func() error {
 		if d.IsVM || isKubeVirt {
 			// Wait on the per-deploy DOMAIN IDENTITY (charly-<BedDomain> is the live domain /
 			// managed ssh alias, post-P33), NOT the shared entity. For a kubevirt root the
 			// alias is written by candy/plugin-kubevirt's PrepareVenue under the SAME
 			// VmSshAlias(BedDomain) scheme, so the identical readiness gate works.
-			specexec.WaitForVmSshReady(d.BedDomain)
-		} else {
-			specexec.WaitForContainerReady(name)
+			return waitVenueReady(ctx, initialReadyDeadline, d.BedDomain, vmSshReadyProbe(d.BedDomain))
 		}
+		specexec.WaitForContainerReady(name)
+		return nil
 	}
 
 	// waitRebuildReady bounds the POST-RESTART reconnect (G-3c — bed_readiness.go's RCA). A VM
@@ -757,8 +764,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	// watchdog early-outs a stalled container — the RCA's stall is VM-only).
 	waitRebuildReady := func() error {
 		if !d.IsVM {
-			waitReady()
-			return nil
+			return waitReady()
 		}
 		return waitVenueReady(ctx, rebuildReadyDeadline, d.BedDomain, vmSshReadyProbe(d.BedDomain))
 	}
@@ -1061,7 +1067,9 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// snapshot-revert-and-start step below resets the kept domain's disk and
 		// boots it; waitReady runs after it, before the checks.
 		if opts.Anchor == "" {
-			waitReady()
+			if err := phase("wait-ready", waitReady); err != nil {
+				return fail("venue readiness after vm create: %w", err)
+			}
 			if err := step("deploy-add", bedAdd([]string{name, d.VMTemplate}, d.ImageTag)...); err != nil {
 				return fail("deploy add %s: %w", name, err)
 			}
@@ -1088,7 +1096,9 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// CR registered — the failure tail now disposes of it unless keepVenueOnFailure says otherwise
 		// (opencharly/plugin-check#75).
 		venue.deployed = true
-		waitReady()
+		if err := phase("wait-ready", waitReady); err != nil {
+			return fail("venue readiness after deploy add: %w", err)
+		}
 		// Nested HOST-ROOTED (kind:local) children deploy host-side after the root;
 		// the kubevirt plugin's own PostApply handles in-guest children.
 		for _, childKey := range d.ChildKeys {
@@ -1131,7 +1141,9 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 			if err := step("start", startArgs...); err != nil {
 				return fail("start %s: %w", name, err)
 			}
-			waitReady()
+			if err := phase("wait-ready", waitReady); err != nil {
+				return fail("venue readiness after start: %w", err)
+			}
 			// Deploy any nested children onto the started substrate, pre-order.
 			for _, childKey := range d.ChildKeys {
 				if err := step("deploy-"+childKey, bedAdd([]string{name + "." + childKey}, d.ImageTag)...); err != nil {
@@ -1352,7 +1364,9 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		}
 		// Re-run the bed image's baked plan steps on the fresh rebuild (pod beds).
 		if d.RunRuntime && !d.IsVM && !d.IsLocal && !d.IsExternal && d.Image != "" {
-			waitReady()
+			if err := phase("wait-ready", waitReady); err != nil {
+				return fail("venue readiness after fresh rebuild: %w", err)
+			}
 			if err := step("feature-run-rebuild", featureRunArgs()...); err != nil {
 				return fail("feature run (fresh rebuild) %s: %w", name, err)
 			}
