@@ -38,36 +38,39 @@ func TestBuildStepEnvSizesTheChildGuardWindow(t *testing.T) {
 // #123 fixed the ROOT image-build step; #125 found the member image-build-<member>,
 // the member and root vm-build, and the update-image-<member> rebuild still inherited
 // the 120s probe bound. A build launched with the bare `step` helper can be SIGKILLed
-// by the child's idle guard exactly as before, so this test fails if any build call
-// site stops using stepEnv(..., buildStepEnv(), ...).
+// by the child's idle guard exactly as before, and a site that passes stepEnv with any
+// OTHER env drops the build-sized window just as silently. This test reads bed_run.go,
+// finds every line that starts a build (image-build / vm-build / update-image), and
+// requires BOTH stepEnv and buildStepEnv() on it; it also pins the site count so a new
+// build site cannot be added without the seam.
 func TestEveryBuildStepCarriesTheBuildWindow(t *testing.T) {
 	src, err := os.ReadFile("bed_run.go")
 	if err != nil {
 		t.Fatalf("reading bed_run.go: %v", err)
 	}
-	body := string(src)
-
-	forbidden := []string{
-		`step("image-build`,   // root + member image builds
-		`step("vm-build`,      // root + member VM builds
-		`step("update-image-`, // the fresh-rebuild gate's member rebuild
-	}
-	for _, pat := range forbidden {
-		if strings.Contains(body, pat) {
-			t.Errorf("build call site uses the bare step helper: %s — every build must go through stepEnv(..., buildStepEnv(), ...) so it carries the build-sized window", pat)
+	sites := 0
+	for i, line := range strings.Split(string(src), "\n") {
+		if !strings.Contains(line, "step") {
+			continue
+		}
+		isBuild := strings.Contains(line, `"image-build`) ||
+			strings.Contains(line, `"vm-build`) ||
+			strings.Contains(line, `"update-image-`)
+		if !isBuild {
+			continue
+		}
+		sites++
+		if !strings.Contains(line, "stepEnv(") {
+			t.Errorf("bed_run.go:%d launches a build with the bare step helper: %s", i+1, strings.TrimSpace(line))
+			continue
+		}
+		if !strings.Contains(line, "buildStepEnv()") {
+			t.Errorf("bed_run.go:%d launches a build without buildStepEnv(): %s", i+1, strings.TrimSpace(line))
 		}
 	}
-
-	required := []string{
-		`stepEnv("image-build-`,  // member image build
-		`stepEnv("image-build",`, // root image build
-		`stepEnv("vm-build-`,     // member VM build
-		`stepEnv("vm-build",`,    // root VM build
-		`stepEnv("update-image-`, // member rebuild at the update gate
-	}
-	for _, pat := range required {
-		if !strings.Contains(body, pat) {
-			t.Errorf("missing the build-window seam at %s", pat)
-		}
+	// The root image-build, the member image-build, the member vm-build, the root
+	// vm-build and the update-image rebuild.
+	if want := 5; sites != want {
+		t.Errorf("found %d build call sites, want %d — a new build site needs the stepEnv(..., buildStepEnv(), ...) seam and this count updated", sites, want)
 	}
 }
