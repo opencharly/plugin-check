@@ -515,6 +515,24 @@ func bedRunGuard(cap *bedStderrCapture, dir, name string, state *bedRunState, re
 	}
 }
 
+// buildStepNoProgress is the CHILD's readiness no_progress window for a generated BUILD
+// step. The image-build step runs `charly box build` through the cli seam, and the child's
+// own plugin dispatch carries an idle guard whose window is the project's readiness
+// no_progress (default 90s). A build's IO-bound phases — the OCI bridge's `podman load`, a
+// cold layer export — make no host-visible progress for minutes, which the guard reads as a
+// wedged call and SIGKILLs (plugin-check#123, measured live as
+// `bridging … into the podman store: podman load …: signal: killed` at 2m2s). The harness
+// must not be the reason a legitimate image build fails, so the build steps size the child's
+// window through the seam's per-call env — a build-sized bound, never the probe floor. 30m
+// stays within the default absolute_cap (30m), so the child's readiness ordering validates
+// without a second override.
+const buildStepNoProgress = "30m"
+
+// buildStepEnv is the per-call env that carries buildStepNoProgress to a build step's child.
+func buildStepEnv() map[string]string {
+	return map[string]string{"CHARLY_READINESS_NO_PROGRESS": buildStepNoProgress}
+}
+
 // runCheckBed executes the canonical R10 sequence for one check bed and writes
 // per-step logs + summary.yml to .check/<name>/<calver>/. Returns the result struct
 // (always non-nil once setup succeeds) and the first error encountered.
@@ -795,7 +813,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 
 	// step records a step's outcome (a `charly` subcommand over the cli seam) and
 	// writes its log file. Returns the run error so the caller can short-circuit.
-	step := func(stepName string, argv ...string) error {
+	stepEnv := func(stepName string, env map[string]string, argv ...string) error {
 		state.enterStep(stepName)
 		defer state.leaveStep()
 		t0 := time.Now()
@@ -805,7 +823,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		if writeErr := os.WriteFile(logPath, []byte("status: RUNNING\ncommand: "+command+"\n"), 0o644); writeErr != nil {
 			fmt.Fprintf(os.Stderr, "charly check run %s: [%s] cannot initialize log %s: %v\n", name, stepName, logPath, writeErr)
 		}
-		reply, cerr := bedCliCombined(ex, ctx, argv...)
+		reply, cerr := bedCliCombinedEnv(ex, ctx, env, argv...)
 		dur := time.Since(t0)
 		logText := cliStepLog(reply)
 		// R10's "a warning is not a pass", MEASURED. Scan the retained log before deciding the
@@ -871,6 +889,11 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		}
 		fmt.Fprintf(os.Stderr, "charly check run %s: [%s] PASS after %s%s (log: %s)\n", name, stepName, dur.Round(time.Millisecond), diagNotice(diag), logPath)
 		return nil
+	}
+
+	// step runs a non-build step: its child keeps the project's readiness windows.
+	step := func(stepName string, argv ...string) error {
+		return stepEnv(stepName, nil, argv...)
 	}
 
 	// cleanup is the ONE venue-teardown BODY: nested children in reverse deploy order, then the
@@ -979,7 +1002,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	if len(d.Members) > 0 {
 		for _, m := range d.Members {
 			if m.IsVM {
-				if err := step("vm-build-"+m.Key, vmBuildArgs(m.From, m.FromSnapshot)...); err != nil {
+				if err := stepEnv("vm-build-"+m.Key, buildStepEnv(), vmBuildArgs(m.From, m.FromSnapshot)...); err != nil {
 					return fail("vm build member %s (%s): %w", m.Key, m.From, err)
 				}
 				continue
@@ -987,7 +1010,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 			if m.Image == "" {
 				continue // kind:local member — applies candies in place, no image
 			}
-			if err := step("image-build-"+m.Key, withRunTag([]string{"box", "build", m.Image, "--dev-local-pkg"}, d.ImageTag)...); err != nil {
+			if err := stepEnv("image-build-"+m.Key, buildStepEnv(), withRunTag([]string{"box", "build", m.Image, "--dev-local-pkg"}, d.ImageTag)...); err != nil {
 				return fail("image build member %s (%s): %w", m.Key, m.Image, err)
 			}
 			if d.RunBuild {
@@ -1014,7 +1037,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	if bedBuildsImage(d.IsVM, isKubeVirt, d.IsLocal, d.Image) {
 		// Disposable check beds ALWAYS bake the IN-DEVELOPMENT charly toolchain via
 		// --dev-local-pkg — so a bed tests the code under development.
-		if err := step("image-build", withRunTag([]string{"box", "build", d.Image, "--dev-local-pkg"}, d.ImageTag)...); err != nil {
+		if err := stepEnv("image-build", buildStepEnv(), withRunTag([]string{"box", "build", d.Image, "--dev-local-pkg"}, d.ImageTag)...); err != nil {
 			return fail("image build %s: %w", d.Image, err)
 		}
 		if d.RunBuild {
@@ -1043,7 +1066,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// (captures the golden) and retries the build once — R4: the manual
 		// "provision the base first" ordering is replaced by the runner.
 		if err := buildVmWithProvisionRetry(
-			func() error { return step("vm-build", vmBuildArgs(d.VMTemplate, d.FromSnapshot)...) },
+			func() error { return stepEnv("vm-build", buildStepEnv(), vmBuildArgs(d.VMTemplate, d.FromSnapshot)...) },
 			provisionBaseGoldenRun,
 		); err != nil {
 			return fail("vm build %s: %w", d.VMTemplate, err)

@@ -164,6 +164,15 @@ func bedCliCombined(ex *sdk.Executor, ctx context.Context, argv ...string) (spec
 	return bedCliReq(ex, ctx, spec.CliRequest{Argv: argv, Capture: true, Combined: true})
 }
 
+// bedCliCombinedEnv is bedCliCombined with a per-call ENV — the seam's placement-invariant
+// carrier for settings the CHILD must resolve for itself (its own readiness bounds), which
+// the caller cannot set into a shared process. The generated BUILD steps use it to size the
+// child's idle window (buildStepNoProgress, bed_run.go) so an IO-bound image build is not
+// read as a wedged plugin call (plugin-check#123).
+func bedCliCombinedEnv(ex *sdk.Executor, ctx context.Context, env map[string]string, argv ...string) (spec.CliReply, error) {
+	return bedCliReq(ex, ctx, spec.CliRequest{Argv: argv, Capture: true, Combined: true, Env: env})
+}
+
 // bedCliReq is the shared cli-seam marshal/dispatch/decode (R3 — one body for bedCli/bedCliCombined).
 //
 // The forked child gets the invocation's per-bed env explicitly via CliRequest.Env (never via
