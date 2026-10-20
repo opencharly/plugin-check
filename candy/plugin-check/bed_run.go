@@ -1002,7 +1002,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	if len(d.Members) > 0 {
 		for _, m := range d.Members {
 			if m.IsVM {
-				if err := step("vm-build-"+m.Key, vmBuildArgs(m.From, m.FromSnapshot)...); err != nil {
+				if err := stepEnv("vm-build-"+m.Key, buildStepEnv(), vmBuildArgs(m.From, m.FromSnapshot)...); err != nil {
 					return fail("vm build member %s (%s): %w", m.Key, m.From, err)
 				}
 				continue
@@ -1010,7 +1010,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 			if m.Image == "" {
 				continue // kind:local member — applies candies in place, no image
 			}
-			if err := step("image-build-"+m.Key, withRunTag([]string{"box", "build", m.Image, "--dev-local-pkg"}, d.ImageTag)...); err != nil {
+			if err := stepEnv("image-build-"+m.Key, buildStepEnv(), withRunTag([]string{"box", "build", m.Image, "--dev-local-pkg"}, d.ImageTag)...); err != nil {
 				return fail("image build member %s (%s): %w", m.Key, m.Image, err)
 			}
 			if d.RunBuild {
@@ -1066,7 +1066,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// (captures the golden) and retries the build once — R4: the manual
 		// "provision the base first" ordering is replaced by the runner.
 		if err := buildVmWithProvisionRetry(
-			func() error { return step("vm-build", vmBuildArgs(d.VMTemplate, d.FromSnapshot)...) },
+			func() error { return stepEnv("vm-build", buildStepEnv(), vmBuildArgs(d.VMTemplate, d.FromSnapshot)...) },
 			provisionBaseGoldenRun,
 		); err != nil {
 			return fail("vm build %s: %w", d.VMTemplate, err)
@@ -1295,7 +1295,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 				if m.Image == "" {
 					continue
 				}
-				if err := step("update-image-"+m.Key, withRunTag([]string{"box", "build", m.Image, "--dev-local-pkg"}, d.ImageTag)...); err != nil {
+				if err := stepEnv("update-image-"+m.Key, buildStepEnv(), withRunTag([]string{"box", "build", m.Image, "--dev-local-pkg"}, d.ImageTag)...); err != nil {
 					return fail("rebuild member image %s (%s): %w", m.Key, m.Image, err)
 				}
 			}
