@@ -21,8 +21,8 @@ func TestBedDeployCarriesTheRunTag(t *testing.T) {
 	// arm, and the pod arm's positional form.
 	argvs := map[string][]string{
 		"vm root":     bedAdd([]string{"check-arch-vm", "arch"}, tag),
-		"vm child":    bedAdd([]string{"check-arch-vm.arch-host"}, tag),
-		"local child": bedAdd([]string{"check-crabbox-e2e-pod.child"}, tag),
+		"vm child":    bedAddChild("check-arch-vm", "arch-host", tag),
+		"local child": bedAddChild("check-crabbox-e2e-pod", "child", tag),
 		"pod arm":     append(bedAdd([]string{"check-crabbox-pod", "crabbox"}, tag), "--node-only"),
 	}
 	for name, argv := range argvs {

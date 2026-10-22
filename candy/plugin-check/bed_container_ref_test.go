@@ -2,6 +2,7 @@ package check
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/opencharly/sdk/kit"
@@ -84,10 +85,10 @@ func TestBedAddConvertsTheRosterAddress(t *testing.T) {
 		}
 	})
 
-	t.Run("a nested child keeps its tail", func(t *testing.T) {
-		got := bedAdd([]string{"openclaw.check-openclaw-pod.child"}, "")
+	t.Run("a namespaced nested child keeps its tail", func(t *testing.T) {
+		got := bedAddChild("openclaw.check-openclaw-pod", "child", "")
 		if got[2] != "openclaw/check-openclaw-pod.child" {
-			t.Fatalf("bedAdd child ref = %q, want openclaw/check-openclaw-pod.child", got[2])
+			t.Fatalf("bedAddChild child ref = %q, want openclaw/check-openclaw-pod.child", got[2])
 		}
 	})
 
@@ -108,6 +109,39 @@ func TestBedAddConvertsTheRosterAddress(t *testing.T) {
 		got := bedAdd([]string{"openclaw.check-openclaw-pod", "cachyos.vm"}, "")
 		if got[2] != "openclaw/check-openclaw-pod" || got[3] != "cachyos.vm" {
 			t.Fatalf("bedAdd(ref, vmTemplate) = %q, want the ref converted and the template untouched", got)
+		}
+	})
+}
+
+// TestBedAddChildConvertsTheRootBeforeAppendingTheChild pins the nested-child ref shape.
+//
+// A child reference is `<root>.<child>`. deployKeyForBed splits at the FIRST dot, which is the
+// namespace boundary only for a NAMESPACED root. Passing the whole dotted address through bedAdd
+// rewrites a non-namespaced root's child as `<root>/<child>` — a deploy key nothing creates — so
+// the bed fails at `deploy add` before any check runs (plugin-check#127). The conversion must
+// happen on the ROOT alone, and the child is appended to the resulting key.
+func TestBedAddChildConvertsTheRootBeforeAppendingTheChild(t *testing.T) {
+	const tag = "2026.295.1200"
+
+	t.Run("a non-namespaced root keeps the dotted child path", func(t *testing.T) {
+		got := bedAddChild("check-containerd-vm", "check-containerd-vm-member", tag)
+		want := []string{
+			"deploy", "add", "check-containerd-vm.check-containerd-vm-member",
+			"--dev-local-pkg", "--tag", tag,
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("bedAddChild(non-namespaced root) = %q, want %q — `check-containerd-vm/check-containerd-vm-member` is a deploy key nothing creates", got, want)
+		}
+	})
+
+	t.Run("a namespaced root still converts at the namespace boundary", func(t *testing.T) {
+		got := bedAddChild("openclaw.check-openclaw-pod", "child", "")
+		want := []string{
+			"deploy", "add", "openclaw/check-openclaw-pod.child",
+			"--dev-local-pkg",
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("bedAddChild(namespaced root) = %q, want %q", got, want)
 		}
 	})
 }
