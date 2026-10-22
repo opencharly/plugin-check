@@ -200,13 +200,17 @@ func withRunTag(args []string, tag string) []string {
 // A bed exists to prove the in-development package builds and installs, so on a bed that condition
 // must be loud.
 func bedAdd(refs []string, tag string) []string {
-	// The ref is a ROSTER address ("openclaw.check-openclaw-pod", or a child "ns.box.child") and the deploy
-	// side needs the DEPLOY KEY, for the same reason configStartArgs converts before config/start: a roster
-	// address does not resolve from the project root, and the deploy resolver then derives a bare NAMESPACE
-	// as its requested box -- `unknown box "openclaw"` from sdk/deploykit/graph.go's FilterBox. Measured on
+	// The ref is a ROSTER address ("openclaw.check-openclaw-pod") and the deploy side needs the DEPLOY KEY,
+	// for the same reason configStartArgs converts before config/start: a roster address does not resolve
+	// from the project root, and the deploy resolver then derives a bare NAMESPACE as its requested box --
+	// `unknown box "openclaw"` from sdk/deploykit/graph.go's FilterBox. Measured on
 	// openclaw.check-openclaw-pod's deploy-add (opencharly/plugin-build#28). Converting HERE rather than at
-	// each call site is R2's answer: eight callers hand this function a roster address, and one conversion
-	// applied in one place is what stops the ninth caller from missing it.
+	// each call site is R2's answer: every caller holding only a roster address hands it here, and one
+	// conversion applied in one place is what stops the next caller from missing it.
+	//
+	// A NESTED CHILD is the one ref this function must not receive whole: deployKeyForBed splits at the
+	// first dot, which is the namespace boundary only for a namespaced root. Use bedAddChild, which
+	// converts the ROOT and then appends the child.
 	//
 	// Remote refs are left alone: spec.ResolveBoxName resolves those by parsing, not by namespace splitting,
 	// so the roster conversion would mangle them.
@@ -214,7 +218,26 @@ func bedAdd(refs []string, tag string) []string {
 	if len(args) > 0 && !isRemoteImageRef(args[0]) {
 		args = append([]string{deployKeyForBed(args[0])}, args[1:]...)
 	}
-	return withRunTag(append([]string{"deploy", "add"}, append(args, "--dev-local-pkg")...), tag)
+	return bedAddResolved(args, tag)
+}
+
+// bedAddResolved builds the `charly deploy add` argv from refs whose first element is ALREADY a
+// DEPLOY KEY. bedAdd is the roster-address entry point; this is the one the child path uses
+// after converting the ROOT itself.
+func bedAddResolved(refs []string, tag string) []string {
+	return withRunTag(append([]string{"deploy", "add"}, append(refs, "--dev-local-pkg")...), tag)
+}
+
+// bedAddChild builds the `charly deploy add` argv for a NESTED child of a bed.
+//
+// The conversion must happen on the ROOT alone, BEFORE the child is appended. A child reference
+// is `<root>.<child>`, and deployKeyForBed splits at the FIRST dot: for a namespaced root
+// (`openclaw.check-openclaw-pod`) that dot is the namespace boundary, but for a non-namespaced
+// root (`check-containerd-vm`) it is the root/child boundary. Handing the whole dotted address
+// to bedAdd therefore turns a non-namespaced child into `<root>/<child>` — a deploy key nothing
+// creates — and `charly deploy add` fails before any check runs (plugin-check#127).
+func bedAddChild(root, child, tag string) []string {
+	return bedAddResolved([]string{deployKeyForBed(root) + "." + child}, tag)
 }
 
 // deployKeyForBed maps a bed's ROSTER address to the DEPLOY KEY the deploy phase creates.
@@ -227,6 +250,10 @@ func bedAdd(refs []string, tag string) []string {
 // earlier for `charly box build`: a name that does not resolve from the project root. The
 // conversion is `spec.DeployKey`'s own, reused rather than re-spelled (R3), and a local bed
 // with no namespace is returned unchanged.
+//
+// This function converts a ROOT address only. Never hand it an already-dotted `<root>.<child>`
+// whose root is non-namespaced: it would treat the root/child boundary as a namespace boundary.
+// Nested child refs are built by bedAddChild.
 func deployKeyForBed(name string) string {
 	if ns, rest, ok := strings.Cut(name, "."); ok && ns != "" && rest != "" {
 		return spec.DeployKey(ns, rest)
@@ -1100,7 +1127,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 			// host-resolved deployNestedLocalChildren subset). A VM's nested CONTAINER children are
 			// deployed IN-GUEST by plugin-deploy-vm's PostApply, so a host-side re-deploy would be wrong.
 			for _, childKey := range d.LocalChildKeys {
-				if err := step("deploy-"+childKey, bedAdd([]string{name + "." + childKey}, d.ImageTag)...); err != nil {
+				if err := step("deploy-"+childKey, bedAddChild(name, childKey, d.ImageTag)...); err != nil {
 					return fail("deploy nested local child %s.%s: %w", name, childKey, err)
 				}
 			}
@@ -1125,7 +1152,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// Nested HOST-ROOTED (kind:local) children deploy host-side after the root;
 		// the kubevirt plugin's own PostApply handles in-guest children.
 		for _, childKey := range d.ChildKeys {
-			if err := step("deploy-"+childKey, bedAdd([]string{name + "." + childKey}, d.ImageTag)...); err != nil {
+			if err := step("deploy-"+childKey, bedAddChild(name, childKey, d.ImageTag)...); err != nil {
 				return fail("deploy nested child %s.%s: %w", name, childKey, err)
 			}
 		}
@@ -1169,7 +1196,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 			}
 			// Deploy any nested children onto the started substrate, pre-order.
 			for _, childKey := range d.ChildKeys {
-				if err := step("deploy-"+childKey, bedAdd([]string{name + "." + childKey}, d.ImageTag)...); err != nil {
+				if err := step("deploy-"+childKey, bedAddChild(name, childKey, d.ImageTag)...); err != nil {
 					return fail("deploy nested child %s.%s: %w", name, childKey, err)
 				}
 			}
@@ -1370,13 +1397,13 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 			}
 			if d.IsVM {
 				for _, childKey := range d.LocalChildKeys {
-					if err := step("redeploy-"+childKey, bedAdd([]string{name + "." + childKey}, d.ImageTag)...); err != nil {
+					if err := step("redeploy-"+childKey, bedAddChild(name, childKey, d.ImageTag)...); err != nil {
 						return fail("re-deploy nested local child %s.%s (fresh rebuild): %w", name, childKey, err)
 					}
 				}
 			} else {
 				for _, childKey := range d.ChildKeys {
-					if err := step("redeploy-"+childKey, bedAdd([]string{name + "." + childKey}, d.ImageTag)...); err != nil {
+					if err := step("redeploy-"+childKey, bedAddChild(name, childKey, d.ImageTag)...); err != nil {
 						return fail("re-deploy nested child %s.%s (fresh rebuild): %w", name, childKey, err)
 					}
 				}
