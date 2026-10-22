@@ -312,6 +312,33 @@ func vmBedDestroyArgs(d spec.CheckBedReply, opts bedRunOpts, snap *spec.VmSnapsh
 	return argv
 }
 
+// bedInPlace reports whether the bed's venue is applied IN PLACE: a kind:local
+// (host-rooted) deploy or an external-in-place substrate (spec/deploy's HostRooted and
+// ExternalInPlaceVenue). Neither has a container/VM lifecycle — their candies are applied
+// during `charly deploy add` — so their teardown is the deploy-tree verb
+// `charly deploy del`, never the container verb `charly remove`. This is the ONE
+// predicate every call site reads (R2): the isInPlace gate and the root-teardown helper
+// below, so a local bed cannot fall through into a pod arm again
+// (opencharly/plugin-check#129).
+func bedInPlace(d spec.CheckBedReply) bool {
+	return d.IsLocal || d.IsExternal
+}
+
+// bedRootTeardownArgs is the ONE root-venue teardown command for a NON-VM bed; the VM's
+// own `vm destroy` arm (which carries the domain/disk flags) stays separate. A kubevirt
+// root (its plugin owns the CR teardown) and both in-place venues are torn down with the
+// deploy verb `charly deploy del`; a container pod keeps `remove --purge`, which is the
+// ONLY path that reaches purgeDeployArtifacts (named volumes, gocryptfs volumes and the
+// synthesized <name>-overlay images). Both cleanup switches call this helper, so the two
+// halves of a bed run cannot drift — and a local bed cannot reach the container verb
+// (opencharly/plugin-check#129).
+func bedRootTeardownArgs(d spec.CheckBedReply, name string, isKubeVirt bool) []string {
+	if isKubeVirt || bedInPlace(d) {
+		return []string{"deploy", "del", name}
+	}
+	return []string{"remove", name, "--purge"}
+}
+
 // keepVenueOnSuccess is the SUCCESS tail's retention decision, and it is deliberately the
 // PRE-CHANGE gate exactly: `--keep` / `--keep-venue` / a bed's `keep_venue:` policy (all of which
 // force opts.Keep). It carries no other arm, so a passing run tears its venue down exactly as it
@@ -726,17 +753,11 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		if opts.Anchor == "" {
 			bestEffort("vm", "destroy", d.VMTemplate, "--domain", d.BedDomain, "--if-exists")
 		}
-	case isKubeVirt:
-		// A kubevirt bed's teardown is `charly deploy del` — candy/plugin-kubevirt's
-		// OpPostTeardown removes the VirtualMachine CR and stops the managed port-forward
-		// (the libvirt-domain teardown does not apply). Same in-place external shape.
-		bestEffort("deploy", "del", name)
 	default:
-		if d.IsExternal {
-			bestEffort("deploy", "del", name)
-		} else {
-			bestEffort("remove", name, "--purge")
-		}
+		// Non-VM roots: kubevirt, in-place local/external and pod all take the ONE
+		// teardown decision (bedRootTeardownArgs) — a kubevirt CR and an in-place venue
+		// are `deploy del`, a container pod is `remove --purge`, never the reverse.
+		bestEffort(bedRootTeardownArgs(d, name, isKubeVirt)...)
 		_ = deploykit.TearDownMembers(ctx, &bedNode)
 	}
 
@@ -960,12 +981,11 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		switch {
 		case d.IsVM:
 			targetErr = step("cleanup", vmBedDestroyArgs(d, opts, bedNode.Snapshot)...)
-		case isKubeVirt:
-			targetErr = step("cleanup", "deploy", "del", name)
-		case d.IsExternal:
-			targetErr = step("cleanup", "deploy", "del", name)
 		default:
-			targetErr = step("cleanup", "remove", name, "--purge")
+			// Every non-VM root takes the ONE teardown decision — kubevirt and both
+			// in-place venues via `deploy del`, a container pod via `remove --purge`.
+			// A local bed has no container engine to remove from (#129).
+			targetErr = step("cleanup", bedRootTeardownArgs(d, name, isKubeVirt)...)
 		}
 		membersErr := phase("cleanup-members", func() error {
 			return deploykit.TearDownMembers(ctx, &bedNode)
@@ -1050,8 +1070,9 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 
 	// isInPlace unifies local + in-place-external: they apply candies in place during
 	// `charly deploy add` (no container/VM lifecycle — no `charly config`/`charly
-	// start`, teardown via `charly deploy del`).
-	isInPlace := d.IsLocal || d.IsExternal
+	// start`, teardown via `charly deploy del`). ONE predicate (bedInPlace) with the
+	// cleanup switches above, so the bring-up and teardown halves cannot drift.
+	isInPlace := bedInPlace(d)
 
 	// Steps 1+2: image build + check box. A VM/kubevirt substrate is an image-backed
 	// CR (no box build); a kind:local deploy carries no image. An EXTERNAL-IN-PLACE
@@ -1550,8 +1571,10 @@ func printDebugRetentionNotice(w io.Writer, name string, d spec.CheckBedReply, r
 			"  destroy: charly vm destroy %s --domain %s\n",
 			name, "charly-"+d.BedDomain, live, d.BedDomain, d.VMTemplate, d.BedDomain)
 	case d.IsLocal:
+		// A local apply has no container to remove: its teardown is the deploy-tree verb,
+		// the same one the cleanup path issues (bedRootTeardownArgs).
 		fmt.Fprintf(w, "\n[charly check run] bed %q FAILED — local apply left in place for debugging.\n"+
-			"  destroy: charly remove %s\n", name, name)
+			"  destroy: charly deploy del %s\n", name, name)
 	case d.IsExternal:
 		fmt.Fprintf(w, "\n[charly check run] bed %q FAILED — external deploy apply left in place for debugging.\n"+
 			"  destroy: charly deploy del %s\n", name, name)
