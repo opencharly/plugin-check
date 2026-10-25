@@ -884,7 +884,13 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// The child's own report — the per-check outcomes it printed, and whether it printed a
 		// report at all. Read BEFORE the verdict is decided, because the report is where the
 		// per-check statuses live (opencharly/plugin-check#132).
-		report := parseCheckReport(logText)
+		//
+		// ONLY a plan child's report is read. Every other child in a bed run — a build, a
+		// deploy, an update, a teardown — prints no report, so report-shaped text in its log
+		// is CONTENT: reading it would let a build's output bank a PASS for a run whose plan
+		// proved nothing (opencharly/plugin-check#134; the remaining root fix, where the
+		// report is not text at all, is opencharly/plugin-check#135).
+		report, innerSkipped := childReport(argv, logText)
 		// A child that reports a SKIP resolved nothing: it rendered no verdict, so it must not be
 		// banked as a PASS (opencharly/plugin-check#110). Recorded and announced, then the bed
 		// continues — a skip is not a failure, and the reason is what tells a reader that this step
@@ -894,22 +900,31 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 				fmt.Fprintf(os.Stderr, "charly check run %s: writing %s: %v\n", name, logPath, writeErr)
 			}
 			res.Step = append(res.Step, stepResult{Name: stepName, Duration: dur, OK: true, Diag: diag,
-				Skipped: skippedFromRollup(logText), SkipReason: skipReason,
+				Skipped: innerSkipped, SkipReason: skipReason,
 				Checks: report.Checks})
 			fmt.Fprintf(os.Stderr, "charly check run %s: [%s] SKIPPED after %s: %s (log: %s)\n", name, stepName, dur.Round(time.Millisecond), skipReason, logPath)
 			return nil
 		}
 		ok := cerr == nil && reply.ExitCode == 0 && diagFail == ""
 		sk := stepResult{Name: stepName, Duration: dur, OK: ok, Diag: diag,
-			Skipped: skippedFromRollup(logText), Checks: report.Checks}
+			Skipped: innerSkipped, Checks: report.Checks}
 		// A DECLARED CHECK that did not run is a SKIP, not a pass: the step completed, but it did
 		// not prove what it declared (opencharly/plugin-check#132). The step is still not a
 		// failure — the bed continues and tears down as it would after a pass — but the run's
 		// verdict is no longer a PASS.
+		//
+		// A declared check that FAILED is a FAILURE, whatever the exit code says: the thing
+		// under test is broken, not the harness — the same rule the diagnostic backstop below
+		// applies to an `error:` line under a zero exit. The report and the exit code are
+		// derived from the same step results, so a child that honoured its contract already
+		// exited 2 and this cannot fire for it; it closes the case where a child exits 0 and
+		// its own report says otherwise (opencharly/plugin-check#134).
+		reportFail := ""
 		if ok {
-			if verdict, reason := checkReportVerdict(report); verdict == verdictSkip {
-				sk.SkipReason = reason
-			}
+			reportFail = stepVerdictFromReport(report, &sk)
+		}
+		if reportFail != "" {
+			ok = false
 		}
 		res.Step = append(res.Step, sk)
 		if !ok {
@@ -950,6 +965,13 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 			fmt.Fprintf(os.Stderr, "charly check run %s: [%s] FAIL after %s: %s\n", name, stepName, dur.Round(time.Millisecond), diagFail)
 			printDiagnosticShapes(os.Stderr, diag)
 			return fmt.Errorf("%s: %s", command, diagFail)
+		}
+		if reportFail != "" {
+			// The child was happy; its OWN REPORT was not — it says a declared check failed.
+			// The thing under test is broken, not the harness: the same class the diagnostic
+			// backstop above reports as 2 (opencharly/plugin-check#134).
+			fmt.Fprintf(os.Stderr, "charly check run %s: [%s] FAIL after %s: %s (log: %s)\n", name, stepName, dur.Round(time.Millisecond), reportFail, logPath)
+			return fmt.Errorf("%s: %s", command, reportFail)
 		}
 		// A step whose phase asserted NOTHING is not a PASS, and the console says so — the
 		// per-step line is read by whoever watches the run (opencharly/plugin-check#132).

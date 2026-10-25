@@ -3,6 +3,7 @@ package check
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -96,7 +97,12 @@ var checkOutcomeRe = regexp.MustCompile(`^ {2}(PASS|FAIL|SKIP|INFRA) +([A-Za-z][
 // skipped" (spec/report's FormatStepResultsText). It is the ONE line that says a plan ran
 // at all, and it is matched WHOLE (anchored, one line) so a log that merely mentions
 // "skipped" cannot be mistaken for a report.
-var reportRollupRe = regexp.MustCompile(`(?m)^\d+ steps?: \d+ passed, \d+ failed, \d+ skipped$`)
+//
+// The step COUNT is captured, because the rollup is the report's own statement of how many
+// steps it printed — the one self-check the document offers. A report's step lines must
+// agree with it, and a block that does not is carrying text the report did not print
+// (opencharly/plugin-check#134).
+var reportRollupRe = regexp.MustCompile(`(?m)^(\d+) steps?: \d+ passed, \d+ failed, \d+ skipped$`)
 
 // isCheckKeyword reports whether a plan step ASSERTED.
 //
@@ -116,23 +122,146 @@ type checkReport struct {
 	// A log without one (a build step's output, a deploy trace) carries no check signal
 	// at all, and the absence is NOT a claim that a check was skipped.
 	Present bool
+	// Readable is true when the report's step lines agree with the rollup the report
+	// printed beside them. A block that disagrees is carrying text the report did not
+	// print, so its per-check lines are not the report's own and NOTHING is credited from
+	// it (opencharly/plugin-check#134).
+	Readable bool
+	// Printed is how many report-shaped lines the block carried; Steps is the count the
+	// rollup itself printed. They are equal in a readable report, and the difference is
+	// what an unreadable one says out loud.
+	Printed int
+	Steps   int
 	// Checks are the child's ASSERTING steps — its declared checks — with the status each
-	// one resolved to.
+	// one resolved to. Populated only for a READABLE report.
 	Checks []checkOutcome
 }
 
-// parseCheckReport reads a child's report out of a step's log text.
+// planChildReporters maps the child command a bed run launches to the command in this
+// package that renders that child's report. It is the ONE place that says which children
+// print a report.
 //
-// It returns the report's presence and its declared checks. Lines that are not report
-// lines are ignored: the log also carries the child's own noise (resolution logs, deploy
-// traces), and none of that is a check outcome.
+// A REPORT is what a PLAN runner prints: the per-check outcomes of a resolved plan. Every
+// other child in a bed run — a build, a deploy, an update, a teardown — prints none, so
+// report-shaped text in its log is CONTENT, not a verdict.
+//
+// The runner knows which child it launched (the argv it passed), so the report is read only
+// from a plan child's log. Without that rule a container build whose output ends with a
+// self-consistent report-shaped block banks a PASS for a run whose plan proved NOTHING —
+// the same false PASS this file exists to close (opencharly/plugin-check#134). MEASURED:
+// such a block is credited, and the run reads PASS while its plan step proved nothing.
+//
+// This is the rule that can be stated over a TEXT log today. The root fix — a report that
+// is not text at all, so the verdict reads the child's step RESULTS — is opencharly/plugin-check#135.
+//
+// The table is held against the source by TestEveryReportRendererIsAPlanChild: every
+// command in this package that renders a report must be in it, and every entry in it must
+// render one.
+var planChildReporters = map[string]string{
+	"check live":        "CheckLiveCmd",
+	"check box":         "CheckBoxCmd",
+	"check feature run": "CheckFeatureRunCmd",
+}
+
+// planChildReportKey names the entry of planChildReporters a step's child argv names, or ""
+// when the child is not a plan runner.
+//
+// The key is built from the argv the runner launched, and the TABLE decides — the argv
+// alone never grants a report. `charly check run` (the bed runner itself) and
+// `charly check plan` are `check` verbs that print no report, and they are not in the
+// table.
+func planChildReportKey(argv []string) string {
+	if len(argv) < 2 || argv[0] != "check" {
+		return ""
+	}
+	if argv[1] == "feature" {
+		if len(argv) < 3 {
+			return ""
+		}
+		return "check feature " + argv[2]
+	}
+	return "check " + argv[1]
+}
+
+// childReport reads the child's own report out of its log, and the inner-step skip count
+// the report carries.
+//
+// ONLY a plan child's report is read: a build's, a deploy's or a teardown's output is
+// CONTENT, and content must never bank a verdict (opencharly/plugin-check#134; the
+// remaining root fix, where the report is not text at all, is opencharly/plugin-check#135).
+// A non-plan child therefore carries no report and no inner skip count — the same zero it
+// carried before, because those logs never printed a report.
+//
+// The log is the child's MERGED output (the cli seam captures the two streams into one
+// text, a whole line at a time), so the report is the LAST block in it: the engine renders
+// the report last — live_cmd.go after any forwarded guest output, feature_cmd.go after the
+// guest's own output — and the seam reunites the streams in the order they were written.
+func childReport(argv []string, logText string) (checkReport, int) {
+	// The argv names the child; the TABLE says whether that child prints a report. An argv
+	// that names no entry — a build, a deploy, a teardown, `charly check run` itself — is
+	// not a plan child, and its output carries no report.
+	if _, ok := planChildReporters[planChildReportKey(argv)]; !ok {
+		return checkReport{}, 0
+	}
+	return parseCheckReport(logText), skippedFromRollup(logText)
+}
+
+// parseCheckReport reads a child's OWN report out of a step's log text.
+//
+// THE CHILD'S OWN REPORT is the LAST report the child printed: the engine renders the
+// report LAST (live_cmd.go renders it after any forwarded guest output; feature_cmd.go
+// renders it to stdout), so the last rollup in the child's log is the report the child
+// printed, and the per-check lines are the ones in the block before it.
+//
+// The log is the child's MERGED output: the cli seam captures the child's stdout and stderr
+// into ONE text, reunited a whole line at a time, so a report cannot be told apart by the
+// stream it was written to — and must not be, because the runner has no other view of the
+// child. (childReport reads that merged log, and only for a plan child.)
+//
+// A log with NO rollup carries NO report and therefore NO check outcome. That is the
+// difference between a verdict and a guess: a build step's output, a deploy trace, or any
+// other non-plan log must not be able to credit a PASS to a run that proved NOTHING
+// (opencharly/charly#904). Before this rule the reader collected every report-SHAPED line
+// in the log, and the run-level counters counted them without asking whether a report had
+// been printed at all.
+//
+// A report whose step lines do NOT agree with its own rollup is not read: the rollup says
+// "N steps" and the block must carry N step lines. A block that does not is carrying text
+// the report did not print — a step's MESSAGE with a report-shaped line inside it, which
+// the engine's truncate() permits because it bounds a message's length but does not flatten
+// its newlines. Such a report credits NOTHING, and the phase says so.
 func parseCheckReport(logText string) checkReport {
-	rep := checkReport{Present: reportRollupRe.MatchString(logText)}
-	for _, line := range strings.Split(logText, "\n") {
+	lines := strings.Split(logText, "\n")
+	// The child's own report is the LAST one it printed.
+	last := -1
+	steps := 0
+	for i, line := range lines {
+		m := reportRollupRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		last = i
+		steps, _ = strconv.Atoi(m[1])
+	}
+	if last < 0 {
+		// No report: no check outcome. The absence is not a claim that a check was skipped.
+		return checkReport{}
+	}
+	// The report's step lines are the ones between the PREVIOUS rollup and this one.
+	start := 0
+	for i := last - 1; i >= 0; i-- {
+		if reportRollupRe.MatchString(lines[i]) {
+			start = i + 1
+			break
+		}
+	}
+	rep := checkReport{Present: true, Steps: steps}
+	for _, line := range lines[start:last] {
 		m := checkOutcomeRe.FindStringSubmatch(line)
 		if m == nil {
 			continue
 		}
+		rep.Printed++
 		if !isCheckKeyword(m[2]) {
 			continue
 		}
@@ -143,13 +272,22 @@ func parseCheckReport(logText string) checkReport {
 			Reason: strings.TrimSpace(m[5]),
 		})
 	}
+	if rep.Printed != rep.Steps {
+		// The block does not agree with the report's own count, so its per-check lines are
+		// not the report's own. Nothing is credited from it.
+		rep.Checks = nil
+		return rep
+	}
+	rep.Readable = true
 	return rep
 }
 
 // checkReportVerdict is the verdict a child's report implies, and the reason for it.
 //
+//	FAIL — the phase's report says a declared check FAILED.
+//	SKIP — the phase asserted NOTHING: no declared check passed (or the report could not
+//	       be read, so nothing can be credited from it).
 //	PASS — the phase ASSERTED something: at least one declared check ran and passed.
-//	SKIP — the phase asserted NOTHING: no declared check passed.
 //
 // The skip is NOT "one declared check among many did not run". A declared check that does
 // not apply to this substrate resolves to SKIP BY THE AUTHOR'S DESIGN (`skip: true`,
@@ -165,33 +303,80 @@ func parseCheckReport(logText string) checkReport {
 // is a SKIP: a check that cannot run is not a check that passed (R7).
 func checkReportVerdict(rep checkReport) (string, string) {
 	if !rep.Present {
+		// No report: the phase has nothing to say about itself. The RUN's verdict is
+		// decided by what the run proved, which is what the reports say.
 		return verdictPass, ""
 	}
+	if !rep.Readable {
+		// A report that does not agree with itself cannot say what the run proved, so
+		// nothing is credited from it (opencharly/plugin-check#134).
+		return verdictSkip, fmt.Sprintf("the child's report could not be read: %d step line(s) against the %d step(s) its own rollup counted",
+			rep.Printed, rep.Steps)
+	}
 	var skipped []checkOutcome
+	var failed []checkOutcome
 	passed := 0
 	for _, c := range rep.Checks {
 		switch c.Status {
 		case verdictSkip:
 			skipped = append(skipped, c)
+		case verdictFail:
+			failed = append(failed, c)
 		case verdictPass:
 			passed++
 		}
+	}
+	if len(failed) > 0 {
+		// A declared check FAILED. The report and the exit code are derived from the same
+		// step results, so a child that honoured its contract already exited 2 and this
+		// branch is unreachable for it. It closes the case where a child exits 0 and its
+		// own report says otherwise — where the record would carry `status: FAIL` for a
+		// check while the run read PASS (opencharly/plugin-check#134).
+		return verdictFail, fmt.Sprintf("declared check %s failed: %s", checkID(failed[0]), checkReason(failed[0]))
 	}
 	if passed > 0 {
 		return verdictPass, ""
 	}
 	if len(skipped) > 0 {
-		reason := skipped[0].Reason
-		if reason == "" {
-			reason = "no reason given"
-		}
-		id := skipped[0].ID
-		if id == "" {
-			id = skipped[0].Text
-		}
-		return verdictSkip, fmt.Sprintf("declared check %s did not run: %s", id, reason)
+		return verdictSkip, fmt.Sprintf("declared check %s did not run: %s", checkID(skipped[0]), checkReason(skipped[0]))
 	}
 	return verdictSkip, "the child's report carries no passing check: it asserted nothing"
+}
+
+// checkID names a declared check: its id, or its text when the report printed no id.
+func checkID(c checkOutcome) string {
+	if c.ID != "" {
+		return c.ID
+	}
+	return c.Text
+}
+
+// checkReason is the message the report carried for a check, or an honest stand-in.
+func checkReason(c checkOutcome) string {
+	if c.Reason != "" {
+		return c.Reason
+	}
+	return "no reason given"
+}
+
+// stepVerdictFromReport applies a child's own report to its step, and returns the failure
+// sentence when the report says a declared check FAILED.
+//
+// A SKIP sets the step's skip reason — the step completed but proved nothing, and the
+// reason is what tells a reader that (opencharly/plugin-check#132). A FAIL is returned as
+// the sentence, because the step FAILED: the report and the exit code come from the same
+// step results, so a child that honoured its contract already exited 2, and this closes
+// the case where a child exits 0 and its own report says otherwise
+// (opencharly/plugin-check#134). A PASS is no objection: the step carries on.
+func stepVerdictFromReport(rep checkReport, sk *stepResult) string {
+	switch verdict, reason := checkReportVerdict(rep); verdict {
+	case verdictSkip:
+		sk.SkipReason = reason
+	case verdictFail:
+		sk.OK = false
+		return reason
+	}
+	return ""
 }
 
 // stepStatus is the STEP's verdict.
@@ -251,6 +436,11 @@ func runStatus(res *bedRunResult) string {
 
 // runPassedChecks is how many declared checks across the run resolved to PASS — the question
 // the run's verdict asks: did the run prove anything it declared?
+//
+// The counts read the steps' checks, and a step carries checks ONLY when its own report was
+// READABLE (parseCheckReport credits nothing out of a log that printed no report, and
+// nothing out of a report that disagrees with its own rollup). So a PASS can only ever be
+// credited from a report the child actually printed and that agrees with itself.
 func runPassedChecks(res *bedRunResult) int {
 	if res == nil {
 		return 0
