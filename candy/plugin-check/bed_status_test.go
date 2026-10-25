@@ -2,6 +2,9 @@ package check
 
 import (
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -103,6 +106,107 @@ func TestParseCheckReportWithoutAReport(t *testing.T) {
 	}
 }
 
+// TestParseCheckReportCreditsNothingWithoutARollup pins the rule that closes the
+// false-PASS half of opencharly/plugin-check#134: a log that printed NO report carries no
+// check outcome, whatever lines in it happen to be shaped like one.
+//
+// The reader used to collect every report-SHAPED line in the log and leave the counters to
+// decide what to do with them, so a build step's output could credit a PASS to a run that
+// proved NOTHING — the false green the whole verdict change exists to close.
+func TestParseCheckReportCreditsNothingWithoutARollup(t *testing.T) {
+	const log = "building the image\n  PASS  check a check that never ran  [ghost-check]\n"
+	rep := parseCheckReport(log)
+	if rep.Present {
+		t.Errorf("parseCheckReport() claimed a report in a log that carries no rollup")
+	}
+	if rep.Readable {
+		t.Errorf("parseCheckReport() called a log with no rollup readable")
+	}
+	if len(rep.Checks) != 0 {
+		t.Errorf("parseCheckReport() credited %d check(s) from a log that printed no report, want 0", len(rep.Checks))
+	}
+}
+
+// TestParseCheckReportReadsTheChildsOwnReport pins WHICH report the reader takes when a log
+// carries more than one: the child's OWN, which is the LAST one it printed.
+//
+// The engine renders the report last — `live_cmd.go` renders it after any output forwarded
+// from a nested venue, `feature_cmd.go` renders it to stdout — so the last rollup in the log
+// is the report the child printed, and the per-check lines are the ones in that block. A
+// log that carries an earlier report must not merge the two: the earlier block's checks
+// belong to a different plan.
+func TestParseCheckReportReadsTheChildsOwnReport(t *testing.T) {
+	const log = `  PASS  check the forwarded venue's own check  [guest-check]
+
+1 step: 1 passed, 0 failed, 0 skipped
+  PASS  check the child's own check  [host-check]
+
+1 step: 1 passed, 0 failed, 0 skipped
+`
+	rep := parseCheckReport(log)
+	if !rep.Present {
+		t.Fatalf("parseCheckReport() did not see the report in:\n%s", log)
+	}
+	if !rep.Readable {
+		t.Fatalf("parseCheckReport() did not read the child's own report in:\n%s", log)
+	}
+	if len(rep.Checks) != 1 {
+		t.Fatalf("parseCheckReport() read %d checks, want 1 (the child's own block only): %+v", len(rep.Checks), rep.Checks)
+	}
+	if rep.Checks[0].ID != "host-check" {
+		t.Errorf("the read check = %q, want %q — the child's own report is the last one it printed", rep.Checks[0].ID, "host-check")
+	}
+}
+
+// TestParseCheckReportRefusesABlockThatDisagreesWithItsOwnCount pins the report's own
+// self-check: the rollup says "N steps" and the block must carry N step lines.
+//
+// A block that does not is carrying text the report did not print — a step's MESSAGE with a
+// report-shaped line inside it, which the engine's truncate() permits because it bounds a
+// message's length but does not flatten its newlines. Such a report credits NOTHING: a
+// verdict must not rest on text the report did not print.
+func TestParseCheckReportRefusesABlockThatDisagreesWithItsOwnCount(t *testing.T) {
+	const log = `  SKIP  check a check that does not apply to this run  [not-applicable]  skip: true
+  PASS  check a line out of a step's message  [ghost]
+
+1 step: 0 passed, 0 failed, 1 skipped
+`
+	rep := parseCheckReport(log)
+	if !rep.Present {
+		t.Fatalf("parseCheckReport() did not see the report in:\n%s", log)
+	}
+	if rep.Readable {
+		t.Errorf("parseCheckReport() read a block of %d step line(s) against a rollup of %d step(s)", rep.Printed, rep.Steps)
+	}
+	if len(rep.Checks) != 0 {
+		t.Errorf("parseCheckReport() credited %d check(s) from a block that disagrees with the report's own count, want 0", len(rep.Checks))
+	}
+	verdict, reason := checkReportVerdict(rep)
+	if verdict != verdictSkip {
+		t.Errorf("an unreadable report = %q, want %q — nothing can be credited from it", verdict, verdictSkip)
+	}
+	if !strings.Contains(reason, "could not be read") {
+		t.Errorf("the reason = %q, want the report's unreadability named", reason)
+	}
+}
+
+// TestARunIsNotAPassOnTextThatIsNotAReport is the RUN-level statement of the same rule, and
+// the one the false green would have taken: a run whose only report-shaped line came from a
+// log that printed no report has proved NOTHING, so it is a SKIP and not a PASS.
+func TestARunIsNotAPassOnTextThatIsNotAReport(t *testing.T) {
+	const log = "building the image\n  PASS  check a check that never ran  [ghost-check]\n"
+	rep := parseCheckReport(log)
+	res := &bedRunResult{OK: true, Step: []stepResult{
+		{Name: "image-build", OK: true, Checks: rep.Checks},
+	}}
+	if got := runStatus(res); got != verdictSkip {
+		t.Errorf("a run that proved nothing = %q, want %q — text that is not a report cannot credit a PASS", got, verdictSkip)
+	}
+	if got := runPassedChecks(res); got != 0 {
+		t.Errorf("a run credited %d passing check(s) from a log that printed no report, want 0", got)
+	}
+}
+
 // TestCheckReportVerdict pins the PHASE verdict.
 //
 // The defect (opencharly/charly#904): a phase whose only declared check was SKIPPED proved
@@ -137,6 +241,51 @@ func TestCheckReportVerdict(t *testing.T) {
 		if !tc.wantReason && reason != "" {
 			t.Errorf("%s: a pass must carry no reason (got %q)", tc.name, reason)
 		}
+	}
+}
+
+// TestCheckReportVerdictTreatsAFailedCheckAsAFail pins the other half of the verdict: a
+// report that says a declared check FAILED is a FAIL, not a PASS (the first non-blocking
+// observation on opencharly/plugin-check#133, fixed in opencharly/plugin-check#134).
+//
+// The ordinary case is already covered by the exit code — the report and the exit code are
+// derived from the same step results, so a child that honoured its contract exited 2 — but
+// the gap is real when a child exits 0 and its own report says otherwise. Then the record
+// would carry `status: FAIL` for a check while the run read PASS.
+func TestCheckReportVerdictTreatsAFailedCheckAsAFail(t *testing.T) {
+	verdict, reason := checkReportVerdict(parseCheckReport(liveMixedCheckReport))
+	if verdict != verdictFail {
+		t.Errorf("a report whose check FAILED = %q, want %q", verdict, verdictFail)
+	}
+	if !strings.Contains(reason, "sag-binary") {
+		t.Errorf("the reason = %q, want the failed check named", reason)
+	}
+}
+
+// TestStepVerdictFromReport pins how a report reaches its STEP: a SKIP sets the step's skip
+// reason, a FAIL is returned as the failure sentence, and a PASS is no objection.
+func TestStepVerdictFromReport(t *testing.T) {
+	skipped := stepResult{OK: true}
+	if fail := stepVerdictFromReport(parseCheckReport(liveSkippedCheckReport), &skipped); fail != "" {
+		t.Errorf("a report that says a check skipped returned the failure %q, want none — a skip is not a failure", fail)
+	}
+	if skipped.SkipReason == "" {
+		t.Errorf("a skipping report left the step with no reason")
+	}
+	if !strings.Contains(skipped.SkipReason, "not-applicable-here") {
+		t.Errorf("the step's skip reason = %q, want the skipped check named", skipped.SkipReason)
+	}
+
+	failed := stepResult{OK: true}
+	fail := stepVerdictFromReport(parseCheckReport(liveMixedCheckReport), &failed)
+	if fail == "" {
+		t.Errorf("a report that says a check FAILED returned no failure sentence")
+	}
+	if failed.SkipReason != "" {
+		t.Errorf("a failing report set the step's skip reason %q — a failure is not a skip", failed.SkipReason)
+	}
+	if stepStatus(&failed) != verdictFail {
+		t.Errorf("a step whose report says FAIL = %q, want %q", stepStatus(&failed), verdictFail)
 	}
 }
 
@@ -349,4 +498,164 @@ func TestAggregateRosterDoesNotFoldAnUnprovenBedIntoTheGreen(t *testing.T) {
 	if !strings.Contains(err.Error(), "check-unproven") {
 		t.Errorf("the roster error = %q, want the unproven bed named", err.Error())
 	}
+}
+
+// TestANonPlanChildCreditsNothingFromItsLog pins the rule that keeps a build's output out
+// of the verdict: a REPORT is what a PLAN child prints, so a build step's log can never
+// bank a check — not even when its output ends with a block that looks exactly like a
+// report.
+//
+// MEASURED before the rule: such a block WAS credited, and the run read PASS while its
+// plan step proved nothing (opencharly/plugin-check#135).
+func TestANonPlanChildCreditsNothingFromItsLog(t *testing.T) {
+	forged := "building layer...\n" +
+		"  PASS  check the image builds  [some-build-step]  ok\n" +
+		"1 step: 1 passed, 0 failed, 0 skipped\n"
+	rep, skipped := childReport([]string{"box", "build", "some/image"}, forged)
+	if rep.Present {
+		t.Errorf("a build's log was read as a report: %+v", rep)
+	}
+	if len(rep.Checks) != 0 {
+		t.Errorf("a build's log credited %d check(s), want 0", len(rep.Checks))
+	}
+	if skipped != 0 {
+		t.Errorf("a build's log inflated the inner skip count to %d, want 0", skipped)
+	}
+	// The run-level consequence: the run must read as a SKIP, not a PASS.
+	res := &bedRunResult{OK: true, Step: []stepResult{
+		{Name: "image-build", OK: true, Checks: rep.Checks},
+		{Name: "check-live", OK: true, SkipReason: "declared check x did not run: skip: true"},
+	}}
+	if got := runStatus(res); got != verdictSkip {
+		t.Errorf("a run whose plan proved nothing = %q, want %q", got, verdictSkip)
+	}
+}
+
+// TestAPlanChildReadsItsReport pins THAT a plan child's log is read for a report — the
+// report the child printed, which is the last block in its log.
+//
+// The cli seam captures the child's two streams into ONE text (a whole line at a time), so
+// the runner reads the merged log; the report is the last block in it because the engine
+// renders the report last.
+func TestAPlanChildReadsItsReport(t *testing.T) {
+	for _, argv := range [][]string{
+		{"check", "live", "bed"},
+		{"check", "box", "some/image"},
+		{"check", "feature", "run", "dep"},
+	} {
+		rep, _ := childReport(argv, liveSkippedCheckReport)
+		if len(rep.Checks) != 1 {
+			t.Errorf("%v read %d check(s) from the child's own report, want 1", argv, len(rep.Checks))
+		}
+	}
+}
+
+// renderersNotReachableAsAStepChild are the report renderers a bed run never launches as a
+// step: the hidden build-scope feature-run engine, which the `charly box feature run`
+// bridge invokes with its own args (CheckCmd.FeatureBox — `charly check __feature-box`).
+// A new renderer that a bed run CAN launch belongs in planChildReporters instead —
+// otherwise its report is ignored and a run that proved something reads as a SKIP.
+var renderersNotReachableAsAStepChild = map[string]bool{
+	"CheckFeatureBoxCmd": true,
+}
+
+// TestEveryReportRendererIsAPlanChild holds the reader's table against the SOURCE: every
+// command in this package that renders a step report must be a plan child, with the stream
+// it renders on, and every entry in the table must render one.
+//
+// The table is the only place that says which children print a report, so it must not be
+// able to drift from the code that prints them.
+func TestEveryReportRendererIsAPlanChild(t *testing.T) {
+	renderers := reportRenderersInSource(t)
+	for command := range renderers {
+		if renderersNotReachableAsAStepChild[command] {
+			continue
+		}
+		found := false
+		for _, r := range planChildReporters {
+			if r == command {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s renders a step report but is not a plan child — its report would be ignored", command)
+		}
+	}
+	for key, command := range planChildReporters {
+		if !renderers[command] {
+			t.Errorf("the table claims %q (%s) renders a report, but %s renders none", key, command, command)
+		}
+	}
+}
+
+// reportRenderersInSource finds every command in this package that renders a step report,
+// by reading the package's own source.
+func reportRenderersInSource(t *testing.T) map[string]bool {
+	t.Helper()
+	fset := token.NewFileSet()
+	// parser.ParseDir is DEPRECATED (SA1019) and, worse, it ignores build tags when it
+	// associates files with packages. The files are read one by one instead, so the scan
+	// sees exactly the sources the compiler sees.
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("reading the package's directory: %v", err)
+	}
+	renderers := map[string]bool{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", name, err)
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv == nil || len(fn.Recv.List) == 0 {
+				continue
+			}
+			command := receiverTypeName(fn.Recv.List[0].Type)
+			if command == "" {
+				continue
+			}
+			if rendersStepReport(fn.Body) {
+				renderers[command] = true
+			}
+		}
+	}
+	return renderers
+}
+
+// receiverTypeName names a method's receiver type ("CheckLiveCmd" for (*CheckLiveCmd).Run).
+func receiverTypeName(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.StarExpr:
+		return receiverTypeName(t.X)
+	case *ast.Ident:
+		return t.Name
+	case *ast.IndexExpr:
+		return receiverTypeName(t.X)
+	case *ast.IndexListExpr:
+		return receiverTypeName(t.X)
+	}
+	return ""
+}
+
+// rendersStepReport reports whether a function body renders a step report.
+func rendersStepReport(body *ast.BlockStmt) bool {
+	found := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		ident, ok := call.Fun.(*ast.Ident)
+		if !ok || ident.Name != "reportSteps" {
+			return true
+		}
+		found = true
+		return true
+	})
+	return found
 }
