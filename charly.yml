@@ -140,3 +140,65 @@ check-empty-resolution-witness:
           The empty-resolution CHILD: no `plan:` of its own and no candy to contribute one, so the
           phase the bed runner drives for it resolves NOTHING.
         candy: []
+
+# The in-repo R10 witness for opencharly/plugin-check#132 — a DECLARED CHECK THAT SKIPS.
+#
+# The class: a bed run whose declared check resolved to SKIP was banked as a PASS. The
+# headline read `PASS (steps=N)`, the exit code was 0, and the summary.yml's steps were all
+# `ok: true` — so the acceptance record could not say the run proved NOTHING
+# (opencharly/charly#904). The two beds below are that class, split so that the VERDICT can
+# be watched from outside the run that produces it.
+#
+# `check-skip-verdict-witness` is the bed whose verdict is watched: its only declared check
+# is authored `skip: true`, so the phase the bed runner drives resolves it to SKIP and the
+# phase proves nothing. Its run verdict is SKIP and its exit code is 3
+# (CheckSkippedExitCode) — never a PASS and exit 0.
+check-skip-verdict-app:
+  local:
+    description: bare kind:local template for the skipped-declared-check verdict witness beds
+    candy: []
+
+check-skip-verdict-witness:
+  local:
+    from: check-skip-verdict-app
+    host: local
+    disposable: true
+    description: >-
+      The WATCHED bed: its only declared check is authored `skip: true`, so the phase the bed
+      runner drives for it resolves the check to SKIP and asserts nothing. The run's verdict is
+      SKIP and its exit code is 3 — the plugin's own "not a verdict" code, which the org's
+      scripts/check-bed-watch.sh reads as "a SKIP, never a pass". Before the change the same
+      run printed `PASS (steps=6)` and exited 0.
+    plan:
+      - check: a declared check that does not apply to this run
+        id: not-applicable-here
+        skip: true
+        command:
+          command: /bin/true
+          in_container: false
+
+check-skip-verdict-probe:
+  local:
+    from: check-skip-verdict-app
+    host: local
+    disposable: true
+    description: >-
+      R10 witness for opencharly/plugin-check#132: a bed whose declared check SKIPS is not a
+      PASS. The plan step runs the witness bed through `charly check run` — the command whose
+      verdict and exit code this change fixes — and asserts the exit code is 3 and that the
+      verdict line names the skipped check and its count. Without the change that run exited 0
+      with a bare `PASS (steps=N)`, so this step FAILS without it; with the change the run
+      exits 3 and says which check did not run. The bed itself stays green: the assertion
+      holds, so the OUTER bed proves the INNER bed's verdict.
+    plan:
+      - check: a bed whose declared check SKIPPED exits 3 and names the skipped check — not a bare PASS
+        id: skipped-declared-check-is-not-a-pass
+        exit_status: 3
+        stderr:
+          - contains: "charly check run check-skip-verdict-witness: SKIP"
+          - contains: skipped_checks=1
+          - contains: not-applicable-here
+        context: [runtime]
+        command:
+          command: ${CHARLY_BIN} check run check-skip-verdict-witness
+          in_container: false

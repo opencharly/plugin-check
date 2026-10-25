@@ -33,10 +33,12 @@ func TestWriteBedSummaryEmitsSkipped(t *testing.T) {
 
 	// The count must be there for the step that skipped, and it must be distinguishable from the step
 	// that skipped nothing — otherwise "nothing skipped" and "this record predates the field" read alike.
-	if !strings.Contains(out, "name: check-live\n    duration_seconds: 1\n    ok: true\n    skipped: 2\n") {
+	// The `status:` line sits between them: the step's own three-state verdict
+	// (opencharly/plugin-check#132), which `ok:` alone cannot say.
+	if !strings.Contains(out, "name: check-live\n    duration_seconds: 1\n    ok: true\n    status: PASS\n    skipped: 2\n") {
 		t.Errorf("the skipping step's record is missing its skipped count:\n%s", out)
 	}
-	if !strings.Contains(out, "name: cleanup\n    duration_seconds: 1\n    ok: true\n    skipped: 0\n") {
+	if !strings.Contains(out, "name: cleanup\n    duration_seconds: 1\n    ok: true\n    status: PASS\n    skipped: 0\n") {
 		t.Errorf("a step that skipped nothing must still say so:\n%s", out)
 	}
 }

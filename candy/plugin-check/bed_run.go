@@ -84,13 +84,22 @@ type stepResult struct {
 	// that asserted nothing, which is charly#865's sentence one layer up: "a check that cannot run is
 	// not a check that passed" (opencharly/plugin-check#93).
 	Skipped int
-	// SkipReason marks a step whose phase resolved NOTHING and therefore reported a skip instead of
-	// a verdict (no_plan_skip.go). OK stays true — a skip is not a failure, the same posture this
-	// struct's Skipped field takes for a phase whose inner steps all skipped — but the step is then
-	// not counted as a PASS either, which is the whole point: `opencharly/plugin-check#110` was the
-	// record saying `ok: true` for a child phase whose entire log was "No plan steps defined for
-	// this image." Written only when the step skipped; its PRESENCE is the skip marker.
+	// SkipReason marks a step that SKIPPED, and says why. OK stays true — a skip is not a
+	// failure, the same posture this struct's Skipped field takes for a phase whose inner
+	// steps all skipped — but the step is then not counted as a PASS either, which is the whole
+	// point: `opencharly/plugin-check#110` was the record saying `ok: true` for a child phase
+	// whose entire log was "No plan steps defined for this image." Two causes write it: the
+	// child's phase resolved NOTHING (no_plan_skip.go), and a DECLARED CHECK inside the child
+	// did not run (opencharly/plugin-check#132). Written only when the step skipped; its
+	// PRESENCE is the skip marker.
 	SkipReason string
+	// Checks are the DECLARED CHECKS this step ran, with the status each one resolved to —
+	// the per-check record the acceptance predicate needs ("every declared check id resolved
+	// to PASS, and no declared check id resolved to SKIP"). Parsed from the child's own report
+	// (spec/report's text format), which is the only place the ids and the reasons exist.
+	// Empty for a step that is not a check-live child (a build, a deploy): such a step ran no
+	// checks, and its absence is not a claim that a check was skipped.
+	Checks []checkOutcome
 	// Diag is the scan of this step's retained log (bed_diagnostics.go). The exit code alone
 	// is NOT the verdict: a tool that treats its own failure as non-fatal — pacman refusing an
 	// install scriptlet, the RCA case — exits 0 with the failure sitting in the log, and R10
@@ -129,14 +138,6 @@ type bedRunResult struct {
 	Stopped       bool
 	StoppedReason string
 	InFlightStep  string
-}
-
-// summaryStatus formats a bool as a human-readable status word.
-func summaryStatus(ok bool) string {
-	if ok {
-		return "PASS"
-	}
-	return "FAIL"
 }
 
 // rollupSkippedRe matches the inner engine's own count in its rollup line — the one spec/report
@@ -880,6 +881,10 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 		// way). diagPolicy owns the disposition; the report goes to summary.yml either way.
 		diag := scanStepDiagnostics(logText)
 		diagFail := diag.failure(diagPolicy, stepName, logPath)
+		// The child's own report — the per-check outcomes it printed, and whether it printed a
+		// report at all. Read BEFORE the verdict is decided, because the report is where the
+		// per-check statuses live (opencharly/plugin-check#132).
+		report := parseCheckReport(logText)
 		// A child that reports a SKIP resolved nothing: it rendered no verdict, so it must not be
 		// banked as a PASS (opencharly/plugin-check#110). Recorded and announced, then the bed
 		// continues — a skip is not a failure, and the reason is what tells a reader that this step
@@ -889,13 +894,24 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 				fmt.Fprintf(os.Stderr, "charly check run %s: writing %s: %v\n", name, logPath, writeErr)
 			}
 			res.Step = append(res.Step, stepResult{Name: stepName, Duration: dur, OK: true, Diag: diag,
-				Skipped: skippedFromRollup(logText), SkipReason: skipReason})
+				Skipped: skippedFromRollup(logText), SkipReason: skipReason,
+				Checks: report.Checks})
 			fmt.Fprintf(os.Stderr, "charly check run %s: [%s] SKIPPED after %s: %s (log: %s)\n", name, stepName, dur.Round(time.Millisecond), skipReason, logPath)
 			return nil
 		}
 		ok := cerr == nil && reply.ExitCode == 0 && diagFail == ""
-		res.Step = append(res.Step, stepResult{Name: stepName, Duration: dur, OK: ok, Diag: diag,
-			Skipped: skippedFromRollup(logText)})
+		sk := stepResult{Name: stepName, Duration: dur, OK: ok, Diag: diag,
+			Skipped: skippedFromRollup(logText), Checks: report.Checks}
+		// A DECLARED CHECK that did not run is a SKIP, not a pass: the step completed, but it did
+		// not prove what it declared (opencharly/plugin-check#132). The step is still not a
+		// failure — the bed continues and tears down as it would after a pass — but the run's
+		// verdict is no longer a PASS.
+		if ok {
+			if verdict, reason := checkReportVerdict(report); verdict == verdictSkip {
+				sk.SkipReason = reason
+			}
+		}
+		res.Step = append(res.Step, sk)
 		if !ok {
 			res.OK = false
 			if res.FailExitCode == 0 {
@@ -934,6 +950,12 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 			fmt.Fprintf(os.Stderr, "charly check run %s: [%s] FAIL after %s: %s\n", name, stepName, dur.Round(time.Millisecond), diagFail)
 			printDiagnosticShapes(os.Stderr, diag)
 			return fmt.Errorf("%s: %s", command, diagFail)
+		}
+		// A step whose phase asserted NOTHING is not a PASS, and the console says so — the
+		// per-step line is read by whoever watches the run (opencharly/plugin-check#132).
+		if stepStatus(&sk) == verdictSkip {
+			fmt.Fprintf(os.Stderr, "charly check run %s: [%s] SKIP after %s: %s (log: %s)\n", name, stepName, dur.Round(time.Millisecond), sk.SkipReason, logPath)
+			return nil
 		}
 		fmt.Fprintf(os.Stderr, "charly check run %s: [%s] PASS after %s%s (log: %s)\n", name, stepName, dur.Round(time.Millisecond), diagNotice(diag), logPath)
 		return nil
@@ -1663,18 +1685,47 @@ func writeBedSummary(dir string, res *bedRunResult) {
 	fmt.Fprintln(&buf, "steps:")
 	var total time.Duration
 	for _, s := range res.Step {
+		status := stepStatus(&s)
 		fmt.Fprintf(&buf, "  - name: %s\n", s.Name)
 		fmt.Fprintf(&buf, "    duration_seconds: %d\n", int(s.Duration.Round(time.Second)/time.Second))
+		// `ok:` keeps ONE meaning across every record this plugin has ever written: NO FAILURE.
+		// A skip is a deliberate, documented non-run, not a failure, so a skipped step reads
+		// `ok: true` beside its `skip_reason:` (opencharly/plugin-check#110). The verdict itself
+		// is the `status:` line below — a skipped step is not "ok" in the sense of "it proved
+		// something"; it is "ok" in the sense of "it did not break", and `status:` says which.
 		fmt.Fprintf(&buf, "    ok: %t\n", s.OK)
+		// The step's own verdict, in the run's three-state vocabulary. Emitted for EVERY step,
+		// like `ok:` itself: a reader must be able to tell "this step skipped nothing" from "this
+		// record predates the field", and an absent line cannot say which.
+		fmt.Fprintf(&buf, "    status: %s\n", status)
 		// Emitted for EVERY step, like `ok:` itself: a reader must be able to tell "this step skipped
 		// nothing" from "this record predates the field", and an absent line cannot say which.
 		fmt.Fprintf(&buf, "    skipped: %d\n", s.Skipped)
-		// A step whose PHASE resolved nothing (no_plan_skip.go) says so by NAME, not by count: its
-		// `skipped:` is 0 because no inner step skipped — nothing was resolved to skip. Present only
-		// when the step skipped, so the key's presence IS the marker and `ok: true` beside it cannot
-		// read as "this phase asserted something and it passed" (opencharly/plugin-check#110).
+		// A step that SKIPPED says so by NAME, not by count: its `skipped:` may be 0 because no
+		// inner step skipped — nothing was resolved to skip. Present only when the step skipped, so
+		// the key's presence IS the marker and `ok: true` beside it cannot read as "this phase
+		// asserted something and it passed" (opencharly/plugin-check#110). The second cause is a
+		// DECLARED CHECK that did not run (opencharly/plugin-check#132).
 		if s.SkipReason != "" {
 			fmt.Fprintf(&buf, "    skip_reason: %s\n", yamlScalar(s.SkipReason))
+		}
+		// The per-check record: every declared check this step ran, with the status it resolved
+		// to. It is what makes the acceptance predicate checkable FROM THE RECORD — "every
+		// declared check id resolved to PASS, and no declared check id resolved to SKIP" — which
+		// the run-level `ok:` alone could never say (opencharly/plugin-check#132). Present only
+		// when the step ran checks, so its absence is not a claim that none ran.
+		if len(s.Checks) > 0 {
+			fmt.Fprintln(&buf, "    checks:")
+			for _, c := range s.Checks {
+				fmt.Fprintf(&buf, "      - id: %s\n", yamlScalar(c.ID))
+				fmt.Fprintf(&buf, "        status: %s\n", c.Status)
+				if c.Text != "" {
+					fmt.Fprintf(&buf, "        text: %s\n", yamlScalar(c.Text))
+				}
+				if c.Reason != "" {
+					fmt.Fprintf(&buf, "        reason: %s\n", yamlScalar(c.Reason))
+				}
+			}
 		}
 		writeStepDiagnostics(&buf, "    ", s.Diag)
 		total += s.Duration
@@ -1682,7 +1733,17 @@ func writeBedSummary(dir string, res *bedRunResult) {
 	run := rollupStepDiagnostics(res.Step)
 	fmt.Fprintf(&buf, "total_seconds: %d\n", int(total.Round(time.Second)/time.Second))
 	writeRunDiagnostics(&buf, run)
+	// How many DECLARED CHECKS across the run resolved to SKIP — the number the acceptance
+	// predicate counts, and the number the headline quotes. Always emitted, for the same reason
+	// the per-step `skipped:` always is: an absent line cannot say "zero" apart from "the record
+	// predates the field".
+	fmt.Fprintf(&buf, "skipped_checks: %d\n", runSkippedChecks(res))
+	// The run's verdict, in the three-state vocabulary. `ok:` keeps its one meaning — NO
+	// FAILURE — so the record a reader greps for `ok: true` still finds it on a skipped run, and
+	// `status:` beside it says the run PROVED NOTHING (opencharly/plugin-check#132). The exit code
+	// the run returns is the third voice, and it says SKIP (3).
 	fmt.Fprintf(&buf, "ok: %t\n", res.OK)
+	fmt.Fprintf(&buf, "status: %s\n", runStatus(res))
 
 	path := filepath.Join(dir, "summary.yml")
 	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {

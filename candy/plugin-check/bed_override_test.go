@@ -11,7 +11,11 @@ import (
 // CHARLY_REPO_OVERRIDE pair when one was active, so a reader knows the verdict is
 // about the LOCAL tree, not the PR head. Without the override the line is unchanged.
 func TestBedVerdictLineNamesRepoOverride(t *testing.T) {
-	with := bedVerdictLine("check-foo", true, 3, "opencharly/charly=/home/me/oc-charly")
+	with := bedVerdictLine("check-foo", &bedRunResult{
+		OK:           true,
+		RepoOverride: "opencharly/charly=/home/me/oc-charly",
+		Step:         []stepResult{{Name: "image-build", OK: true}, {Name: "check-live", OK: true}, {Name: "cleanup", OK: true}},
+	})
 	if !strings.Contains(with, "repo override active") {
 		t.Fatalf("bedVerdictLine() with override = %q, want the override named in the verdict", with)
 	}
@@ -21,7 +25,17 @@ func TestBedVerdictLineNamesRepoOverride(t *testing.T) {
 	if !strings.Contains(with, "LOCAL tree, not the PR head") {
 		t.Fatalf("bedVerdictLine() with override = %q, want the local-tree caveat", with)
 	}
-	without := bedVerdictLine("check-foo", true, 3, "")
+	without := bedVerdictLine("check-foo", &bedRunResult{
+		OK: true,
+		// The check-live step carries a PASSING declared check: a run that proved
+		// NOTHING is a SKIP (opencharly/plugin-check#132), so a fixture that models
+		// "proved what it declared" must say which check proved it.
+		Step: []stepResult{
+			{Name: "image-build", OK: true},
+			{Name: "check-live", OK: true, Checks: []checkOutcome{{ID: "some-check", Status: verdictPass}}},
+			{Name: "cleanup", OK: true},
+		},
+	})
 	if strings.Contains(without, "repo override") {
 		t.Fatalf("bedVerdictLine() without override = %q, want no override mention", without)
 	}

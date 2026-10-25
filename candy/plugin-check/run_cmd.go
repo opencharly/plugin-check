@@ -114,32 +114,72 @@ func (c *CheckRunCmd) Run() error {
 			return optsErr
 		}
 		res, runErr := runCheckBed(ctx, ex, c.Name, opts)
-		// A skipped bed (absent host prereq) is not a run — report SKIPPED and
-		// propagate CheckSkippedExitCode (3).
-		if res != nil && res.SkippedPrereq {
-			return &CheckSkippedError{Msg: fmt.Sprintf("charly check run %s: skipped (%s)", c.Name, res.SkipReason)}
+		err := bedRunOutcomeError(c.Name, res, runErr)
+		// A bed that never ran (an absent host prereq) says so in the error alone; every
+		// other run gets the verdict line, which carries the three-state verdict and what
+		// did not run.
+		if res != nil && !res.SkippedPrereq {
+			fmt.Fprintln(os.Stderr, bedVerdictLine(c.Name, res))
 		}
-		if res != nil {
-			fmt.Fprintln(os.Stderr, bedVerdictLine(c.Name, res.OK, len(res.Step), res.RepoOverride))
-		}
-		// Propagate the check-fail exit code (2) when the bed failed at a check step.
-		if runErr != nil && res != nil && res.FailExitCode == CheckFailExitCode {
-			return &CheckFailedError{Msg: fmt.Sprintf("charly check run %s: checks failed", c.Name)}
-		}
-		return runErr
+		return err
 	}
 
 	return c.runIterateEntity(reply, cwd)
 }
 
+// bedRunOutcomeError maps a finished bed run to the error the command returns — and the
+// error's TYPE carries the exit code.
+//
+//	3 (CheckSkippedError) — the run proved NOTHING: the bed never ran (an absent host
+//	    prereq), or a phase asserted nothing (a declared check that did not run —
+//	    opencharly/plugin-check#132). A skip is not a failure (R8) and not a pass (R7).
+//	2 (CheckFailedError) — the bed failed at a check step.
+//	1 — an infra failure (the run's own error).
+//	nil — the run proved what it declared.
+//
+// A FAIL always wins over a SKIP: the failure is the louder truth about the run, and a
+// bed that both failed and skipped is a FAIL.
+func bedRunOutcomeError(name string, res *bedRunResult, runErr error) error {
+	if res != nil && res.SkippedPrereq {
+		return &CheckSkippedError{Msg: fmt.Sprintf("charly check run %s: skipped (%s)", name, res.SkipReason)}
+	}
+	if runErr != nil {
+		if res != nil && res.FailExitCode == CheckFailExitCode {
+			return &CheckFailedError{Msg: fmt.Sprintf("charly check run %s: checks failed", name)}
+		}
+		return runErr
+	}
+	if res != nil && runStatus(res) == verdictSkip {
+		return &CheckSkippedError{Msg: fmt.Sprintf("charly check run %s: skipped (%s)", name, runSkipDetail(res))}
+	}
+	return runErr
+}
+
 // bedVerdictLine formats the final `charly check run` verdict. When the bed ran
 // with a CHARLY_REPO_OVERRIDE pair, the line names it so a reader knows the
 // verdict is about the LOCAL tree, not the PR head (issue #340).
-func bedVerdictLine(name string, ok bool, steps int, repoOverride string) string {
-	verdict := fmt.Sprintf("charly check run %s: %s (steps=%d)",
-		name, summaryStatus(ok), steps)
-	if repoOverride != "" {
-		verdict += fmt.Sprintf(" — repo override active (%s=%s): verdict is about the LOCAL tree, not the PR head", proc.RepoOverrideEnv, repoOverride)
+//
+// The verdict is THREE-state (bed_status.go): PASS / SKIP / FAIL. The line also carries what
+// did not run: the count of declared checks that resolved to SKIP, and — for a run that
+// skipped — the reason. A headline that read as a bare `PASS (steps=N)` while a declared
+// check skipped WAS the defect (opencharly/charly#904), so the count and the reason are
+// here, not only in summary.yml.
+func bedVerdictLine(name string, res *bedRunResult) string {
+	if res == nil {
+		return fmt.Sprintf("charly check run %s: %s (steps=0)", name, verdictFail)
+	}
+	status := runStatus(res)
+	skipped := runSkippedChecks(res)
+	verdict := fmt.Sprintf("charly check run %s: %s (steps=%d", name, status, len(res.Step))
+	if skipped > 0 {
+		verdict += fmt.Sprintf(", skipped_checks=%d", skipped)
+	}
+	verdict += ")"
+	if detail := runSkipDetail(res); detail != "" {
+		verdict += " — " + detail
+	}
+	if res.RepoOverride != "" {
+		verdict += fmt.Sprintf(" — repo override active (%s=%s): verdict is about the LOCAL tree, not the PR head", proc.RepoOverrideEnv, res.RepoOverride)
 	}
 	return verdict
 }
