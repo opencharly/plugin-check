@@ -68,7 +68,14 @@ type rosterBedOutcome struct {
 	OK         bool   `json:"ok"`
 	ExpectedOK bool   `json:"expected_ok,omitempty"`
 	Skipped    bool   `json:"skipped,omitempty"`
-	Reason     string `json:"reason,omitempty"`
+	// Unproven marks a bed that RAN and proved nothing: its own run verdict is SKIP — a
+	// phase asserted nothing, e.g. a declared check that did not run (opencharly/plugin-check#132).
+	// It is NOT a failure (a skip is not a failure) and NOT a pass (a check that cannot run
+	// is not a check that passed), so it gets its own bucket: the roster says SKIP, and the
+	// roster's exit code says "not a verdict" (3). It is distinct from Skipped, which marks a
+	// bed that never ran at all (an absent host prereq).
+	Unproven bool   `json:"unproven,omitempty"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 // runCheckRoster drives a `check-roster` entity end to end. Returns an error whose
@@ -304,21 +311,37 @@ func runRosterBed(ex *sdk.Executor, ctx context.Context, b rosterBed, r *checkRo
 			o.Reason = runErr.Error()
 		}
 	}
+	// A bed that RAN and proved NOTHING is its own bucket: not a failure, and not a pass.
+	// The roster must never fold it into the green count (opencharly/plugin-check#132).
+	if o.OK && res != nil && runStatus(res) == verdictSkip {
+		o.OK = false
+		o.Unproven = true
+		o.ExitCode = CheckSkippedExitCode
+		o.Reason = runSkipDetail(res)
+	}
 	return o
 }
 
 // aggregateRoster renders the roster verdict and maps it to an error whose boundary
 // exit code is honest. A prereq-SKIPPED bed is neither a pass nor a failure: it is
-// counted separately. The roster exits 0 when no bed failed; 2 when any bed failed a
-// check (and no infra error); 1 when any bed hit an infra error; 3 (skipped) when
-// every non-refused bed skipped and none failed.
+// counted separately. A bed that RAN and proved NOTHING is also neither: it is counted
+// separately too, and it makes the roster a SKIP (exit 3) rather than a PASS — the roster
+// must never print a green verdict over a bed that proved nothing
+// (opencharly/plugin-check#132). The roster exits 0 when no bed failed and every bed that
+// ran proved something; 2 when any bed failed a check (and no infra error); 1 when any bed
+// hit an infra error; 3 (skipped) when every non-refused bed skipped, or when a bed ran and
+// proved nothing.
 func aggregateRoster(name string, outcomes []rosterBedOutcome) error {
 	sort.Slice(outcomes, func(i, j int) bool { return outcomes[i].Bed < outcomes[j].Bed })
-	var failed, skipped []rosterBedOutcome
+	var failed, skipped, unproven []rosterBedOutcome
 	infra := false
 	for _, o := range outcomes {
 		if o.Skipped {
 			skipped = append(skipped, o)
+			continue
+		}
+		if o.Unproven {
+			unproven = append(unproven, o)
 			continue
 		}
 		if o.OK {
@@ -333,6 +356,12 @@ func aggregateRoster(name string, outcomes []rosterBedOutcome) error {
 		if len(skipped) == len(outcomes) && len(outcomes) > 0 {
 			fmt.Fprintf(os.Stderr, "charly check run %s: roster SKIPPED (%d beds, absent host prereqs)\n", name, len(skipped))
 			return &CheckSkippedError{Msg: fmt.Sprintf("charly check run %s: all %d beds skipped (absent host prereqs)", name, len(skipped))}
+		}
+		if len(unproven) > 0 {
+			fmt.Fprintf(os.Stderr, "charly check run %s: roster SKIP (%d beds, %d proved nothing, %d skipped)\n",
+				name, len(outcomes)-len(skipped)-len(unproven), len(unproven), len(skipped))
+			return &CheckSkippedError{Msg: fmt.Sprintf("charly check run %s: %d bed(s) proved nothing: %s",
+				name, len(unproven), rosterFailureSummary(unproven))}
 		}
 		fmt.Fprintf(os.Stderr, "charly check run %s: roster PASS (%d beds, %d skipped)\n", name, len(outcomes)-len(skipped), len(skipped))
 		return nil
@@ -361,7 +390,7 @@ func rosterOutcomeLine(o rosterBedOutcome) string {
 	if !o.OK {
 		status = "FAIL"
 	}
-	if o.Skipped {
+	if o.Skipped || o.Unproven {
 		status = "SKIP"
 	}
 	extra := ""
