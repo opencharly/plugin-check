@@ -41,6 +41,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -458,8 +459,56 @@ func goldenCaptureSteps(d spec.CheckBedReply, snap *spec.VmSnapshotPolicy) []bed
 		// forces opts.Keep and suppresses the teardown's `vm destroy`, so this explicit
 		// stop is the ONLY release. Idempotent (a shut-off domain stops cleanly); the
 		// venue stays KEPT — only the process is released.
-		{Name: "snapshot-stop-keeper", Argv: []string{"vm", "stop", d.VMTemplate, "--domain", d.BedDomain}},
+		//
+		// The stop is graceful by default and FORCED when the policy declares
+		// force_stop, because a desktop keeper can ignore ACPI past the stop grace:
+		// measured, an Omarchy keeper was still running after the full 3m cap, and the
+		// step's own error names the remedy ("use 'charly vm stop --force' if the guest
+		// ignores ACPI") that the policy had no field to carry (charly#934). Both forms
+		// release the same lock and both leave the venue KEPT — a force stop releases
+		// the PROCESS, not the domain definition (measured: `vm list` reports the domain
+		// `libvirt shut off`, still defined).
+		{Name: "snapshot-stop-keeper", Argv: keeperStopArgs(d, snap.ForceStop)},
 	}
+}
+
+// keeperStopArgs returns the keeper-stop argv: a graceful ACPI shutdown, or — with
+// force — the force stop that kills the domain process instead. Extracted so the
+// policy's intent is visible in the emitted steps and pinned by a unit test.
+func keeperStopArgs(d spec.CheckBedReply, force bool) []string {
+	args := []string{"vm", "stop", d.VMTemplate, "--domain", d.BedDomain}
+	if force {
+		args = append(args, "--force")
+	}
+	return args
+}
+
+// keeperStopForced reports whether argv is the forced form. It is the ONE predicate
+// the runner and its test share, so "which path released the venue" is never inferred
+// from the absence of a timeout in a log.
+func keeperStopForced(argv []string) bool {
+	return slices.Contains(argv, "--force")
+}
+
+// keeperStopPath names the form an emitted keeper-stop step carries, for the runner's
+// note and for the failure tail.
+func keeperStopPath(argv []string) string {
+	if keeperStopForced(argv) {
+		return "forced"
+	}
+	return "graceful"
+}
+
+// keeperStopRetry returns the forced argv to retry a FAILED step with, and false when
+// there is nothing to retry: the step is not the keeper stop, or it is already the
+// forced form. It is the ONE place the force fallback is bounded to a single attempt —
+// so a forced stop that fails reports the failure instead of looping (charly#934), and
+// a test pins that bound rather than leaving it to a reading of the runner's loop.
+func keeperStopRetry(name string, argv []string, d spec.CheckBedReply) ([]string, bool) {
+	if name != "snapshot-stop-keeper" || keeperStopForced(argv) {
+		return nil, false
+	}
+	return keeperStopArgs(d, true), true
 }
 
 // vmBuildArgs returns the vm-build step args: `vm build <entity>` threaded with
@@ -1505,13 +1554,32 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 	if capturesGolden(d, opts, bedNode.Snapshot) {
 		// The ONE ordered sequence (capture then keeper-stop); see goldenCaptureSteps.
 		for _, s := range goldenCaptureSteps(d, bedNode.Snapshot) {
-			if err := step(s.Name, s.Argv...); err != nil {
-				if s.Name == "snapshot-capture" && strings.Contains(err.Error(), "already exists") {
-					fmt.Fprintf(os.Stderr, "note: snapshot %q already captured on %s \u2014 keeping the existing baseline\n", bedNode.Snapshot.OnFinalize, d.BedDomain)
-					continue
+			err := step(s.Name, s.Argv...)
+			if err == nil {
+				if s.Name == "snapshot-stop-keeper" {
+					fmt.Fprintf(os.Stderr, "note: keeper stop on %s: %s\n", d.BedDomain, keeperStopPath(s.Argv))
 				}
-				return fail("%s %s -> %q: %w", s.Name, d.VMTemplate, bedNode.Snapshot.OnFinalize, err)
+				continue
 			}
+			if s.Name == "snapshot-capture" && strings.Contains(err.Error(), "already exists") {
+				fmt.Fprintf(os.Stderr, "note: snapshot %q already captured on %s \u2014 keeping the existing baseline\n", bedNode.Snapshot.OnFinalize, d.BedDomain)
+				continue
+			}
+			// §5.3.2 A failed keeper stop must not fail a bed whose every
+			// change-consuming step already passed: the release is retried ONCE
+			// through the force path the tool's own message names ("use 'charly vm
+			// stop --force' if the guest ignores ACPI"). The bound lives in
+			// keeperStopRetry — the forced form carries no fallback of its own
+			// (charly#934).
+			if forced, ok := keeperStopRetry(s.Name, s.Argv, d); ok {
+				fmt.Fprintf(os.Stderr, "note: keeper stop on %s: graceful stop failed (%v) \u2014 retrying with --force\n", d.BedDomain, err)
+				if retryErr := step(s.Name, forced...); retryErr != nil {
+					return fail("%s %s -> %q (force fallback): %w", s.Name, d.VMTemplate, bedNode.Snapshot.OnFinalize, retryErr)
+				}
+				fmt.Fprintf(os.Stderr, "note: keeper stop on %s: forced (fallback after a failed graceful stop)\n", d.BedDomain)
+				continue
+			}
+			return fail("%s %s -> %q: %w", s.Name, d.VMTemplate, bedNode.Snapshot.OnFinalize, err)
 		}
 	}
 
