@@ -61,7 +61,7 @@ func TestExpandPlanIncludes_BoxPlan(t *testing.T) {
 // TestExpandPlanIncludes_PodTemplate exercises the pod arm (relocated from charly/check_include_test.go):
 // a pod template stored OPAQUELY in Templates.Pod, decoded IN THE PLUGIN, spliced by `include: pod:<name>`.
 func TestExpandPlanIncludes_PodTemplate(t *testing.T) {
-	body, err := json.Marshal(&spec.Pod{Plan: []spec.Step{{Check: "inner pod probe"}}})
+	body, err := json.Marshal(&spec.ResolvedPod{Plan: []spec.Step{{Check: "inner pod probe"}}})
 	if err != nil {
 		t.Fatal(err)
 	}

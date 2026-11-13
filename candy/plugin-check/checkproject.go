@@ -194,8 +194,11 @@ func targetKindForDeploy(node *spec.Deploy) string {
 // Include-splicer (relocated from charly/check_include.go, rewritten over the envelope). A
 // `- include: <kind>:<name>` step splices the referenced entity's plan steps in place (recursively,
 // cycle-safe). candy → rp.CandyModels[name].Plan; box → rp.BoxPlans[name] (host-flattened
-// base-chain plan); pod/vm → the rp.Templates raw body decoded into spec.Pod/spec.Vm (a plugin MAY
-// decode a concrete kind; the kernel may not).
+// base-chain plan); pod → the rp.Templates raw body decoded into spec.ResolvedPod, the contract's
+// resolve-to-envelope form (the same target plugin-substrate projects an authored `pod:` body
+// into; the authoring body itself lives in plugin-substrate's CUE module since spec#304 unit 3,
+// so there is no spec.Pod to decode); vm → spec.Vm (a plugin MAY decode a concrete kind; the
+// kernel may not).
 // ---------------------------------------------------------------------------
 
 // includeKinds enumerates the valid `<kind>` discriminator values.
@@ -288,7 +291,7 @@ func collectIncludeSteps(rp *spec.ResolvedProject, kind, name string) ([]spec.St
 		if !ok {
 			return nil, fmt.Errorf("pod %q not found (available: %s)", name, sortedTemplateKeys(rp, "pod"))
 		}
-		var pod spec.Pod
+		var pod spec.ResolvedPod
 		if err := json.Unmarshal(raw, &pod); err != nil {
 			return nil, fmt.Errorf("pod %q decode: %w", name, err)
 		}
