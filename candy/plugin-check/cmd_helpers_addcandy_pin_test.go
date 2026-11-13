@@ -10,10 +10,15 @@ package check
 // layer-direnv at the NEWER of two coordinates it references. That bed passes on this tree and fails
 // on the previous binary; it is the behavioural witness, not these tests.
 //
-// These tests decide the half no host has to be present for: WHICH refs are collected, and WHETHER
-// they travel on the request. Both fail if the change is reverted — drop ExtraCandyRefs from
-// resolvedProjectRequest and TestResolvedProjectRequestCarriesAddCandyRefs goes red; drop the scope
-// or the recursion from scopedAddCandyRefs and TestScopedAddCandyRefs goes red.
+// This test decides the half no host has to be present for: WHETHER the refs travel on the request.
+// It fails if the change is reverted — drop ExtraCandyRefs from resolvedProjectRequest and it goes
+// red, and the negative control pins that the assertion is about the refs and not about a constant
+// in the marshalled shape.
+//
+// The COLLECTION half is not this package's to test any more: which refs a deploy contributes, at
+// what scope, is `spec.DeployNode.ScopedAddCandyRefs`' one home (opencharly/spec#309/#310), tested
+// there — including the mutation that drops the in-substrate recursion. Duplicating that assertion
+// here would re-create, in a test, exactly the copy the extraction removed.
 
 import (
 	"encoding/json"
@@ -59,42 +64,5 @@ func TestResolvedProjectRequestCarriesAddCandyRefs(t *testing.T) {
 	}
 	if strings.Contains(string(plain), "extra_candy_refs") {
 		t.Fatalf("an unwidened request must not carry the field\n  got: %s", plain)
-	}
-}
-
-// TestScopedAddCandyRefs pins the collection rule: the named node's own add_candy: refs, its
-// in-substrate descendants' in authored order, every one tagged with the deploy's BOX scope — and a
-// deploy-level sibling's NOT, because that sibling is its own composition (the host's
-// deployNodePluginContext states the same boundary).
-func TestScopedAddCandyRefs(t *testing.T) {
-	nested := &spec.DeployNode{AddCandy: []spec.CandyRef{"@github.com/opencharly/layer-charly:" + "v2026.292.2352"}}
-	alongside := &spec.DeployNode{AddCandy: []spec.CandyRef{"@github.com/opencharly/layer-ripgrep:v2026.235.1653"}}
-	node := &spec.DeployNode{
-		AddCandy: []spec.CandyRef{pinnedRef},
-		Member: []spec.Member{
-			{Name: "host", Position: spec.PositionInSubstrate, Node: nested},
-			{Name: "sibling", Position: spec.PositionDeployLevel, Node: alongside},
-		},
-	}
-
-	got := scopedAddCandyRefs(spec.BoxScope("check-arch-vm"), node)
-	want := []spec.ExtraCandyRef{
-		{Ref: pinnedRef, Scope: spec.BoxScope("check-arch-vm")},
-		{Ref: "@github.com/opencharly/layer-charly:v2026.292.2352", Scope: spec.BoxScope("check-arch-vm")},
-	}
-	if len(got) != len(want) {
-		t.Fatalf("collected %d ref(s), want %d: %+v", len(got), len(want), got)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("ref[%d] = %+v, want %+v", i, got[i], want[i])
-		}
-	}
-
-	if refs := scopedAddCandyRefs(spec.BoxScope("x"), nil); refs != nil {
-		t.Fatalf("a nil node must collect nothing, got %+v", refs)
-	}
-	if refs := scopedAddCandyRefs(spec.BoxScope("x"), &spec.DeployNode{}); len(refs) != 0 {
-		t.Fatalf("a node with no add_candy must collect nothing, got %+v", refs)
 	}
 }

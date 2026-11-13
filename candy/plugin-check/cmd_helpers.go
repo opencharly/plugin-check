@@ -99,12 +99,15 @@ func guestNestedCheckCmd(guestPod, format, section string, filter []string, inst
 // version's plan (and, since #113, refuses instead). Passing the refs in is what makes the pinned
 // coordinate a CANDIDATE, so the arbiter resolves it and candyAddSteps reads the pinned model.
 //
-// It is the per-node ref collection the host's own deployNodePluginContext (charly/plugin_loader.go)
-// performs for plugin-loading, over the SAME plugin-side merged-tree resolver, with the SAME scope
-// constructor: `spec.ScopedExtraCandyRefs(spec.BoxScope(name), …)`, because the deploy IS its box
-// (a constant label here is the #739 false-conflict bug). Nested in-substrate children are visited
-// too — over-wide is safe, since an unused ref only widens a fetch, and a single-process walk of a
-// root with substrate members needs every member's refs.
+// The COLLECTION itself is not this package's: `spec.DeployNode.ScopedAddCandyRefs` is its one home
+// (opencharly/spec#309/#310), shared with the host's own deployNodePluginContext
+// (charly/plugin_loader.go) and its pod-overlay sibling (charly/build_overlay.go) — a plugin cannot
+// import core, so the shared home is the contract module. This function owns only the two facts the
+// plugin adds: WHICH node the deploy name denotes (resolved over the plugin-side merged tree, with
+// the host's own node-lookup contract) and the composition scope it tags the refs with,
+// `spec.BoxScope(name)`, because a deploy IS its box (a constant label is the #739 false-conflict
+// bug). The traversal boundary (an in-substrate member shares its parent's scope; a deploy-level
+// sibling is its own composition) lives with the method, where it is tested once.
 //
 // A resolve failure is not an error: an unwidened envelope degrades to exactly today's behaviour
 // (the version guard names the mismatch loudly), and the venue/plan paths report their own failures.
@@ -141,28 +144,7 @@ func addCandyRefsForEntity(ctx context.Context, ex *sdk.Executor, dir, name stri
 	if node == nil {
 		return nil
 	}
-	return scopedAddCandyRefs(spec.BoxScope(name), node)
-}
-
-// scopedAddCandyRefs is the PURE half of addCandyRefsForEntity: a node's own `add_candy:` refs plus
-// its in-substrate descendants', each tagged with the deploy's box scope. It mirrors the host's
-// visitation exactly (charly/plugin_loader.go's deployNodePluginContext recurses the in-substrate
-// members and nothing else: a deploy-level sibling is its own composition, addressed by its own
-// name), so the plugin and the host state the same scope for the same refs.
-func scopedAddCandyRefs(scope string, node *spec.DeployNode) []spec.ExtraCandyRef {
-	var out []spec.ExtraCandyRef
-	var visit func(n *spec.DeployNode)
-	visit = func(n *spec.DeployNode) {
-		if n == nil {
-			return
-		}
-		out = append(out, spec.ScopedExtraCandyRefs(scope, n.AddCandy...)...)
-		for _, m := range n.InSubstrateMembers() {
-			visit(m.Node)
-		}
-	}
-	visit(node)
-	return out
+	return node.ScopedAddCandyRefs(spec.BoxScope(name))
 }
 
 // candyAddSteps collects the deploy-scope check/provision steps from each locally-scanned candy a
