@@ -73,7 +73,7 @@ func pluginRunCheckLive(ex *sdk.Executor, ctx context.Context, scoreName string,
 	// name still scores via pluginResolveScoringChain's roots==nil fallback). A nil ex (unit
 	// tests; no reverse channel) skips the envelope fetch entirely rather than dereferencing nil.
 	if ex != nil {
-		if rp, rerr := resolvedProject(ex, ctx, dir); rerr == nil && rp != nil {
+		if rp, rerr := resolvedProject(ex, ctx, dir, nil); rerr == nil && rp != nil {
 			deployRoots = derefDeployTree(rp.Deploy)
 			// The SAME envelope already carries the vocabulary the scored leg needs — one resolution,
 			// two consumers (opencharly/plugin-check#95).

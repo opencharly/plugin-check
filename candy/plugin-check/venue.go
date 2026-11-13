@@ -105,7 +105,7 @@ func resolveCheckVenue(ex *sdk.Executor, ctx context.Context, dir, name, instanc
 		return &CheckVenue{Exec: kit.ShellExecutor{}, Kind: "host", Descriptor: spec.VenueDescriptor{Kind: "shell"}}, nil
 	}
 
-	rp, err := resolvedProject(ex, ctx, dir)
+	rp, err := resolvedProject(ex, ctx, dir, nil)
 	if err == nil && rp != nil {
 		tree := checkClassificationTree(ctx, ex, dir, rp)
 		if domainID, isVM := checkVmTarget(tree, name); isVM {

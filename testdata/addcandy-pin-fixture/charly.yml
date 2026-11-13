@@ -1,0 +1,37 @@
+# The R10 fixture for opencharly/plugin-check#112 (the bare-keyed child-plan lookup).
+#
+# It reproduces the defect's SHAPE in the smallest possible project — no VM boots, and nothing is
+# required beyond the fetch of two released tags of one repo:
+#
+#   * `pin-child` is a `vm:` deploy whose own `add_candy:` names layer-direnv at the NEWER tag
+#     (v2026.287.2155) — the coordinate the deploy pinned, exactly as a bed pins one;
+#   * the local `older-pin` candy composes the SAME repo at the OLDER tag (v2026.272.0057), which is
+#     how distro-arch's closure reaches layer-direnv through layer-agent-forwarding.
+#
+# Two coordinates, one repo. Before the fix the resolved-project scan never materialized the pinned
+# coordinate (it is outside the project's image closure), so `rp.CandyModels` carried the older one
+# and the child `check live` phase refused with the #113 guard naming BOTH versions — i.e. it could
+# only ever have asserted the version the deploy did NOT name. After the fix the pinned ref rides the
+# request as ExtraCandyRefs, becomes a candidate, and the phase composes the PINNED plan.
+#
+# The witness never needs the guest: `pluginCheckLiveVM` composes the child's plan BEFORE the venue
+# readiness gate, so the two states are distinguishable from the command's own stderr.
+repo: github.com/opencharly/plugin-check/testdata/addcandy-pin-fixture
+discover:
+    - path: candy
+      recursive: true
+pin-child:
+    vm:
+        from: tinyvm
+        disposable: true
+        description: >-
+            The deploy whose add_candy PINS layer-direnv at the newer tag. Never booted — the witness
+            reads the phase's plan-composition verdict, which is decided before the venue gate.
+        add_candy:
+            - '@github.com/opencharly/layer-direnv:v2026.287.2155'
+            - older-pin
+        plan:
+            - check: the child phase has a plan of its own, so a resolved phase is a real phase
+              id: child-own-step
+              context: [runtime]
+              command: "true"

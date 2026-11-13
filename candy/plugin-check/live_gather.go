@@ -62,7 +62,10 @@ func wrapStepsFileSet(set *kit.LabelDescriptionSet, steps []spec.Step, origin st
 
 func pluginCheckRunLive(ex *sdk.Executor, ctx context.Context, req spec.CheckRunRequest) (kit.CheckRunReply, error) {
 	dir, _ := os.Getwd()
-	rp, err := resolvedProject(ex, ctx, dir)
+	// The deploy's own add_candy: refs ride the envelope request — the scan is reachability-scoped,
+	// so a pinned coordinate the image closure never reaches is otherwise never materialized and
+	// this phase asserts another coordinate's plan (opencharly/plugin-check#112).
+	rp, err := resolvedProject(ex, ctx, dir, addCandyRefsForEntity(ctx, ex, dir, req.Name))
 	if err != nil {
 		return kit.CheckRunReply{}, err
 	}

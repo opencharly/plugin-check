@@ -51,7 +51,7 @@ func declaredVocabularyFor(ex *sdk.Executor, ctx context.Context, dir string) ma
 	if dir == "" {
 		return nil
 	}
-	rp, err := resolvedProject(ex, ctx, dir)
+	rp, err := resolvedProject(ex, ctx, dir, nil)
 	if err != nil || rp == nil {
 		return nil
 	}

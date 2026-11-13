@@ -1,0 +1,12 @@
+# The fixture's only kind:vm entity: never created, never booted. `pin-child` names it so the deploy
+# node is VM-VENUE (the arm whose plan composition reads the add_candy models); the witness stops at
+# the venue readiness gate, which runs AFTER the plan is composed.
+tinyvm:
+    source:
+        kind: cloud_image
+        url: https://example.invalid/never-fetched.qcow2
+    ram: 1024
+    cpu: 1
+    disk: 5
+    user: arch
+    disposable: true
