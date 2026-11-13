@@ -1,12 +1,17 @@
 package check
 
 // cmd_helpers_addcandy_pin_test.go — the unit half of opencharly/plugin-check#112: the resolved-
-// project request must carry the deploy's own add_candy: refs, scoped to the deploy's box.
+// project request must carry the deploy's OWN add_candy: refs, scoped to the deploy's box, so the
+// coordinate a deploy pinned is a scan CANDIDATE instead of being absent from a resolution that only
+// walked the project's image closure.
 //
-// The LIVE half (the behaviour: a bed's advanced pin now changes what the child phase asserts) is
-// the disposable bed at the repo root, `check-addcandy-pin-advanced` / `check-addcandy-pin-stale`.
-// These tests decide the half a host does not have to be present for: WHICH refs are collected, and
-// WHETHER they travel on the request. Both fail if the change is reverted — drop ExtraCandyRefs from
+// The LIVE half is the disposable bed at the repo root, `check-addcandy-pin-honoured`, whose plan
+// step drives the child `check live` phase of `testdata/addcandy-pin-fixture` — a project that pins
+// layer-direnv at the NEWER of two coordinates it references. That bed passes on this tree and fails
+// on the previous binary; it is the behavioural witness, not these tests.
+//
+// These tests decide the half no host has to be present for: WHICH refs are collected, and WHETHER
+// they travel on the request. Both fail if the change is reverted — drop ExtraCandyRefs from
 // resolvedProjectRequest and TestResolvedProjectRequestCarriesAddCandyRefs goes red; drop the scope
 // or the recursion from scopedAddCandyRefs and TestScopedAddCandyRefs goes red.
 
