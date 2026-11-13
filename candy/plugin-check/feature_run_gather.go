@@ -56,7 +56,9 @@ func featureLiveArm(tree map[string]spec.DeployNode, name string) string {
 
 func pluginCheckRunFeatureLive(ex *sdk.Executor, ctx context.Context, req spec.CheckRunRequest) (kit.CheckRunReply, error) {
 	dir, _ := os.Getwd()
-	rp, err := resolvedProject(ex, ctx, dir)
+	// Same widening as the live arm: the VM feature-live path builds its plan through
+	// pluginLoadVmCheckPlans, so it reads the same add_candy: models.
+	rp, err := resolvedProject(ex, ctx, dir, addCandyRefsForEntity(ctx, ex, dir, req.Name))
 	if err != nil {
 		return kit.CheckRunReply{}, err
 	}

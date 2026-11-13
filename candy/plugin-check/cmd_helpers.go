@@ -21,10 +21,13 @@ package check
 // verify_local.go) — no longer core at all.
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	"github.com/opencharly/sdk"
 	"github.com/opencharly/sdk/deploykit"
+	"github.com/opencharly/sdk/loaderkit"
 	"github.com/opencharly/spec/shellquote"
 	"github.com/opencharly/spec/spec"
 )
@@ -82,6 +85,86 @@ func guestNestedCheckCmd(guestPod, format, section string, filter []string, inst
 	return cmd.String()
 }
 
+// addCandyRefsForEntity returns the deploy's OWN `add_candy:` refs — scoped to its box — ready to
+// ride a ResolvedProjectRequest as ExtraCandyRefs.
+//
+// THE ROOT FIX (opencharly/plugin-check#112). The envelope's candy scan is REACHABILITY-scoped: it
+// collects the refs the project's own image closure walks (sdk/loaderkit.CollectRemoteRefsOpts), and
+// a deploy's `add_candy:` refs are by construction OUTSIDE that closure. candy/plugin-build's own
+// resolved-project cache key states the consequence in its own words: ExtraCandyRefs "is the ONLY
+// way a host-side plugin candy that no image closure reaches enters rp.Candies at all". So a resolve
+// that does not carry the deploy's refs back NEVER MATERIALIZES the coordinate the deploy pinned:
+// rp.CandyModels then holds whatever OTHER coordinate of that repo the closure did reach — an older
+// tag transitively required by a composed layer — and the child `check live` phase asserted that
+// version's plan (and, since #113, refuses instead). Passing the refs in is what makes the pinned
+// coordinate a CANDIDATE, so the arbiter resolves it and candyAddSteps reads the pinned model.
+//
+// It is the per-node ref collection the host's own deployNodePluginContext (charly/plugin_loader.go)
+// performs for plugin-loading, over the SAME plugin-side merged-tree resolver, with the SAME scope
+// constructor: `spec.ScopedExtraCandyRefs(spec.BoxScope(name), …)`, because the deploy IS its box
+// (a constant label here is the #739 false-conflict bug). Nested in-substrate children are visited
+// too — over-wide is safe, since an unused ref only widens a fetch, and a single-process walk of a
+// root with substrate members needs every member's refs.
+//
+// A resolve failure is not an error: an unwidened envelope degrades to exactly today's behaviour
+// (the version guard names the mismatch loudly), and the venue/plan paths report their own failures.
+func addCandyRefsForEntity(ctx context.Context, ex *sdk.Executor, dir, name string) []spec.ExtraCandyRef {
+	if ex == nil || name == "" || name == "." {
+		return nil
+	}
+	tree, err := loaderkit.ResolveMergedTreeViaExecutor(ctx, ex, dir)
+	if err != nil || len(tree) == 0 {
+		return nil
+	}
+	// The node lookup follows the SAME contract the host's resolveDeployNodeByPath states, one layer
+	// each: the `vm:` CLI address prefix is stripped (splitVmAddress), then the EXACT full key wins —
+	// a NAMESPACE-qualified deploy (`charly.check-agentteams-vm`) carries dots that are namespace
+	// separators, not member-path separators — and only then does the dotted MEMBER walk apply.
+	plain, _ := spec.SplitVmAddress(name)
+	var node *spec.DeployNode
+	if n, ok := tree[plain]; ok {
+		node = &n
+	} else {
+		node = resolveNestedNode(tree, plain)
+	}
+	if node == nil {
+		// A NAMESPACE-qualified bed that lives in an import (the umbrella root importing `charly/`)
+		// is not a key in the merged ROOT-scope tree. Reach it through the loader's ONE
+		// namespace-aware bed resolver — the same one the classification path uses
+		// (checkproject.go's classifyCheckProjection) — rather than a second dotted-name walk.
+		if uf, ok, uerr := loaderkit.LoadUnifiedViaExecutor(ctx, ex, dir); uerr == nil && ok && uf != nil {
+			if n, bok := uf.ResolveBed(plain); bok {
+				node = &n
+			}
+		}
+	}
+	if node == nil {
+		return nil
+	}
+	return scopedAddCandyRefs(spec.BoxScope(name), node)
+}
+
+// scopedAddCandyRefs is the PURE half of addCandyRefsForEntity: a node's own `add_candy:` refs plus
+// its in-substrate descendants', each tagged with the deploy's box scope. It mirrors the host's
+// visitation exactly (charly/plugin_loader.go's deployNodePluginContext recurses the in-substrate
+// members and nothing else: a deploy-level sibling is its own composition, addressed by its own
+// name), so the plugin and the host state the same scope for the same refs.
+func scopedAddCandyRefs(scope string, node *spec.DeployNode) []spec.ExtraCandyRef {
+	var out []spec.ExtraCandyRef
+	var visit func(n *spec.DeployNode)
+	visit = func(n *spec.DeployNode) {
+		if n == nil {
+			return
+		}
+		out = append(out, spec.ScopedExtraCandyRefs(scope, n.AddCandy...)...)
+		for _, m := range n.InSubstrateMembers() {
+			visit(m.Node)
+		}
+	}
+	visit(node)
+	return out
+}
+
 // candyAddSteps collects the deploy-scope check/provision steps from each locally-scanned candy a
 // deploy applies via add_candy — the envelope-sourced replacement for charly/check_cmd.go's
 // collectAddCandySteps. Remote (@github) candies are looked up exactly like local ones (see the
@@ -97,17 +180,21 @@ func guestNestedCheckCmd(guestPod, format, section string, filter []string, inst
 // `layer-direnv:v2026.272.0057`, and the bed's child `check live` ran the OLD plan (9 steps, no
 // `context:`) while the fetched artifact carried the pinned one.
 //
-// So an authored ref that NAMES a version and receives a model stamped with a DIFFERENT one is an
-// unresolvable input, not a plan to run: fail loudly naming both, instead of silently asserting a
-// version the deploy never named. The guard is deliberately narrow:
+// The FIX for the defect itself is upstream of this lookup: the resolve that FILLS this envelope now
+// carries the deploy's own add_candy: refs as ExtraCandyRefs (addCandyRefsForEntity, above), so the
+// pinned coordinate is materialized at all and the arbiter can pick it. This lookup stays
+// identity-keyed — that is what the envelope offers, and it is correct once the pin is a candidate.
+//
+// The guard that remains is the narrow fail-closed arm for the case the arbiter CANNOT satisfy: an
+// authored ref that NAMES a version and receives a model stamped with a DIFFERENT one is an
+// unresolvable input, not a plan to run — a pin OLDER than another coordinate the same closure
+// reaches loses the newest-tag arbiter, and honouring it needs per-coordinate models on the
+// envelope (spec → sdk → charly; opencharly/plugin-check#146). Failing loudly naming both versions
+// beats silently asserting a version the deploy never named. The guard is deliberately narrow:
 //   - a version-less ref (no pin) keeps the identity lookup — that is the documented behaviour;
 //   - an UNSTAMPED model (Version == "") is not gated, because that is the documented local-shadow
 //     case (sdk/loaderkit's scan gives a local candy of the same name precedence, as INFO);
 //   - a local bare-name ref has no version to honour.
-//
-// It is the MISSED CONTROL, not the fix: the pin still cannot be honoured here (that needs the
-// per-coordinate models on the envelope — see the issue). It makes the wrong-version run a named
-// error until then.
 func candyAddSteps(rp *spec.ResolvedProject, addCandies []string) ([]spec.Step, error) {
 	if rp == nil || len(addCandies) == 0 {
 		return nil, nil

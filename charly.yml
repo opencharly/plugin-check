@@ -202,3 +202,53 @@ check-skip-verdict-probe:
         command:
           command: ${CHARLY_BIN} check run check-skip-verdict-witness
           in_container: false
+
+# The in-repo R10 witness for opencharly/plugin-check#112 — THE BARE-KEYED CHILD-PLAN LOOKUP.
+#
+# The defect: a bed's child `check live` phase built its plan from a lookup keyed by the candy's
+# BARE repo ref, in a resolution that never MATERIALIZED the coordinate the deploy pinned (the
+# envelope's candy scan is reachability-scoped, and a deploy's `add_candy:` refs sit outside the
+# project's image closure). So the phase composed whatever OTHER coordinate of that repo the closure
+# reached — or, with the #113 guard in place, refused naming both versions. A bed's pin could be
+# read, fetched and still not change what the phase asserted.
+#
+# `testdata/addcandy-pin-fixture` is that shape with nothing else in it: a `vm:` deploy pinning
+# layer-direnv at the NEWER tag, and a local candy composing the SAME repo at the OLDER tag (how
+# distro-arch's closure reaches it through layer-agent-forwarding). The step below drives the child
+# phase through the command the defect lives in, and asserts the POST-fix observable: the pinned
+# coordinate became a candidate, so the phase composes the pinned plan and the command proceeds to
+# the venue readiness gate (which is where it stops — no guest is ever booted, and none is needed:
+# `pluginCheckLiveVM` composes the plan BEFORE that gate).
+#
+# WITHOUT the change the same command exits 1 with the guard's `… names version "v2026.287.2155" but
+# the resolved model … is version "v2026.272.0057" …` instead, so THIS STEP FAILS — it is a gate,
+# not a demonstration.
+check-addcandy-pin-app:
+  local:
+    description: bare kind:local template for the add_candy pin witness bed
+    candy: []
+
+check-addcandy-pin-honoured:
+  local:
+    from: check-addcandy-pin-app
+    host: local
+    disposable: true
+    description: >-
+      R10 witness for opencharly/plugin-check#112. The plan step drives the child `check live` phase
+      of a deploy whose `add_candy:` pins layer-direnv at the NEWER of two coordinates the same
+      project references, and requires the phase to compose the PINNED plan — proven by the command
+      reaching the venue readiness gate, which it can only do when the pin is resolvable. Before the
+      fix the phase never materialized the pinned coordinate and refused with the #113 guard naming
+      the older one, so this step fails.
+    plan:
+      - check: >-
+          the deploy's pinned add_candy coordinate is a resolution candidate, so the child phase
+          composes the PINNED plan instead of refusing on the other coordinate
+        id: addcandy-pin-is-a-candidate
+        exit_status: 1
+        stderr:
+          - contains: is not up / SSH-reachable
+        context: [runtime]
+        command:
+          command: cd testdata/addcandy-pin-fixture && ${CHARLY_BIN} check live pin-child
+          in_container: false

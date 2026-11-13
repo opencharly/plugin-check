@@ -1,0 +1,11 @@
+older-pin:
+    candy:
+        description: composes the SAME repo at an OLDER coordinate, so the project has two coordinates of one candy
+        candy:
+            - '@github.com/opencharly/layer-direnv:v2026.272.0057'
+        plan:
+            - check: the older-pin composing candy contributes no assertion of its own
+              id: older-pin-placeholder
+              context:
+                - build
+              command: "true"

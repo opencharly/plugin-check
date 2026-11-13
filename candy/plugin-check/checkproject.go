@@ -51,7 +51,10 @@ func resolveCheckProjection(ex *sdk.Executor, ctx context.Context, entity, dir s
 	if ex == nil {
 		return checkProjection{}, fmt.Errorf("charly check requires compiled-in placement (the resolved-project host seam is unavailable out-of-process)")
 	}
-	rp, err := resolvedProject(ex, ctx, dir)
+	// No ExtraCandyRefs here: this projection classifies the entity and hands the ITERATE harness its
+	// own scored plan; it builds no add_candy: plan. The plan-building arms (live/feature-live) are
+	// where the deploy's refs must ride the request (addCandyRefsForEntity).
+	rp, err := resolvedProject(ex, ctx, dir, nil)
 	if err != nil {
 		return checkProjection{}, err
 	}
@@ -122,9 +125,23 @@ func classifyCheckProjection(uf *spec.UnifiedFile, rp *spec.ResolvedProject, ent
 	return node, hasNode, isBed, hasIterate
 }
 
+// resolvedProjectRequest builds the envelope request. Its ONE non-obvious field is ExtraCandyRefs:
+// it is what puts a deploy's pinned add_candy: coordinate INTO the scan (see addCandyRefsForEntity).
+// Pure so the request shape — the half a unit test can decide without a live host — is testable.
+func resolvedProjectRequest(dir string, extra []spec.ExtraCandyRef) spec.ResolvedProjectRequest {
+	return spec.ResolvedProjectRequest{Dir: dir, LocalSuperproject: true, ExtraCandyRefs: extra}
+}
+
 // resolvedProject fetches + decodes the generic resolved-project envelope over the reverse channel.
-func resolvedProject(ex *sdk.Executor, ctx context.Context, dir string) (*spec.ResolvedProject, error) {
-	reqJSON, err := json.Marshal(spec.ResolvedProjectRequest{Dir: dir, LocalSuperproject: true})
+//
+// extra carries the entity's own `add_candy:` refs. The envelope's candy scan is reachability-scoped
+// — it walks the project's IMAGE closure and nothing else — so without them the coordinate a deploy
+// pinned is never materialized and rp.CandyModels holds another coordinate of the same repo (or no
+// entry at all). See addCandyRefsForEntity (cmd_helpers.go) for the mechanism and the measurement;
+// the request field is part of the cache key (candy/plugin-build's projectCacheKey), so a widened
+// resolve is a separate, correctly-keyed envelope rather than a stale hit.
+func resolvedProject(ex *sdk.Executor, ctx context.Context, dir string, extra []spec.ExtraCandyRef) (*spec.ResolvedProject, error) {
+	reqJSON, err := json.Marshal(resolvedProjectRequest(dir, extra))
 	if err != nil {
 		return nil, err
 	}
