@@ -13,7 +13,8 @@ package check
 // candyDirsFromEnvelope), (b) already sdk-portable (deploykit.*/kit.*/vmshared.* — confirmed by
 // grep before writing a line here), or (c) resolvable straight off the resolved-project envelope's
 // existing fields (rp.Templates.VM/.Local carry the SAME raw JSON body a fresh core decode would
-// produce — vmshared.VmSpec IS spec.ResolvedVm, spec.Local's shape is what findLocalSpec returned —
+// produce — vmshared.VmSpec IS spec.ResolvedVm, and a local template body decodes into the
+// contract's own spec.ResolvedLocal envelope, the shape findLocalSpec used to return —
 // so no NEW envelope field was needed for either). The ONE genuine gap — connecting an
 // out-of-process plugin candy a live plan's verb words reference, the M-mechanism the boundary law
 // keeps core-side — got the new thin "check-load-plugins" HostBuild seam (checkLoadPlugins,
@@ -593,7 +594,10 @@ func pluginRunLocalDeployScopePlan(ex *sdk.Executor, ctx context.Context, rp *sp
 	var plan []spec.Step
 	if node != nil && strings.TrimSpace(node.From) != "" {
 		if raw, ok := templateBody(rp, "local", strings.TrimSpace(node.From)); ok {
-			var lt spec.Local
+			// The contract's own resolved envelope, not the authored body type: the authored
+			// `#Local` moved into the plugin that serves the kind (opencharly/spec#304 unit 4),
+			// and ResolvedLocal carries the same fields this leg reads (plan).
+			var lt spec.ResolvedLocal
 			if uerr := json.Unmarshal(raw, &lt); uerr == nil {
 				plan = append(plan, lt.Plan...)
 			}
