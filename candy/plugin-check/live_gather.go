@@ -357,7 +357,12 @@ func pluginResolveVmMcpProvide(rp *spec.ResolvedProject, vmName string) []spec.C
 	if !ok {
 		return nil
 	}
-	var vm spec.Vm
+	// spec.Vm was deleted with the vm body (opencharly/spec#304 unit 8), and `mcp_provide` is the
+	// authored body's own field that the resolve envelope does not carry - so the decode names
+	// exactly the one field this collector reads.
+	var vm struct {
+		MCPProvide []spec.CandyMCPProvide `json:"mcp_provide"`
+	}
 	if err := json.Unmarshal(raw, &vm); err != nil {
 		return nil
 	}

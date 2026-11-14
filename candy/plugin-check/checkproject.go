@@ -319,7 +319,9 @@ func collectIncludeSteps(rp *spec.ResolvedProject, kind, name string) ([]spec.St
 		if !ok {
 			return nil, fmt.Errorf("vm %q not found (available: %s)", name, sortedTemplateKeys(rp, "vm"))
 		}
-		var vm spec.Vm
+		// spec.Vm was deleted with the vm body (opencharly/spec#304 unit 8); the surviving contract
+		// type is the resolve envelope, which carries the same `plan` field.
+		var vm spec.ResolvedVm
 		if err := json.Unmarshal(raw, &vm); err != nil {
 			return nil, fmt.Errorf("vm %q decode: %w", name, err)
 		}
