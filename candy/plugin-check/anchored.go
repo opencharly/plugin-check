@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/opencharly/sdk/kit"
 	"github.com/opencharly/spec/spec"
 )
 
@@ -179,6 +180,43 @@ func updateGateSteps(gate string, d spec.CheckBedReply, name, imageTag string, i
 	default:
 		return []gateStep{{"update", withRunTag([]string{"update", name}, imageTag)}}
 	}
+}
+
+// withCandyVars folds the WALKED candies' own declared `var:` blocks into the check-run
+// env, so a plan step can ${VAR} a name its candy declared. This is the producer half of
+// the union #Op's config: comment already states for generate time -- "substitutes ${VAR}
+// refs in content: at generate time (candy var: ∪ auto-exports)" -- which a `check:` step
+// never received: its env came from the resolver (auto-exports and the deployment's own
+// metadata) and nothing read the declarations.
+//
+// Order within the set is candy → box → deploy, so a LATER, more specific section wins if
+// two declare the same name; the deploy overlay is the operator's last word on a deployment.
+// The caller then folds the request's per-run vars on top, so `--var` still beats a
+// declaration.
+//
+// Empty (the common case) returns env unchanged and allocates nothing.
+func withCandyVars(env map[string]string, set *kit.LabelDescriptionSet) map[string]string {
+	if set == nil {
+		return env
+	}
+	merged := env
+	copied := false
+	for _, sec := range [][]kit.LabeledDescription{set.Candy, set.Box, set.Deploy} {
+		for _, ld := range sec {
+			if len(ld.Vars) == 0 {
+				continue
+			}
+			if !copied {
+				merged = maps.Clone(env)
+				if merged == nil {
+					merged = map[string]string{}
+				}
+				copied = true
+			}
+			maps.Copy(merged, ld.Vars)
+		}
+	}
+	return merged
 }
 
 // withRunVars folds the request's per-run vars into the check-run env so plan

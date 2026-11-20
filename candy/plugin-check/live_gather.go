@@ -200,6 +200,11 @@ func pluginCheckLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.Resolved
 	resolver = stampCharlyBin(resolver)
 
 	env, hasRuntime := pluginResolverEnv(resolver)
+	// The WALKED candies' own declared `var:` — the producer half of the union #Op's
+	// config: comment already states ("candy var: ∪ auto-exports"). FOLDED FIRST, so the
+	// operator's per-run req.Vars below still wins: a candy declares what its own steps
+	// need, and an operator passing --var is overriding this run on purpose.
+	env = withCandyVars(env, set)
 	env = withRunVars(env, req.Vars)
 	hostVars := map[string]string{}
 	var hostCleanups []func()
