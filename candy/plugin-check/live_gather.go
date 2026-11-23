@@ -71,6 +71,11 @@ func pluginCheckRunLive(ex *sdk.Executor, ctx context.Context, req spec.CheckRun
 		return kit.CheckRunReply{}, err
 	}
 	tree := checkClassificationTree(ctx, ex, dir, rp)
+	if req.BedActions {
+		if err := bedActionsAuthorized(tree, req.Name); err != nil {
+			return kit.CheckRunReply{}, err
+		}
+	}
 	// Connect the out-of-process check-verb plugins (mcp/cdp/vnc/dbus/spice/…) the live plan
 	// references — ONCE, at command scope, before the per-kind dispatch, so every arm (pod/vm/
 	// local) has them connected (task #62; the M-mechanism seam, args uniform across arms; the
@@ -86,6 +91,20 @@ func pluginCheckRunLive(ex *sdk.Executor, ctx context.Context, req spec.CheckRun
 		return pluginCheckLiveLocal(ex, ctx, rp, tree, dir, req)
 	}
 	return pluginCheckLivePod(ex, ctx, rp, tree, dir, req)
+}
+
+// bedActionsAuthorized: bed actions execute a deployment's own run: steps (#CheckRunRequest
+// bed_actions), which D-DEP-3 authorizes only on a `disposable: true` deployment. A request
+// for them on any other deployment is refused loudly, never silently skipped.
+func bedActionsAuthorized(tree map[string]spec.DeployNode, name string) error {
+	node, ok := tree[name]
+	if n := resolveNestedNode(tree, name); n != nil {
+		node, ok = *n, true
+	}
+	if !ok || !node.IsDisposable() {
+		return fmt.Errorf("check live %s: --bed-actions executes the deployment's own run: steps, which only a `disposable: true` deployment authorizes (D-DEP-3)", name)
+	}
+	return nil
 }
 
 // pluginVenueResolver adapts members.go's liveTargetResolver into the kit.VenueResolver shape a
@@ -228,6 +247,7 @@ func pluginCheckLivePod(ex *sdk.Executor, ctx context.Context, rp *spec.Resolved
 		Box:            req.Name,
 		Instance:       req.Instance,
 		VerifyOnly:     true,
+		BedActions:     req.BedActions,
 		CandyDirs:      candyDirsFromEnvelope(rp),
 		HostVars:       hostVars,
 		TargetResolver: pluginVenueResolver(ex, ctx, dir, req.Instance),
@@ -549,6 +569,7 @@ func pluginCheckLiveVM(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedP
 		Instance:       req.Instance,
 		VmName:         domainID,
 		VerifyOnly:     true,
+		BedActions:     req.BedActions,
 		CandyDirs:      candyDirsFromEnvelope(rp),
 		HostVars:       hostVars,
 		TargetResolver: pluginVenueResolver(ex, ctx, dir, req.Instance),
@@ -582,7 +603,7 @@ func pluginCheckLiveLocal(ex *sdk.Executor, ctx context.Context, rp *spec.Resolv
 	}
 	header := fmt.Sprintf("Local deploy: %s [%s]", req.Name, venue)
 
-	results, hadPlan, err := pluginRunLocalDeployScopePlan(ex, ctx, rp, dir, node, req.Name, req.Instance, req.Vars, executor, req.Plan)
+	results, hadPlan, err := pluginRunLocalDeployScopePlan(ex, ctx, rp, dir, node, req.Name, req.Instance, req.Vars, executor, req.Plan, req.BedActions)
 	if err != nil {
 		return kit.CheckRunReply{}, err
 	}
@@ -595,7 +616,7 @@ func pluginCheckLiveLocal(ex *sdk.Executor, ctx context.Context, rp *spec.Resolv
 // pluginRunLocalDeployScopePlan collects a local deployment's deploy-scope plan (the kind:local
 // template's plan + the deploy node's plan + the per-host overlay) and runs it — the port of
 // charly/check_cmd.go's runLocalDeployScopePlan.
-func pluginRunLocalDeployScopePlan(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, dir string, node *spec.DeployNode, image, instance string, vars map[string]string, exec deploykit.DeployExecutor, stepsOverride []spec.Step) (results []kit.StepResult, hadPlan bool, err error) {
+func pluginRunLocalDeployScopePlan(ex *sdk.Executor, ctx context.Context, rp *spec.ResolvedProject, dir string, node *spec.DeployNode, image, instance string, vars map[string]string, exec deploykit.DeployExecutor, stepsOverride []spec.Step, bedActions bool) (results []kit.StepResult, hadPlan bool, err error) {
 	var plan []spec.Step
 	if node != nil && strings.TrimSpace(node.From) != "" {
 		if raw, ok := templateBody(rp, "local", strings.TrimSpace(node.From)); ok {
@@ -658,6 +679,7 @@ func pluginRunLocalDeployScopePlan(ex *sdk.Executor, ctx context.Context, rp *sp
 		Box:            image,
 		Instance:       instance,
 		VerifyOnly:     true,
+		BedActions:     bedActions,
 		HostVars:       hostVars,
 		TargetResolver: pluginVenueResolver(ex, ctx, dir, instance),
 	}, declaredVarNames(rp))

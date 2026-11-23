@@ -30,6 +30,10 @@ type CheckLiveCmd struct {
 	Section   string   `name:"section" help:"Only run this section: candy, box, or deploy"`
 	Vars      []string `name:"var" help:"Per-run variable passthrough (key=value; repeatable) — merged into the check-run env"`
 	StepsFile string   `name:"steps-file" help:"YAML file of plan steps to run INSTEAD of the baked plan (an isolated live invocation with only the injected steps)"`
+	// BedActions executes the deployment's own run: steps (a bed's actions) between its checks
+	// instead of skipping them as verify-only. `charly check run` sets it for its live stage;
+	// it is refused on a deployment that is not `disposable: true` (D-DEP-3).
+	BedActions bool `name:"bed-actions" help:"Execute the deployment's own run: steps (a disposable bed's actions) instead of skipping them; set by charly check run"`
 }
 
 // parseStepsFile reads a `--steps-file` plan: a YAML list of plan steps in the AUTHORING
@@ -88,13 +92,14 @@ func (c *CheckLiveCmd) Run() error {
 		}
 	}
 	reply, err := hostCheckRun(spec.CheckRunRequest{
-		Mode:     "live",
-		Name:     c.Box,
-		Instance: c.Instance,
-		Section:  c.Section,
-		Filter:   c.Filter,
-		Vars:     vars,
-		Plan:     injected,
+		Mode:       "live",
+		Name:       c.Box,
+		Instance:   c.Instance,
+		Section:    c.Section,
+		Filter:     c.Filter,
+		Vars:       vars,
+		Plan:       injected,
+		BedActions: c.BedActions,
 	})
 	if err != nil {
 		return err

@@ -78,6 +78,7 @@ func pluginCheckLiveKubeVirt(ex *sdk.Executor, ctx context.Context, rp *spec.Res
 		Instance:       req.Instance,
 		VmName:         domainID,
 		VerifyOnly:     true,
+		BedActions:     req.BedActions,
 		CandyDirs:      candyDirsFromEnvelope(rp),
 		HostVars:       hostVars,
 		TargetResolver: pluginVenueResolver(ex, ctx, dir, req.Instance),
