@@ -558,6 +558,14 @@ func bedArtifactRef(image string) string {
 	return spec.LeafName(spec.ResolveBoxName(image))
 }
 
+// checkLiveArgv is the argv of a bed run's check-live stage for one ref. It always asks for
+// bed actions: the bed's own run: steps are its scenario actions and execute between its
+// checks (D-VERB-1; the bed is disposable, D-DEP-3), while the candy/box run: steps -- the
+// install timeline, which ran at build -- stay skipped. The run vars ride along as --var.
+func checkLiveArgv(ref string, vars map[string]string) []string {
+	return append([]string{"check", "live", ref, "--bed-actions"}, runVarsArgv(vars)...)
+}
+
 // checkRunVars returns the per-run var passthrough for ONE bed run's check-live
 // steps: the operator's --var map (a fresh map when nil — never mutated
 // in the caller), overlaid with the run's authoritative runtime vars:
@@ -1338,7 +1346,7 @@ func runCheckBed(ctx context.Context, ex *sdk.Executor, name string, opts bedRun
 			}
 			// Per-run --var passthrough rides the check-live cli-reentry argv
 			// (CheckLiveCmd.Vars → CheckRunRequest.Vars → the live runner env).
-			argv := append([]string{"check", "live", ref}, runVarsArgv(vars)...)
+			argv := checkLiveArgv(ref, vars)
 			if err := step(label, argv...); err != nil {
 				return err
 			}
