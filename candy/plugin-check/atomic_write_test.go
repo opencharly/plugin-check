@@ -33,6 +33,13 @@ func TestWriteFileAtomic_CompletesOrRefuses(t *testing.T) {
 	}
 
 	// An unwritable directory: the error must surface and the target must not appear.
+	// A root CI container bypasses the mode bits, so the arm would succeed there and this
+	// test would fail for the environment rather than for the code — skip visibly instead
+	// (the invariant is still pinned by the "complete content + no temp residue" arm above).
+	if os.Geteuid() == 0 {
+		t.Log("running as root: mode bits do not refuse a write, skipping the refusal arm")
+		return
+	}
 	ro := filepath.Join(dir, "ro")
 	if err := os.Mkdir(ro, 0o555); err != nil {
 		t.Fatal(err)
