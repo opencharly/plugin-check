@@ -96,12 +96,30 @@ func pluginCheckRunLive(ex *sdk.Executor, ctx context.Context, req spec.CheckRun
 // bedActionsAuthorized: bed actions execute a deployment's own run: steps (#CheckRunRequest
 // bed_actions), which D-DEP-3 authorizes only on a `disposable: true` deployment. A request
 // for them on any other deployment is refused loudly, never silently skipped.
+//
+// A NESTED (in-substrate) member runs its bed actions INSIDE its ROOT deployment's venue, so
+// the ROOT's disposability authorizes them: a nested child of a `disposable: true` parent is
+// part of the same disposable tree and need not repeat the flag. The resolved leaf does NOT
+// carry the parent's flag (FoldMembers propagates it onto the folded top-level entry, not onto
+// the nested node), which is why checking only the leaf refused charly's `check-group` bed
+// (opencharly/charly#1299).
 func bedActionsAuthorized(tree map[string]spec.DeployNode, name string) error {
 	node, ok := tree[name]
+	nested := false
 	if n := resolveNestedNode(tree, name); n != nil {
 		node, ok = *n, true
+		nested = true
 	}
-	if !ok || !node.IsDisposable() {
+	authorized := ok && node.IsDisposable()
+	if !authorized && nested {
+		// Root of the dotted path — the deployment whose venue the member runs inside.
+		if i := strings.IndexByte(name, '.'); i > 0 {
+			if root, rok := tree[name[:i]]; rok && root.IsDisposable() {
+				authorized = true
+			}
+		}
+	}
+	if !authorized {
 		return fmt.Errorf("check live %s: --bed-actions executes the deployment's own run: steps, which only a `disposable: true` deployment authorizes (D-DEP-3)", name)
 	}
 	return nil
