@@ -1843,10 +1843,43 @@ func writeBedSummary(dir string, res *bedRunResult) {
 	fmt.Fprintf(&buf, "ok: %t\n", res.OK)
 	fmt.Fprintf(&buf, "status: %s\n", runStatus(res))
 
+	// The summary IS the run's machine-readable verdict, so it is written ATOMICALLY: a
+	// partial write (a full filesystem, a killed process) must leave either the previous
+	// document or none — never a truncated file that no YAML reader can parse
+	// (opencharly/charly#1308: a run whose summary ended mid-scalar at line 218 could not be
+	// graded at all, and its failing step's stderr was lost with it).
 	path := filepath.Join(dir, "summary.yml")
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	if err := writeFileAtomic(path, buf.Bytes()); err != nil {
 		fmt.Fprintf(os.Stderr, "charly check run %s: writing %s: %v\n", res.Bed, path, err)
 	}
+}
+
+// writeFileAtomic writes data to path atomically: temp file in the SAME directory, fsync,
+// then rename. A short or interrupted write therefore never replaces the target with a
+// truncated document, and the caller's error is the real one (not a silently swallowed
+// ENOSPC). Same-directory is required: rename(2) is only atomic within one filesystem.
+func writeFileAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp.*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer func() { _ = os.Remove(name) }() // no-op after a successful rename
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(name, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(name, path)
 }
 
 // vmDomainIdentity normalizes a deploy/deploy name into its per-deploy VM DOMAIN
